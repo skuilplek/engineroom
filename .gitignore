@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.sock
+*.secret
+deploy/pam/engineroom-pam-auth
+deploy/pam/engineroom-peercred
+apps/web/dist/

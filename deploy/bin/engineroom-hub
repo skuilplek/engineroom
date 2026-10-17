@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+if [[ -x /usr/local/bin/node ]]; then
+  node=/usr/local/bin/node
+elif [[ -x /usr/bin/node ]]; then
+  node=/usr/bin/node
+else
+  echo "node 24 or newer is required" >&2
+  exit 1
+fi
+exec "$node" /usr/local/lib/engineroom/apps/hub/src/index.ts "$@"

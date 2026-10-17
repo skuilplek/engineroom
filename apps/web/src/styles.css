@@ -1,0 +1,120 @@
+:root {
+  color-scheme: dark;
+  --bg: #12140f;
+  --panel: #1b2018;
+  --panel-2: #242a20;
+  --line: #343b2e;
+  --ink: #ece7d8;
+  --muted: #a3aa96;
+  --accent: #d6f08a;
+  --accent-ink: #1a220d;
+  --danger: #ff8d7a;
+  --shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+  font-family: "Segoe UI", ui-sans-serif, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(214, 240, 138, 0.16), transparent 32%),
+    var(--bg);
+}
+.login-card, .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+.login-card {
+  width: min(420px, 100%);
+  padding: 28px;
+  box-shadow: var(--shadow);
+}
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+h1, h2 { font-weight: 560; letter-spacing: -0.03em; }
+h1 { margin: 0 0 8px; font-size: 32px; }
+.lede, .muted { color: var(--muted); }
+form { display: grid; gap: 12px; }
+label { display: grid; gap: 6px; font-size: 14px; }
+input, select, textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #12150f;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+textarea { min-height: 74px; resize: vertical; }
+.primary, .ghost, .danger {
+  border-radius: 999px;
+  border: 0;
+  padding: 10px 14px;
+}
+.primary { background: var(--accent); color: var(--accent-ink); }
+.ghost, .danger { background: transparent; border: 1px solid var(--line); }
+.danger { color: var(--danger); }
+.alert { color: var(--danger); min-height: 1.2em; }
+
+.shell { min-height: 100vh; display: grid; grid-template-columns: 300px 1fr; }
+.sidebar {
+  border-right: 1px solid var(--line);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: #161a13;
+}
+.brand { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.brand h1 { font-size: 22px; }
+.nav { display: flex; gap: 8px; }
+.chat-list { display: grid; gap: 6px; overflow: auto; }
+.chat-list button, .sidebar .nav button { text-align: left; }
+.chat-list button {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 12px;
+  padding: 10px;
+}
+.chat-list button.active, .chat-list button:hover { background: var(--panel-2); border-color: var(--line); }
+.chat-list strong, .chat-list span { display: block; }
+.chat-list span { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 100vh; }
+.topbar, .composer { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.composer { border-bottom: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+.topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.transcript { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.bubble { max-width: 760px; padding: 12px 14px; border-radius: 14px; white-space: pre-wrap; }
+.bubble.user { align-self: end; background: #31382a; }
+.bubble.assistant { align-self: start; background: var(--panel); border: 1px solid var(--line); }
+.tool, .status {
+  align-self: start;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.tool { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: #141710; }
+.tool summary { cursor: pointer; }
+.status { color: var(--muted); }
+.settings { padding: 20px; max-width: 640px; }
+.empty { margin: auto; color: var(--muted); text-align: center; }
+.row { display: flex; gap: 8px; align-items: center; }
+
+@media (max-width: 800px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+  .main { min-height: auto; }
+}

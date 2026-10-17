@@ -1,0 +1,35 @@
+#!/bin/bash
+# Start or stop one user's runner. This is the only command the hub may sudo.
+set -euo pipefail
+
+cmd="${1:-}"
+user="${2:-}"
+
+if [[ ! "$user" =~ ^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$ ]]; then
+  echo "invalid user" >&2
+  exit 1
+fi
+
+uid="$(id -u "$user")"
+if (( uid < 1000 )); then
+  echo "refusing system account" >&2
+  exit 1
+fi
+
+if ! id -nG "$user" | tr ' ' '\n' | grep -qx 'engineroom-users'; then
+  echo "user is not allowed" >&2
+  exit 1
+fi
+
+case "$cmd" in
+  start)
+    systemctl start "engineroom-runner@${user}.socket"
+    ;;
+  stop)
+    systemctl stop "engineroom-runner@${user}.service" "engineroom-runner@${user}.socket"
+    ;;
+  *)
+    echo "usage: engineroom-ctl start|stop USER" >&2
+    exit 1
+    ;;
+esac

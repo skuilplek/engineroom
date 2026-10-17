@@ -1,0 +1,24 @@
+{
+  "name": "engineroom",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
+    "build:web": "npm run build -w @engineroom/web",
+    "start:runner": "node apps/runner/src/index.ts",
+    "start:hub": "node apps/hub/src/index.ts",
+    "dev:web": "npm run dev -w @engineroom/web"
+  },
+  "devDependencies": {
+    "@types/node": "24.9.1",
+    "typescript": "5.9.3"
+  }
+}

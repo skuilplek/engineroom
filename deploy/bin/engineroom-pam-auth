@@ -1,0 +1,5 @@
+#!/bin/bash
+# The hub is unprivileged. sudo runs the real checker as root so it can read
+# the shadow file. use_pty is disabled for that command so the password frames
+# on stdin are not mangled.
+exec sudo -n -- /usr/local/libexec/engineroom-pam-auth
