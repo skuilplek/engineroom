@@ -1,4 +1,17 @@
-import type { ChatDetail, ChatMeta, Settings, StreamEvent, WorkspaceEntry } from "@engineroom/protocol";
+import type { AgentId, ChatDetail, ChatMeta, Settings, StreamEvent, WorkspaceEntry } from "@engineroom/protocol";
+
+export interface Session {
+  username: string;
+  home: string;
+  admin: boolean;
+  agents: AgentId[];
+}
+
+export interface Account {
+  username: string;
+  home: string;
+  uid: number;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -30,11 +43,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function me() {
-  return api<{ username: string; home: string }>("/api/me");
+  return api<Session>("/api/me");
 }
 
 export function login(username: string, password: string) {
-  return api<{ username: string; home: string }>("/api/login", {
+  return api<Session>("/api/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
@@ -66,6 +79,28 @@ export function saveSettings(settings: Settings) {
 
 export function listWorkspaces() {
   return api<WorkspaceEntry[]>("/api/workspaces");
+}
+
+export function listAccounts() {
+  return api<Account[]>("/api/admin/users");
+}
+
+export function addAccount(username: string, password: string) {
+  return api<{ ok: boolean }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function revokeAccount(username: string) {
+  return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/revoke`, { method: "POST" });
+}
+
+export function saveAgents(flags: Record<AgentId, boolean>) {
+  return api<{ agents: AgentId[] }>("/api/admin/agents", {
+    method: "PUT",
+    body: JSON.stringify(flags),
+  });
 }
 
 export function cancelChat(id: string) {

@@ -13,6 +13,8 @@ Environment=ENGINEROOM_SESSION_SECRET_FILE=/var/lib/engineroom/session.secret
 Environment=ENGINEROOM_PAM_HELPER=/usr/local/bin/engineroom-pam-auth
 Environment=ENGINEROOM_PEERCRED=/usr/local/bin/engineroom-peercred
 Environment=ENGINEROOM_CTL=/usr/local/bin/engineroom-ctl
+Environment=ENGINEROOM_ADMIN_CTL=/usr/local/bin/engineroom-admin
+Environment=ENGINEROOM_AGENTS_FILE=/var/lib/engineroom/agents.json
 Environment=ENGINEROOM_SOCKET_DIR=/run/engineroom
 Environment=ENGINEROOM_WEB_DIST=/usr/local/share/engineroom/web
 WorkingDirectory=/var/lib/engineroom

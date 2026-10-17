@@ -1,25 +1,31 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { ChatDetail, ChatMeta, Settings, StreamEvent, TranscriptEntry, WorkspaceEntry } from "@engineroom/protocol";
+import type { AgentId, ChatDetail, ChatMeta, Settings, StreamEvent, TranscriptEntry, WorkspaceEntry } from "@engineroom/protocol";
 import { AGENTS } from "@engineroom/protocol";
 import {
   ApiError,
+  addAccount,
   cancelChat,
   createChat,
   getChat,
   getSettings,
+  listAccounts,
   listChats,
   listWorkspaces,
   login,
   logout,
   me,
+  revokeAccount,
+  saveAgents,
   saveSettings,
   sendMessage,
+  type Account,
+  type Session,
 } from "./api.ts";
 
-type View = "chat" | "settings" | "new";
+type View = "chat" | "settings" | "new" | "admin";
 
 export function App() {
-  const [session, setSession] = useState<{ username: string; home: string } | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -28,10 +34,10 @@ export function App() {
 
   if (!ready) return <main className="login-screen"><p className="muted">Loading…</p></main>;
   if (!session) return <Login onSuccess={setSession} />;
-  return <Shell session={session} onLogout={() => setSession(null)} />;
+  return <Shell session={session} onLogout={() => setSession(null)} onSession={setSession} />;
 }
 
-function Login({ onSuccess }: { onSuccess: (session: { username: string; home: string }) => void }) {
+function Login({ onSuccess }: { onSuccess: (session: Session) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -80,9 +86,11 @@ function Login({ onSuccess }: { onSuccess: (session: { username: string; home: s
 function Shell({
   session,
   onLogout,
+  onSession,
 }: {
-  session: { username: string; home: string };
+  session: Session;
   onLogout: () => void;
+  onSession: (session: Session) => void;
 }) {
   const [chats, setChats] = useState<ChatMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -117,6 +125,7 @@ function Shell({
         <div className="nav">
           <button className="primary" type="button" onClick={() => setView("new")}>New chat</button>
           <button className="ghost" type="button" onClick={() => setView("settings")}>Settings</button>
+          {session.admin && <button className="ghost" type="button" onClick={() => setView("admin")}>Admin</button>}
         </div>
         <div className="chat-list">
           {chats.map((chat) => (
@@ -138,10 +147,17 @@ function Shell({
         {error && <p className="alert" role="alert">{error}</p>}
       </aside>
       <section className="main">
-        {view === "settings" && <SettingsView />}
+        {view === "settings" && <SettingsView agents={session.agents} />}
+        {view === "admin" && session.admin && (
+          <AdminView
+            session={session}
+            onAgents={(agents) => onSession({ ...session, agents })}
+          />
+        )}
         {view === "new" && (
           <NewChat
             home={session.home}
+            agents={session.agents}
             onCreated={(chat) => {
               setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
               setActiveId(chat.id);
@@ -161,10 +177,18 @@ function Shell({
   );
 }
 
-function NewChat({ home, onCreated }: { home: string; onCreated: (chat: ChatMeta) => void }) {
+function NewChat({
+  home,
+  agents,
+  onCreated,
+}: {
+  home: string;
+  agents: AgentId[];
+  onCreated: (chat: ChatMeta) => void;
+}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
-  const [agent, setAgent] = useState("cursor");
+  const [agent, setAgent] = useState(agents[0] || "cursor");
   const [model, setModel] = useState("");
   const [workspace, setWorkspace] = useState(home);
   const [error, setError] = useState("");
@@ -173,7 +197,7 @@ function NewChat({ home, onCreated }: { home: string; onCreated: (chat: ChatMeta
   useEffect(() => {
     getSettings().then((next) => {
       setSettings(next);
-      setAgent(next.defaultAgent);
+      setAgent(agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent);
       setModel(next.defaultModel);
     }).catch((err) => setError(err instanceof Error ? err.message : "could not load settings"));
     listWorkspaces().then((items) => {
@@ -201,8 +225,8 @@ function NewChat({ home, onCreated }: { home: string; onCreated: (chat: ChatMeta
       <h2>Start in {settings ? "your home" : "…"}</h2>
       <label>
         Agent
-        <select value={agent} onChange={(event) => setAgent(event.target.value)}>
-          {AGENTS.map((item) => <option key={item} value={item}>{item}</option>)}
+        <select value={agent} onChange={(event) => setAgent(event.target.value as AgentId)}>
+          {agents.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
       <label>
@@ -222,15 +246,18 @@ function NewChat({ home, onCreated }: { home: string; onCreated: (chat: ChatMeta
   );
 }
 
-function SettingsView() {
+function SettingsView({ agents }: { agents: AgentId[] }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    getSettings().then(setSettings).catch((err) => setError(message(err)));
-  }, []);
+    getSettings().then((next) => {
+      const agent = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent;
+      setSettings({ ...next, defaultAgent: agent });
+    }).catch((err) => setError(message(err)));
+  }, [agents]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -259,7 +286,7 @@ function SettingsView() {
           value={settings.defaultAgent}
           onChange={(event) => setSettings({ ...settings, defaultAgent: event.target.value as Settings["defaultAgent"] })}
         >
-          {AGENTS.map((item) => <option key={item} value={item}>{item}</option>)}
+          {agents.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
       <label>
@@ -272,7 +299,7 @@ function SettingsView() {
       </label>
       <details>
         <summary>CLI paths</summary>
-        {AGENTS.map((agent) => (
+        {agents.map((agent) => (
           <label key={agent}>
             {agent}
             <input
@@ -293,6 +320,147 @@ function SettingsView() {
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
   );
+}
+
+function AdminView({ session, onAgents }: { session: Session; onAgents: (agents: AgentId[]) => void }) {
+  const [flags, setFlags] = useState<Record<AgentId, boolean>>(() => agentFlags(session.agents));
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function refreshUsers() {
+    setAccounts(await listAccounts());
+  }
+
+  useEffect(() => {
+    refreshUsers().catch((err) => setError(message(err)));
+  }, []);
+
+  function toggle(agent: AgentId) {
+    const next = { ...flags, [agent]: !flags[agent] };
+    if (!AGENTS.some((item) => next[item])) {
+      setError("At least one agent must stay on");
+      return;
+    }
+    setError("");
+    setFlags(next);
+  }
+
+  async function saveAgentList(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const savedAgents = await saveAgents(flags);
+      onAgents(savedAgents.agents);
+      setSaved("Agents saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addUser(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setSaved("");
+    try {
+      await addAccount(username.trim(), password);
+      setUsername("");
+      setPassword("");
+      setSaved("Access granted");
+      await refreshUsers();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(name: string) {
+    setBusy(true);
+    setError("");
+    setSaved("");
+    try {
+      await revokeAccount(name);
+      setSaved(`Revoked ${name}`);
+      await refreshUsers();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="settings">
+      <form onSubmit={(event) => void saveAgentList(event)}>
+        <p className="eyebrow">Admin</p>
+        <h2>Available agents</h2>
+        <p className="muted">These are the agents everyone can choose for a new chat.</p>
+        {AGENTS.map((agent) => (
+          <label className="check" key={agent}>
+            <input type="checkbox" checked={flags[agent]} onChange={() => toggle(agent)} />
+            {agent}
+          </label>
+        ))}
+        <button className="primary" type="submit" disabled={busy}>Save agents</button>
+      </form>
+      <form onSubmit={(event) => void addUser(event)}>
+        <h2>People</h2>
+        <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password. Revoke removes access and leaves their files in place.</p>
+        <div className="accounts">
+          {accounts.map((account) => (
+            <div className="account" key={account.username}>
+              <div>
+                <strong>{account.username}</strong>
+                <span>{account.home}</span>
+              </div>
+              {account.username === session.username ? (
+                <span className="muted">Administrator</span>
+              ) : (
+                <button className="danger" type="button" disabled={busy} onClick={() => void revoke(account.username)}>
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+          {accounts.length === 0 && <p className="muted">No accounts yet.</p>}
+        </div>
+        <label>
+          Username
+          <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+        <button className="primary" type="submit" disabled={busy}>Add user</button>
+      </form>
+      <p className="alert" role="alert">{error}</p>
+      {saved && <p className="muted">{saved}</p>}
+    </div>
+  );
+}
+
+function agentFlags(agents: AgentId[]): Record<AgentId, boolean> {
+  return {
+    cursor: agents.includes("cursor"),
+    claude: agents.includes("claude"),
+    pi: agents.includes("pi"),
+  };
 }
 
 function ChatView({ chatId, onChanged }: { chatId: string; onChanged: () => void }) {

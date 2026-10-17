@@ -112,6 +112,19 @@ textarea { min-height: 74px; resize: vertical; }
 .settings { padding: 20px; max-width: 640px; }
 .empty { margin: auto; color: var(--muted); text-align: center; }
 .row { display: flex; gap: 8px; align-items: center; }
+.check { display: flex; align-items: center; gap: 8px; }
+.check input { width: auto; }
+.accounts { display: grid; gap: 8px; }
+.account {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.account span { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.settings form + form { margin-top: 28px; }
 
 @media (max-width: 800px) {
   .shell { grid-template-columns: 1fr; }

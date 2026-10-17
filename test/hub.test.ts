@@ -89,6 +89,9 @@ test("the hub only opens the signed-in user's runner", async () => {
     const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     assert.ok(cookie);
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const me = (await (await fetch(`${base}/api/me`, { headers })).json()) as { admin: boolean; agents: string[] };
+    assert.equal(me.admin, false);
+    assert.deepEqual(me.agents, ["cursor", "claude", "pi"]);
 
     const forged = await fetch(`${base}/api/chats`, { headers: { Cookie: "engineroom_session=alice.forged" } });
     assert.equal(forged.status, 401);

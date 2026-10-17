@@ -29,6 +29,9 @@ export function main() {
     pamHelper: process.env.ENGINEROOM_PAM_HELPER || "/usr/local/bin/engineroom-pam-auth",
     webDist: process.env.ENGINEROOM_WEB_DIST,
     cookieSecure: process.env.ENGINEROOM_COOKIE_SECURE !== "0",
+    adminUser: process.env.ENGINEROOM_ADMIN || "",
+    agentsFile: process.env.ENGINEROOM_AGENTS_FILE || "/var/lib/engineroom/agents.json",
+    adminCtl: process.env.ENGINEROOM_ADMIN_CTL || "/usr/local/bin/engineroom-admin",
   });
   hub.listen(port, host, () => {
     console.error(`engineroom-hub listening on ${host}:${port}`);

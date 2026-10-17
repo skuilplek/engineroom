@@ -28,6 +28,7 @@ install -m 0755 -o root -g root deploy/pam/engineroom-pam-auth /usr/local/libexe
 install -m 0755 deploy/bin/engineroom-pam-auth /usr/local/bin/engineroom-pam-auth
 install -m 0755 deploy/pam/engineroom-peercred /usr/local/bin/engineroom-peercred
 install -m 0755 deploy/engineroom-ctl /usr/local/bin/engineroom-ctl
+install -m 0755 deploy/bin/engineroom-admin /usr/local/bin/engineroom-admin
 install -m 0755 deploy/bin/engineroom-runner /usr/local/bin/engineroom-runner
 install -m 0755 deploy/bin/engineroom-hub /usr/local/bin/engineroom-hub
 install -m 0440 deploy/sudoers/engineroom /etc/sudoers.d/engineroom

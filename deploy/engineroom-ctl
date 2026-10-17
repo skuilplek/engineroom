@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start or stop one user's runner. This is the only command the hub may sudo.
+# Start or stop one user's runner. The hub may also sudo engineroom-admin.
 set -euo pipefail
 
 cmd="${1:-}"

@@ -53,8 +53,16 @@ else
   cookie_secure=0
   site=":80"
 fi
+admin="${ENGINEROOM_ADMIN:-}"
+if [[ -z "$admin" && -n "${SUDO_USER:-}" ]]; then
+  sudo_uid="$(id -u "$SUDO_USER")"
+  if (( sudo_uid >= 1000 )); then
+    admin="$SUDO_USER"
+  fi
+fi
 cat > /etc/engineroom/hub.env <<EOF
 ENGINEROOM_COOKIE_SECURE=${cookie_secure}
+ENGINEROOM_ADMIN=${admin}
 EOF
 chmod 0644 /etc/engineroom/hub.env
 
@@ -95,10 +103,10 @@ Engineroom is installed and will start at boot.
 The UI is served by engineroom-hub.service. Open ${url} and sign in with a
 Linux username and password. Each person's chats stay in their home.
 
-Add someone else with:
-  sudo usermod -aG engineroom-users alice
+${admin:-The user who ran this script} is the administrator. That account can
+turn agents on or off and add or revoke people from the Admin page.
 
-They still sign in once to the CLIs from that account (agent, claude, pi)
+Each person still signs in once to the CLIs from that account (agent, claude, pi)
 so those credentials stay in their home.
 
 Set ENGINEROOM_HOST=chat.example.com and run this script again for HTTPS.

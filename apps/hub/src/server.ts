@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { isInsidePath, type AgentId, type RunnerRequest, type SettingsPatch, type StreamEvent } from "@engineroom/protocol";
+import { assertUsername, isAgentId, isInsidePath, type AgentId, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent } from "@engineroom/protocol";
+import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
+import { enabledAgentIds, flagsFromBody, loadAgentFlags, saveAgentFlags } from "./agents.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
 import { clearCookie, cookieValue, readSession, sessionCookie, signSession } from "./session.ts";
@@ -13,8 +15,13 @@ export interface HubOptions {
   pamHelper: string;
   webDist?: string;
   cookieSecure: boolean;
+  adminUser?: string;
+  agentsFile?: string;
+  adminCtl?: string;
   lookup?: (username: string) => LinuxUser | null;
   authenticate?: (username: string, password: string) => Promise<boolean>;
+  listAccounts?: () => Account[];
+  runAdmin?: (action: "add" | "revoke", username: string, password?: string) => Promise<void>;
 }
 
 const failures = new Map<string, { count: number; reset: number }>();
@@ -35,6 +42,13 @@ export function createHub(options: HubOptions) {
   const authenticate =
     options.authenticate ??
     ((username: string, password: string) => pamAuthenticate(username, password, options.pamHelper));
+  const adminUser = (options.adminUser || "").trim();
+  const agentsFile = options.agentsFile || "";
+  const accounts = options.listAccounts ?? (() => listAccounts());
+  const runAdmin =
+    options.runAdmin ??
+    ((action: "add" | "revoke", username: string, password?: string) =>
+      runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password));
 
   return createServer((req, res) => {
     void handle(req, res).catch((error) => {
@@ -76,7 +90,11 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (url.pathname === "/api/me" && req.method === "GET") {
-      sendJson(res, 200, { username: user.username, home: user.home });
+      sendJson(res, 200, profile(user));
+      return;
+    }
+    if (url.pathname.startsWith("/api/admin")) {
+      await admin(req, res, url, user);
       return;
     }
     await proxy(req, res, url, user);
@@ -103,7 +121,53 @@ export function createHub(options: HubOptions) {
     }
     failures.delete(key);
     res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret), options.cookieSecure));
-    sendJson(res, 200, { username: user.username, home: user.home });
+    sendJson(res, 200, profile(user));
+  }
+
+  function profile(user: LinuxUser) {
+    return {
+      username: user.username,
+      home: user.home,
+      admin: adminUser !== "" && user.username === adminUser,
+      agents: enabledAgentIds(loadAgentFlags(agentsFile)),
+    };
+  }
+
+  function assertAgentEnabled(agent: AgentId) {
+    if (!loadAgentFlags(agentsFile)[agent]) throw new Error("invalid agent");
+  }
+
+  async function admin(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
+    if (user.username !== adminUser || adminUser === "") {
+      sendJson(res, 403, { error: "admin only" });
+      return;
+    }
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
+      const flags = saveAgentFlags(agentsFile, flagsFromBody(await readJson(req)));
+      sendJson(res, 200, { agents: enabledAgentIds(flags) });
+      return;
+    }
+    if (parts[2] === "users" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, accounts());
+      return;
+    }
+    if (parts[2] === "users" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { username?: unknown; password?: unknown };
+      const username = assertUsername(typeof body.username === "string" ? body.username : "");
+      if (username === adminUser) throw new Error("must not change this account");
+      await runAdmin("add", username, cleanPassword(body.password));
+      sendJson(res, 201, { ok: true });
+      return;
+    }
+    if (parts[2] === "users" && parts[4] === "revoke" && parts.length === 5 && req.method === "POST") {
+      const username = assertUsername(decodeURIComponent(parts[3] || ""));
+      if (username === adminUser) throw new Error("must not change this account");
+      await runAdmin("revoke", username);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    sendJson(res, 404, { error: "not found" });
   }
 
   async function proxy(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
@@ -113,8 +177,10 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "settings" && parts.length === 2 && req.method === "PUT") {
-      const body = (await readJson(req)) as { settings?: unknown };
-      sendJson(res, 200, await call(user, { type: "put_settings", settings: (body.settings ?? body) as never }));
+      const body = (await readJson(req)) as { settings?: SettingsPatch };
+      const patch = (body.settings ?? body) as SettingsPatch;
+      if (patch.defaultAgent) assertAgentEnabled(patch.defaultAgent);
+      sendJson(res, 200, await call(user, { type: "put_settings", settings: patch }));
       return;
     }
     if (parts[1] === "workspaces" && req.method === "GET") {
@@ -127,12 +193,19 @@ export function createHub(options: HubOptions) {
     }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "POST") {
       const body = (await readJson(req)) as Record<string, unknown>;
+      if (body.agent == null || body.agent === "") {
+        const settings = (await call(user, { type: "get_settings" })) as Settings;
+        assertAgentEnabled(settings.defaultAgent);
+      } else {
+        if (!isAgentId(body.agent)) throw new Error("invalid agent");
+        assertAgentEnabled(body.agent);
+      }
       sendJson(
         res,
         201,
         await call(user, {
           type: "create_chat",
-          agent: body.agent as never,
+          agent: isAgentId(body.agent) ? body.agent : undefined,
           model: body.model as string | undefined,
           workspace: body.workspace as string | undefined,
           title: body.title as string | undefined,
