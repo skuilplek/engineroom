@@ -132,6 +132,17 @@ test("the hub only opens the signed-in user's runner", async () => {
     assert.equal(saved.status, 200);
     const settings = (await (await fetch(`${base}/api/settings`, { headers })).json()) as { defaultAgent: string };
     assert.equal(settings.defaultAgent, "pi");
+
+    const repos = await fetch(`${base}/api/repositories`, { headers });
+    assert.equal(repos.status, 200);
+    assert.deepEqual(await repos.json(), []);
+    await mkdir(path.join(home, "plain"));
+    const plain = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: path.join(home, "plain") }),
+    });
+    assert.equal(plain.status, 403);
   } finally {
     hub.close();
     bob.close();

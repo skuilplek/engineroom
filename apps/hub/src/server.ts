@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { assertUsername, isAgentId, isInsidePath, type AgentId, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent } from "@engineroom/protocol";
+import { assertUsername, isAgentId, isInsidePath, type AgentId, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, saveAgentFlags } from "./agents.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
@@ -35,6 +35,7 @@ interface RunnerCall {
   title?: string;
   settings?: SettingsPatch;
   prompt?: string;
+  enabled?: string[];
 }
 
 export function createHub(options: HubOptions) {
@@ -160,6 +161,24 @@ export function createHub(options: HubOptions) {
       sendJson(res, 201, { ok: true });
       return;
     }
+    if (parts[2] === "users" && parts[4] === "repositories" && parts.length === 5) {
+      const username = assertUsername(decodeURIComponent(parts[3] || ""));
+      const target = lookup(username);
+      if (!userMayLogin(target)) {
+        sendJson(res, 404, { error: "not found" });
+        return;
+      }
+      if (req.method === "GET") {
+        sendJson(res, 200, await call(target, { type: "list_repositories" }));
+        return;
+      }
+      if (req.method === "PUT") {
+        const body = (await readJson(req)) as { enabled?: unknown };
+        if (!Array.isArray(body.enabled)) throw new Error("invalid repositories");
+        sendJson(res, 200, await call(target, { type: "set_repositories", enabled: body.enabled as string[] }));
+        return;
+      }
+    }
     if (parts[2] === "users" && parts[4] === "revoke" && parts.length === 5 && req.method === "POST") {
       const username = assertUsername(decodeURIComponent(parts[3] || ""));
       if (username === adminUser) throw new Error("must not change this account");
@@ -185,6 +204,11 @@ export function createHub(options: HubOptions) {
     }
     if (parts[1] === "workspaces" && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "list_workspaces" }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts.length === 2 && req.method === "GET") {
+      const listed = (await call(user, { type: "list_repositories" })) as RepositoryEntry[];
+      sendJson(res, 200, listed.filter((entry) => entry.enabled));
       return;
     }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "GET") {
@@ -311,6 +335,7 @@ function streamFile(res: ServerResponse, file: string) {
 }
 
 function statusFor(message: string): number {
+  if (message.includes("not enabled")) return 403;
   if (message.includes("invalid") || message.includes("empty") || message.includes("must")) return 400;
   if (message.includes("not found") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;

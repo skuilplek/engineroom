@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   applySettings,
@@ -10,11 +10,12 @@ import {
   type AgentId,
   type ChatDetail,
   type ChatMeta,
+  type RepositoryEntry,
   type Settings,
   type SettingsPatch,
   type TranscriptEntry,
 } from "@engineroom/protocol";
-import { resolveWorkspace } from "./workspace.ts";
+import { isGitRepository, listGitRepositories, repositoryPathAllowed, resolveWorkspace } from "./workspace.ts";
 
 export function dataRoot(home: string): string {
   return path.join(home, ".engineroom");
@@ -56,12 +57,32 @@ export async function saveSettings(home: string, patch: SettingsPatch): Promise<
   return next;
 }
 
+export async function listRepositories(home: string): Promise<RepositoryEntry[]> {
+  const [found, enabled] = await Promise.all([listGitRepositories(home), loadEnabledRepositories(home)]);
+  return found.map((entry) => ({ ...entry, enabled: enabled.has(entry.path) }));
+}
+
+export async function setEnabledRepositories(home: string, requested: string[]): Promise<RepositoryEntry[]> {
+  const homeReal = await realpath(home);
+  const enabled: string[] = [];
+  for (const raw of requested) {
+    const resolved = await resolveWorkspace(home, raw);
+    if (resolved === homeReal || !repositoryPathAllowed(homeReal, resolved) || !(await isGitRepository(resolved))) {
+      throw new Error("invalid repository");
+    }
+    if (!enabled.includes(resolved)) enabled.push(resolved);
+  }
+  await ensureRoot(home);
+  await writeAtomic(repositoriesFile(home), `${JSON.stringify({ enabled }, null, 2)}\n`);
+  return listRepositories(home);
+}
+
 export async function createChat(
   home: string,
   input: { agent?: AgentId; model?: string; workspace?: string; title?: string },
 ): Promise<ChatMeta> {
   const settings = await loadSettings(home);
-  const workspace = await resolveWorkspace(home, input.workspace);
+  const workspace = await resolveChatWorkspace(home, input.workspace);
   const now = new Date().toISOString();
   const agent = input.agent ?? settings.defaultAgent;
   const chat: ChatMeta = {
@@ -167,6 +188,33 @@ async function readTranscript(home: string, chatId: string): Promise<TranscriptE
     }
   }
   return entries;
+}
+
+async function resolveChatWorkspace(home: string, requested?: string): Promise<string> {
+  const homeReal = await realpath(home);
+  const workspace = await resolveWorkspace(home, requested);
+  if (workspace === homeReal) return workspace;
+  const enabled = await loadEnabledRepositories(home);
+  if (!repositoryPathAllowed(homeReal, workspace) || !enabled.has(workspace) || !(await isGitRepository(workspace))) {
+    throw new Error("repository is not enabled");
+  }
+  return workspace;
+}
+
+async function loadEnabledRepositories(home: string): Promise<Set<string>> {
+  try {
+    const parsed = JSON.parse(await readFile(repositoriesFile(home), "utf8")) as { enabled?: unknown };
+    if (!Array.isArray(parsed.enabled)) return new Set();
+    return new Set(parsed.enabled.filter((item): item is string => typeof item === "string" && item.startsWith("/")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    if (error instanceof SyntaxError) return new Set();
+    throw error;
+  }
+}
+
+function repositoriesFile(home: string): string {
+  return path.join(dataRoot(home), "repositories.json");
 }
 
 function chatDir(home: string, chatId: string): string {

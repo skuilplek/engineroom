@@ -56,6 +56,12 @@ export interface WorkspaceEntry {
   name: string;
 }
 
+export interface RepositoryEntry {
+  path: string;
+  name: string;
+  enabled: boolean;
+}
+
 export type StreamEvent =
   | { type: "text_delta"; text: string }
   | {
@@ -84,6 +90,8 @@ export type RunnerRequest =
   | { id: string; type: "get_settings" }
   | { id: string; type: "put_settings"; settings: SettingsPatch }
   | { id: string; type: "list_workspaces" }
+  | { id: string; type: "list_repositories" }
+  | { id: string; type: "set_repositories"; enabled: string[] }
   | { id: string; type: "send"; chatId: string; prompt: string }
   | { id: string; type: "cancel"; chatId: string };
 
@@ -179,7 +187,10 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "list_chats":
     case "get_settings":
     case "list_workspaces":
+    case "list_repositories":
       return { id: body.id, type: body.type };
+    case "set_repositories":
+      return { id: body.id, type: "set_repositories", enabled: parseEnabledPaths(body.enabled) };
     case "get_chat":
     case "cancel":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
@@ -205,6 +216,18 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     default:
       throw new Error("unknown request");
   }
+}
+
+function parseEnabledPaths(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("invalid repositories");
+  const enabled: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.length < 1 || item.length > 4096) {
+      throw new Error("invalid repositories");
+    }
+    enabled.push(item);
+  }
+  return enabled;
 }
 
 function optionalString(value: unknown, label: string, max: number): string | undefined {

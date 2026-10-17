@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { AgentId, ChatDetail, ChatMeta, Settings, StreamEvent, TranscriptEntry, WorkspaceEntry } from "@engineroom/protocol";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
 import { AGENTS } from "@engineroom/protocol";
 import {
   ApiError,
@@ -10,19 +10,21 @@ import {
   getSettings,
   listAccounts,
   listChats,
-  listWorkspaces,
+  listRepositories,
+  listUserRepositories,
   login,
   logout,
   me,
   revokeAccount,
   saveAgents,
   saveSettings,
+  saveUserRepositories,
   sendMessage,
   type Account,
   type Session,
 } from "./api.ts";
 
-type View = "chat" | "settings" | "new" | "admin";
+type View = "chat" | "settings" | "start" | "admin";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -93,58 +95,126 @@ function Shell({
   onSession: (session: Session) => void;
 }) {
   const [chats, setChats] = useState<ChatMeta[]>([]);
+  const [repos, setRepos] = useState<RepositoryEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("chat");
+  const [target, setTarget] = useState(session.home);
+  const [view, setView] = useState<View>("start");
   const [error, setError] = useState("");
+  const openingRef = useRef<{ id: string; prompt: string } | null>(null);
+  const consumedRef = useRef<string | null>(null);
+
+  function claimOpening(id: string): string | null {
+    const pending = openingRef.current;
+    if (!pending || pending.id !== id || consumedRef.current === id) return null;
+    consumedRef.current = id;
+    return pending.prompt;
+  }
 
   async function refresh() {
-    setChats(await listChats());
+    const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
+    setChats(nextChats);
+    setRepos(nextRepos);
   }
 
   useEffect(() => {
     refresh().catch((err) => setError(err instanceof Error ? err.message : "could not load chats"));
   }, []);
 
+  useEffect(() => {
+    if (strip(target) === strip(session.home)) return;
+    if (repos.some((repo) => strip(repo.path) === strip(target))) return;
+    setTarget(session.home);
+  }, [repos, session.home, target]);
+
+  const groups = useMemo(() => buildGroups(chats, repos, session.home), [chats, repos, session.home]);
+  const targetLabel = groups.find((group) => strip(group.path) === strip(target))?.label ?? "No repository";
+
+  function remember(chat: ChatMeta) {
+    setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
+  }
+
+  function choose(path: string) {
+    setTarget(path);
+    setActiveId(null);
+    setView("start");
+  }
+
+  function openChat(chat: ChatMeta) {
+    openingRef.current = null;
+    setActiveId(chat.id);
+    setView("chat");
+    const key = strip(chat.workspace);
+    if (key === strip(session.home) || repos.some((repo) => strip(repo.path) === key)) setTarget(chat.workspace);
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div>
-            <p className="eyebrow">Engineroom</p>
-            <h1>{session.username}</h1>
-            <p className="muted">{session.home}</p>
-          </div>
-          <button
-            className="ghost"
-            type="button"
-            onClick={() => logout().finally(onLogout)}
-          >
-            Sign out
+        <button className="new-chat" type="button" onClick={() => choose(target)}>
+          <IconPlus />
+          New Chat
+        </button>
+        <div className="side-nav">
+          <button className={view === "settings" ? "nav-item active" : "nav-item"} type="button" onClick={() => setView("settings")}>
+            <IconGear />
+            Customize
           </button>
-        </div>
-        <div className="nav">
-          <button className="primary" type="button" onClick={() => setView("new")}>New chat</button>
-          <button className="ghost" type="button" onClick={() => setView("settings")}>Settings</button>
-          {session.admin && <button className="ghost" type="button" onClick={() => setView("admin")}>Admin</button>}
-        </div>
-        <div className="chat-list">
-          {chats.map((chat) => (
-            <button
-              className={chat.id === activeId && view === "chat" ? "active" : ""}
-              key={chat.id}
-              type="button"
-              onClick={() => {
-                setActiveId(chat.id);
-                setView("chat");
-              }}
-            >
-              <strong>{chat.title}</strong>
-              <span>{chat.agent}{chat.running ? " · running" : ""}</span>
+          {session.admin && (
+            <button className={view === "admin" ? "nav-item active" : "nav-item"} type="button" onClick={() => setView("admin")}>
+              <IconSliders />
+              Admin
             </button>
-          ))}
-          {chats.length === 0 && <p className="muted">No chats yet.</p>}
+          )}
+        </div>
+        <p className="section-label">Conversations</p>
+        <div className="tree">
+          {groups.map((group) => {
+            const selected = view === "start" && strip(target) === strip(group.path);
+            return (
+              <div key={group.key}>
+                <div className={selected ? "repo-line active" : "repo-line"}>
+                  {group.canStart ? (
+                    <button className="repo-select" type="button" onClick={() => choose(group.path)}>
+                      <span className="dot-slot">{group.marked ? <span className="dot" /> : null}</span>
+                      <span className="repo-name" title={group.label}>{group.label}</span>
+                      {group.time ? <span className="repo-time">{group.time}</span> : null}
+                    </button>
+                  ) : (
+                    <div className="repo-select">
+                      <span className="dot-slot">{group.marked ? <span className="dot" /> : null}</span>
+                      <span className="repo-name" title={group.label}>{group.label}</span>
+                      {group.time ? <span className="repo-time">{group.time}</span> : null}
+                    </div>
+                  )}
+                  {group.canStart && (
+                    <button className="plus" type="button" aria-label={`New chat in ${group.label}`} onClick={() => choose(group.path)}>
+                      <IconPlus />
+                    </button>
+                  )}
+                </div>
+                {group.chats.map((chat) => (
+                  <button
+                    className={view === "chat" && chat.id === activeId ? "chat-row active" : "chat-row"}
+                    key={chat.id}
+                    type="button"
+                    onClick={() => openChat(chat)}
+                  >
+                    <span className="chat-title">{chat.title}</span>
+                    {chat.running ? <span className="chat-state">Running</span> : null}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
         </div>
         {error && <p className="alert" role="alert">{error}</p>}
+        <div className="sidebar-foot">
+          <div className="presence">
+            <span className="dot" />
+            <span>{session.username}</span>
+          </div>
+          <button className="sign-out" type="button" onClick={() => logout().finally(onLogout)}>Sign out</button>
+        </div>
       </aside>
       <section className="main">
         {view === "settings" && <SettingsView agents={session.agents} />}
@@ -152,14 +222,18 @@ function Shell({
           <AdminView
             session={session}
             onAgents={(agents) => onSession({ ...session, agents })}
+            onRepos={() => refresh().catch(() => undefined)}
           />
         )}
-        {view === "new" && (
-          <NewChat
-            home={session.home}
+        {view === "start" && (
+          <StartView
             agents={session.agents}
-            onCreated={(chat) => {
-              setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
+            workspace={target}
+            targetLabel={targetLabel}
+            onStarted={(chat, prompt) => {
+              remember(chat);
+              openingRef.current = { id: chat.id, prompt };
+              consumedRef.current = null;
               setActiveId(chat.id);
               setView("chat");
             }}
@@ -167,82 +241,100 @@ function Shell({
         )}
         {view === "chat" && activeId && (
           <ChatView
+            key={activeId}
             chatId={activeId}
+            home={session.home}
+            repos={repos}
+            claimOpening={claimOpening}
             onChanged={() => refresh().catch(() => undefined)}
           />
         )}
-        {view === "chat" && !activeId && <p className="empty">Choose a chat or start a new one.</p>}
       </section>
     </div>
   );
 }
 
-function NewChat({
-  home,
+function StartView({
   agents,
-  onCreated,
+  workspace,
+  targetLabel,
+  onStarted,
 }: {
-  home: string;
   agents: AgentId[];
-  onCreated: (chat: ChatMeta) => void;
+  workspace: string;
+  targetLabel: string;
+  onStarted: (chat: ChatMeta, prompt: string) => void;
 }) {
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
-  const [agent, setAgent] = useState(agents[0] || "cursor");
+  const box = useRef<HTMLTextAreaElement>(null);
+  const [agent, setAgent] = useState<AgentId>(agents[0] || "cursor");
   const [model, setModel] = useState("");
-  const [workspace, setWorkspace] = useState(home);
+  const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getSettings().then((next) => {
-      setSettings(next);
       setAgent(agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent);
       setModel(next.defaultModel);
-    }).catch((err) => setError(err instanceof Error ? err.message : "could not load settings"));
-    listWorkspaces().then((items) => {
-      setWorkspaces(items);
-      if (items[0]) setWorkspace(items[0].path);
-    }).catch((err) => setError(err instanceof Error ? err.message : "could not list folders"));
-  }, []);
+    }).catch((err) => setError(message(err)));
+  }, [agents]);
+
+  useEffect(() => {
+    box.current?.focus();
+  }, [workspace]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const text = prompt.trim();
+    if (!text || busy) return;
     setBusy(true);
     setError("");
     try {
-      onCreated(await createChat({ agent, model, workspace }));
+      const chat = await createChat({ agent, model, workspace });
+      onStarted(chat, text);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "could not create chat");
-    } finally {
+      setError(message(err));
       setBusy(false);
     }
   }
 
   return (
-    <form className="settings" onSubmit={submit}>
-      <p className="eyebrow">New chat</p>
-      <h2>Start in {settings ? "your home" : "…"}</h2>
-      <label>
-        Agent
-        <select value={agent} onChange={(event) => setAgent(event.target.value as AgentId)}>
-          {agents.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-      </label>
-      <label>
-        Model
-        <input value={model} placeholder="Leave blank for the CLI default" onChange={(event) => setModel(event.target.value)} />
-      </label>
-      <label>
-        Workspace
-        <select value={workspace} onChange={(event) => setWorkspace(event.target.value)}>
-          {workspaces.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
-        </select>
-      </label>
-      <p className="muted">The agent is fixed after the chat is created. Tools run as you, inside this folder.</p>
-      <p className="alert" role="alert">{error}</p>
-      <button className="primary" type="submit" disabled={busy}>Create chat</button>
-    </form>
+    <div className="start">
+      <h1>Let's Start Building!</h1>
+      <form className="launch" onSubmit={(event) => void submit(event)}>
+        <textarea
+          ref={box}
+          value={prompt}
+          placeholder="What do you want to build?"
+          aria-label="What do you want to build?"
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
+        />
+        <div className="launch-bar">
+          {agents.length > 1 && (
+            <label className="chip">
+              <select aria-label="Agent" value={agent} onChange={(event) => setAgent(event.target.value as AgentId)}>
+                {agents.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="chip">
+            Model
+            <input aria-label="Model" value={model} placeholder="default" onChange={(event) => setModel(event.target.value)} />
+          </label>
+          <button className="send" type="submit" disabled={busy || !prompt.trim()} aria-label="Send">
+            <IconArrow />
+          </button>
+        </div>
+        {error && <p className="alert" role="alert">{error}</p>}
+      </form>
+      <p className="context-line">{targetLabel}</p>
+    </div>
   );
 }
 
@@ -278,7 +370,7 @@ function SettingsView({ agents }: { agents: AgentId[] }) {
   if (!settings) return <p className="settings muted">Loading settings…</p>;
   return (
     <form className="settings" onSubmit={submit}>
-      <p className="eyebrow">Settings</p>
+      <p className="eyebrow">Customize</p>
       <h2>Defaults for new chats</h2>
       <label>
         Default agent
@@ -322,7 +414,15 @@ function SettingsView({ agents }: { agents: AgentId[] }) {
   );
 }
 
-function AdminView({ session, onAgents }: { session: Session; onAgents: (agents: AgentId[]) => void }) {
+function AdminView({
+  session,
+  onAgents,
+  onRepos,
+}: {
+  session: Session;
+  onAgents: (agents: AgentId[]) => void;
+  onRepos: () => void;
+}) {
   const [flags, setFlags] = useState<Record<AgentId, boolean>>(() => agentFlags(session.agents));
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [username, setUsername] = useState("");
@@ -332,7 +432,9 @@ function AdminView({ session, onAgents }: { session: Session; onAgents: (agents:
   const [busy, setBusy] = useState(false);
 
   async function refreshUsers() {
-    setAccounts(await listAccounts());
+    const next = await listAccounts();
+    setAccounts(next);
+    return next;
   }
 
   useEffect(() => {
@@ -412,6 +514,7 @@ function AdminView({ session, onAgents }: { session: Session; onAgents: (agents:
         ))}
         <button className="primary" type="submit" disabled={busy}>Save agents</button>
       </form>
+      <RepoAccess accounts={accounts} busy={busy} onSaved={onRepos} onError={setError} onBusy={setBusy} onNote={setSaved} />
       <form onSubmit={(event) => void addUser(event)}>
         <h2>People</h2>
         <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password. Revoke removes access and leaves their files in place.</p>
@@ -455,6 +558,106 @@ function AdminView({ session, onAgents }: { session: Session; onAgents: (agents:
   );
 }
 
+function RepoAccess({
+  accounts,
+  busy,
+  onSaved,
+  onError,
+  onBusy,
+  onNote,
+}: {
+  accounts: Account[];
+  busy: boolean;
+  onSaved: () => void;
+  onError: (value: string) => void;
+  onBusy: (value: boolean) => void;
+  onNote: (value: string) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [repos, setRepos] = useState<RepositoryEntry[] | null>(null);
+  const [enabled, setEnabled] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (username && accounts.some((account) => account.username === username)) return;
+    setUsername(accounts[0]?.username ?? "");
+  }, [accounts, username]);
+
+  useEffect(() => {
+    if (!username) {
+      setRepos([]);
+      setEnabled(new Set());
+      return undefined;
+    }
+    let cancel = false;
+    setRepos(null);
+    listUserRepositories(username).then((items) => {
+      if (cancel) return;
+      setRepos(items);
+      setEnabled(new Set(items.filter((item) => item.enabled).map((item) => item.path)));
+    }).catch((err) => {
+      if (!cancel) onError(message(err));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [username, onError]);
+
+  function toggle(path: string) {
+    setEnabled((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!username) return;
+    onBusy(true);
+    onNote("");
+    onError("");
+    try {
+      const saved = await saveUserRepositories(username, [...enabled]);
+      setRepos(saved);
+      setEnabled(new Set(saved.filter((item) => item.enabled).map((item) => item.path)));
+      onNote("Repositories saved");
+      onSaved();
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  return (
+    <form className="repo-access" onSubmit={(event) => void save(event)}>
+      <h2>Repositories</h2>
+      <p className="muted">Git repositories in Sites stay hidden until you enable them for that person. A chat can still start in the home directory with no repository.</p>
+      <label>
+        Person
+        <select value={username} onChange={(event) => setUsername(event.target.value)} disabled={accounts.length === 0}>
+          {accounts.map((account) => <option key={account.username} value={account.username}>{account.username}</option>)}
+        </select>
+      </label>
+      <div className="repo-admin">
+        {repos === null && <p className="muted">Loading repositories…</p>}
+        {repos?.map((repo) => (
+          <label className="check repo-choice" key={repo.path}>
+            <input type="checkbox" checked={enabled.has(repo.path)} onChange={() => toggle(repo.path)} />
+            <span>
+              <strong>{repo.name}</strong>
+              <span>{repo.path}</span>
+            </span>
+          </label>
+        ))}
+        {repos?.length === 0 && <p className="muted">No git repositories in Sites.</p>}
+      </div>
+      <button className="primary" type="submit" disabled={busy || !username || repos === null}>Save repositories</button>
+    </form>
+  );
+}
+
 function agentFlags(agents: AgentId[]): Record<AgentId, boolean> {
   return {
     cursor: agents.includes("cursor"),
@@ -463,7 +666,19 @@ function agentFlags(agents: AgentId[]): Record<AgentId, boolean> {
   };
 }
 
-function ChatView({ chatId, onChanged }: { chatId: string; onChanged: () => void }) {
+function ChatView({
+  chatId,
+  home,
+  repos,
+  claimOpening,
+  onChanged,
+}: {
+  chatId: string;
+  home: string;
+  repos: RepositoryEntry[];
+  claimOpening: (id: string) => string | null;
+  onChanged: () => void;
+}) {
   const [detail, setDetail] = useState<ChatDetail | null>(null);
   const [draft, setDraft] = useState<TranscriptEntry[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -477,26 +692,7 @@ function ChatView({ chatId, onChanged }: { chatId: string; onChanged: () => void
     return next;
   }
 
-  useEffect(() => {
-    setDetail(null);
-    load().catch((err) => setError(message(err)));
-  }, [chatId]);
-
-  useEffect(() => {
-    if (!detail?.chat.running || streaming) return undefined;
-    const timer = setInterval(() => {
-      load().catch(() => undefined);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [detail?.chat.running, streaming, chatId]);
-
-  const blocks = useMemo(() => groupTranscript(draft), [draft]);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const text = prompt.trim();
-    if (!text || !detail) return;
-    setPrompt("");
+  async function runPrompt(text: string) {
     setStreaming(true);
     setError("");
     setDraft((current) => [...current, { kind: "user", text, at: new Date().toISOString() }]);
@@ -515,17 +711,53 @@ function ChatView({ chatId, onChanged }: { chatId: string; onChanged: () => void
     }
   }
 
+  useEffect(() => {
+    let gone = false;
+    setDetail(null);
+    setError("");
+    load().then(() => {
+      if (gone) return;
+      const text = claimOpening(chatId);
+      if (text) void runPrompt(text);
+    }).catch((err) => {
+      if (!gone) setError(message(err));
+    });
+    return () => {
+      gone = true;
+    };
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!detail?.chat.running || streaming) return undefined;
+    const timer = setInterval(() => {
+      load().catch(() => undefined);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [detail?.chat.running, streaming, chatId]);
+
+  const blocks = useMemo(() => groupTranscript(draft), [draft]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const text = prompt.trim();
+    if (!text || !detail || streaming) return;
+    setPrompt("");
+    await runPrompt(text);
+  }
+
   async function stop() {
     await cancelChat(chatId).catch((err) => setError(message(err)));
   }
 
-  if (!detail) return <p className="settings muted">Loading chat…</p>;
+  if (!detail) {
+    return <p className={error ? "settings alert" : "settings muted"} role={error ? "alert" : undefined}>{error || "Loading chat…"}</p>;
+  }
   return (
     <>
       <header className="topbar">
         <div>
           <h2>{detail.chat.title}</h2>
-          <p className="muted">{detail.chat.agent} · {detail.chat.workspace}</p>
+          <p className="muted">{detail.chat.agent} · {workspaceLabel(detail.chat.workspace, home, repos)}</p>
         </div>
         <div className="row">
           {(streaming || detail.chat.running) && (
@@ -570,6 +802,120 @@ function ChatView({ chatId, onChanged }: { chatId: string; onChanged: () => void
       </form>
     </>
   );
+}
+
+function IconPlus() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconGear() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconSliders() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M2 4h12M2 8h12M2 12h12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="5" cy="4" r="1.4" fill="currentColor" />
+      <circle cx="11" cy="8" r="1.4" fill="currentColor" />
+      <circle cx="7" cy="12" r="1.4" fill="currentColor" />
+    </svg>
+  );
+}
+
+function IconArrow() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+interface RepoGroup {
+  key: string;
+  label: string;
+  path: string;
+  chats: ChatMeta[];
+  canStart: boolean;
+  time?: string;
+  marked: boolean;
+}
+
+function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: string): RepoGroup[] {
+  const homeKey = strip(home);
+  const buckets = new Map<string, ChatMeta[]>();
+  for (const chat of chats) {
+    const key = strip(chat.workspace);
+    const list = buckets.get(key) ?? [];
+    list.push(chat);
+    buckets.set(key, list);
+  }
+  const newestKey = chats[0] ? strip(chats[0].workspace) : "";
+  function take(key: string, label: string, canStart: boolean): RepoGroup {
+    const items = buckets.get(key) ?? [];
+    buckets.delete(key);
+    return {
+      key,
+      label,
+      path: key,
+      chats: items,
+      canStart,
+      time: items[0] ? relativeTime(items[0].updatedAt) : undefined,
+      marked: items.some((chat) => chat.running) || (newestKey !== "" && newestKey === key),
+    };
+  }
+  const groups = [take(homeKey, "No repository", true)];
+  for (const repo of [...repos].sort((a, b) => a.name.localeCompare(b.name))) {
+    groups.push(take(strip(repo.path), repo.name, true));
+  }
+  for (const [key, items] of [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const label = key.split("/").filter(Boolean).pop() || key;
+    groups.push({
+      key,
+      label,
+      path: key,
+      chats: items,
+      canStart: false,
+      time: items[0] ? relativeTime(items[0].updatedAt) : undefined,
+      marked: items.some((chat) => chat.running) || newestKey === key,
+    });
+  }
+  return groups;
+}
+
+function workspaceLabel(workspace: string, home: string, repos: RepositoryEntry[]): string {
+  if (strip(workspace) === strip(home)) return "No repository";
+  return repos.find((repo) => strip(repo.path) === strip(workspace))?.name
+    || workspace.split("/").filter(Boolean).pop()
+    || workspace;
+}
+
+function strip(value: string): string {
+  return value.length > 1 && value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const delta = Math.max(0, Date.now() - then);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (delta < minute) return "just now";
+  if (delta < hour) return `${Math.round(delta / minute)}m ago`;
+  if (delta < day) return `${Math.round(delta / hour)}h ago`;
+  const days = Math.round(delta / day);
+  if (days < 14) return `${days}d ago`;
+  return `${Math.round(days / 7)}w ago`;
 }
 
 type Block =

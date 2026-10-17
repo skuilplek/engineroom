@@ -42,6 +42,13 @@ test("runner requests reject a chat id that is not a uuid", () => {
     model: "gpt",
   });
   assert.equal(request.type, "create_chat");
+  const listed = parseRunnerRequest({ id: "2", type: "list_repositories" });
+  assert.equal(listed.type, "list_repositories");
+  const enabled = parseRunnerRequest({ id: "3", type: "set_repositories", enabled: ["/home/alice/proj"] });
+  assert.equal(enabled.type, "set_repositories");
+  if (enabled.type === "set_repositories") assert.deepEqual(enabled.enabled, ["/home/alice/proj"]);
+  assert.throws(() => parseRunnerRequest({ id: "4", type: "set_repositories", enabled: "proj" }));
+  assert.throws(() => parseRunnerRequest({ id: "5", type: "set_repositories", enabled: [""] }));
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

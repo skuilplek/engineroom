@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
-import { createChat, listChats } from "../apps/runner/src/store.ts";
-import { listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
+import { createChat, listChats, listRepositories, setEnabledRepositories } from "../apps/runner/src/store.ts";
+import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 
 const execFileAsync = promisify(execFile);
 const helper = path.resolve("deploy/pam/engineroom-peercred");
@@ -34,6 +34,62 @@ test("workspaces reject a symlink that leaves the home directory", async () => {
   assert.equal(listed.some((entry) => entry.name === "work"), true);
   await rm(home, { recursive: true, force: true });
   await rm(outside, { recursive: true, force: true });
+});
+
+test("git repositories are discovered inside the home and stay disabled", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-repos-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-repos-out-"));
+  const sites = path.join(home, "Sites");
+  const repo = path.join(sites, "proj");
+  const nested = path.join(repo, "pkg");
+  const worktree = path.join(sites, "tree");
+  const stray = path.join(home, "stray");
+  const deep = path.join(sites, "a", "b", "c", "d", "e", "f", "gone");
+  const kept = path.join(sites, "a", "b", "c", "d", "e", "kept");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  await mkdir(path.join(nested, ".git"), { recursive: true });
+  await mkdir(worktree, { recursive: true });
+  await writeFile(path.join(worktree, ".git"), "gitdir: ../proj/.git\n");
+  await mkdir(path.join(stray, ".git"), { recursive: true });
+  await mkdir(path.join(outside, ".git"));
+  await symlink(outside, path.join(sites, "escape"));
+  await mkdir(path.join(home, "notes"));
+  await mkdir(deep, { recursive: true });
+  await mkdir(kept, { recursive: true });
+  await mkdir(path.join(deep, ".git"));
+  await mkdir(path.join(kept, ".git"));
+  await mkdir(path.join(sites, "node_modules", "lib", ".git"), { recursive: true });
+  try {
+    const found = await listGitRepositories(home);
+    const names = found.map((entry) => entry.name).sort();
+    assert.deepEqual(names, ["a/b/c/d/e/kept", "proj", "tree"]);
+    assert.equal(found.every((entry) => entry.path !== outside), true);
+    const listed = await listRepositories(home);
+    assert.equal(listed.every((entry) => entry.enabled === false), true);
+
+    await assert.rejects(() => createChat(home, { workspace: path.join(home, "notes") }), /not enabled/);
+    await assert.rejects(() => createChat(home, { workspace: repo }), /not enabled/);
+    await assert.rejects(() => createChat(home, { workspace: "/etc" }), /home directory/);
+    const atHome = await createChat(home, { title: "loose" });
+    assert.equal(atHome.workspace, await import("node:fs/promises").then((fs) => fs.realpath(home)));
+
+    await assert.rejects(() => setEnabledRepositories(home, [path.join(home, "notes")]), /invalid repository/);
+    await assert.rejects(
+      () => setEnabledRepositories(home, [path.join(sites, "node_modules", "lib")]),
+      /invalid repository/,
+    );
+    await assert.rejects(() => setEnabledRepositories(home, [stray]), /invalid repository/);
+    const enabled = await setEnabledRepositories(home, [repo]);
+    assert.equal(enabled.find((entry) => entry.name === "proj")?.enabled, true);
+    assert.equal(enabled.find((entry) => entry.name === "tree")?.enabled, false);
+    const chat = await createChat(home, { workspace: repo, title: "in repo" });
+    assert.equal(chat.workspace, await import("node:fs/promises").then((fs) => fs.realpath(repo)));
+    const visible = await listRepositories(home);
+    assert.equal(visible.filter((entry) => entry.enabled).map((entry) => entry.name).join(","), "proj");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("chats in one home are invisible from another", async () => {

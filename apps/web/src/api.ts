@@ -1,4 +1,4 @@
-import type { AgentId, ChatDetail, ChatMeta, Settings, StreamEvent, WorkspaceEntry } from "@engineroom/protocol";
+import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent } from "@engineroom/protocol";
 
 export interface Session {
   username: string;
@@ -77,8 +77,19 @@ export function saveSettings(settings: Settings) {
   return api<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(settings) });
 }
 
-export function listWorkspaces() {
-  return api<WorkspaceEntry[]>("/api/workspaces");
+export function listRepositories() {
+  return api<RepositoryEntry[]>("/api/repositories");
+}
+
+export function listUserRepositories(username: string) {
+  return api<RepositoryEntry[]>(`/api/admin/users/${encodeURIComponent(username)}/repositories`);
+}
+
+export function saveUserRepositories(username: string, enabled: string[]) {
+  return api<RepositoryEntry[]>(`/api/admin/users/${encodeURIComponent(username)}/repositories`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
 }
 
 export function listAccounts() {

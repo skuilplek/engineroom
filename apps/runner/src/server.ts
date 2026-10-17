@@ -13,7 +13,7 @@ import {
   type TranscriptEntry,
 } from "@engineroom/protocol";
 import { defaultDrivers, type AgentDriver } from "./drivers.ts";
-import { appendTranscript, createChat, getChat, listChats, loadSettings, saveSettings, updateChat } from "./store.ts";
+import { appendTranscript, createChat, getChat, listChats, listRepositories, loadSettings, saveSettings, setEnabledRepositories, updateChat } from "./store.ts";
 import { listWorkspaces } from "./workspace.ts";
 
 export interface RunnerOptions {
@@ -113,6 +113,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return saveSettings(home, request.settings);
       case "list_workspaces":
         return listWorkspaces(home);
+      case "list_repositories":
+        return listRepositories(home);
+      case "set_repositories":
+        return setEnabledRepositories(home, request.enabled);
       case "cancel":
         runs.get(request.chatId)?.abort();
         return { ok: true };

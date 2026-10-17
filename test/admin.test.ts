@@ -156,6 +156,125 @@ test("the administrator sets agents and accounts", async () => {
   }
 });
 
+test("the administrator enables repositories for one user", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-repos-admin-"));
+  const aliceHome = path.join(root, "alice");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  const carolRepo = path.join(carolHome, "Sites", "widget");
+  const carolOther = path.join(carolHome, "Sites", "other");
+  await mkdir(path.join(carolRepo, ".git"), { recursive: true });
+  await mkdir(path.join(carolOther, ".git"), { recursive: true });
+  await mkdir(aliceHome);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home: aliceHome,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const aliceRunner = await startRunner({
+    home: aliceHome,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("repo-admin-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const aliceLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const aliceCookie = (aliceLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(aliceCookie);
+    assert.ok(carolCookie);
+    const aliceHeaders = { Cookie: aliceCookie!, "Content-Type": "application/json" };
+    const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
+
+    const denied = await fetch(`${base}/api/admin/users/carol/repositories`, {
+      method: "PUT",
+      headers: carolHeaders,
+      body: JSON.stringify({ enabled: [carolRepo] }),
+    });
+    assert.equal(denied.status, 403);
+
+    const discovered = (await (await fetch(`${base}/api/admin/users/carol/repositories`, { headers: aliceHeaders })).json()) as Array<{
+      name: string;
+      path: string;
+      enabled: boolean;
+    }>;
+    assert.deepEqual(discovered.map((entry) => entry.name).sort(), ["other", "widget"]);
+    assert.equal(discovered.every((entry) => entry.enabled === false), true);
+
+    const widget = discovered.find((entry) => entry.name === "widget");
+    assert.ok(widget);
+    const saved = await fetch(`${base}/api/admin/users/carol/repositories`, {
+      method: "PUT",
+      headers: aliceHeaders,
+      body: JSON.stringify({ enabled: [widget.path] }),
+    });
+    assert.equal(saved.status, 200);
+
+    const visible = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
+    assert.deepEqual(visible.map((entry) => entry.name), ["widget"]);
+
+    const created = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ workspace: widget.path, title: "widget chat" }),
+    });
+    assert.equal(created.status, 201);
+    const hidden = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ workspace: carolOther }),
+    });
+    assert.equal(hidden.status, 403);
+    const loose = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ workspace: carolHome, title: "no repo" }),
+    });
+    assert.equal(loose.status, 201);
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await carolRunner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("engineroom-admin refuses reserved accounts before it changes anything", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-admin-script-"));
   const envFile = path.join(root, "hub.env");
