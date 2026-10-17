@@ -125,6 +125,25 @@ test("cursor partial text is not repeated when a later snapshot arrives", () => 
   assert.equal(parser.sessionId, "chat-1");
 });
 
+test("cursor thinking and connection lines stay in the live stream", () => {
+  const parser = createCliParser("cursor", "chat-1");
+  const thinking = parser.push({ type: "thinking", subtype: "delta", text: "Looking at the file" });
+  const done = parser.push({ type: "thinking", subtype: "completed" });
+  const retry = parser.push({ type: "connection", subtype: "retrying" });
+  assert.deepEqual(thinking, [{ type: "thinking", text: "Looking at the file" }]);
+  assert.deepEqual(done, []);
+  assert.deepEqual(retry, [{ type: "status", text: "connection · retrying" }]);
+});
+
+test("claude thinking deltas are kept", () => {
+  const parser = createCliParser("claude", null);
+  const events = parser.push({
+    type: "stream_event",
+    event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "hmm" } },
+  });
+  assert.deepEqual(events, [{ type: "thinking", text: "hmm" }]);
+});
+
 test("a fresh claude run records the first session id", () => {
   const parser = createCliParser("claude", null);
   parser.push({ type: "system", subtype: "init", session_id: "fresh" });

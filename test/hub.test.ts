@@ -150,3 +150,95 @@ test("the hub only opens the signed-in user's runner", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("live follow emits a line before the agent finishes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-live-"));
+  const home = path.join(root, "home");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  let release: () => void = () => undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: {
+      id: "cursor",
+      async run(ctx) {
+        ctx.onEvent({ type: "status", text: "partial-line" });
+        await hold;
+        ctx.onEvent({ type: "done", agentSessionId: "sess" });
+        return { agentSessionId: "sess" };
+      },
+    },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("hub-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  let sent: Promise<Response> | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const created = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", workspace: home }),
+    });
+    const chat = (await created.json()) as { id: string };
+    sent = fetch(`${base}/api/chats/${chat.id}/messages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    const live = await fetch(`${base}/api/chats/${chat.id}/live?from=0`, { headers });
+    assert.equal(live.status, 200);
+    reader = live.body!.getReader();
+    const deadline = Date.now() + 3000;
+    let text = "";
+    while (!text.includes("partial-line")) {
+      if (Date.now() > deadline) throw new Error(`live stream stayed quiet: ${text.slice(0, 200)}`);
+      const next = await reader.read();
+      if (next.done) break;
+      text += Buffer.from(next.value).toString("utf8");
+    }
+    assert.match(text, /partial-line/);
+  } finally {
+    release();
+    await reader?.cancel().catch(() => undefined);
+    await sent?.catch(() => undefined);
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

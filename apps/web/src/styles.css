@@ -269,7 +269,13 @@ textarea { resize: vertical; }
 .tool { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; background: #141414; max-width: min(760px, 100%); }
 .tool summary { cursor: pointer; }
 .tool pre { overflow: auto; margin: 8px 0 0; }
-.status { color: var(--muted); }
+.status, .thinking { color: var(--muted); }
+.thinking {
+  align-self: start;
+  max-width: min(760px, 100%);
+  white-space: pre-wrap;
+  font-size: 13px;
+}
 .composer {
   border-top: 1px solid var(--line);
   display: grid;

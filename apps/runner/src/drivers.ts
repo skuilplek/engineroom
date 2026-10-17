@@ -1,4 +1,4 @@
-import { createCliParser, type AgentId, type Settings, type StreamEvent } from "@engineroom/protocol";
+import { agentLabel, createCliParser, type AgentId, type Settings, type StreamEvent } from "@engineroom/protocol";
 import {
   binaryNames,
   childEnv,
@@ -46,7 +46,7 @@ async function runCursor(ctx: DriverContext): Promise<{ agentSessionId: string |
   const { env, binary } = await prepare("cursor", ctx);
   let sessionId = ctx.agentSessionId;
   if (!sessionId) {
-    ctx.onEvent({ type: "status", text: "Opening a Cursor session" });
+    ctx.onEvent({ type: "status", text: "Opening an agent session" });
     const created = await runCapture({
       binary,
       args: ["create-chat"],
@@ -116,7 +116,9 @@ async function streamAgent(options: {
   };
   emit({
     type: "status",
-    text: options.ctx.model ? `${options.agent} · ${options.ctx.model}` : options.agent,
+    text: options.ctx.model
+      ? `${agentLabel(options.agent)} · ${options.ctx.model}. Starting. The first output can take a minute.`
+      : `${agentLabel(options.agent)}. Starting. The first output can take a minute.`,
   });
   const result = await runCli({
     binary: options.binary,

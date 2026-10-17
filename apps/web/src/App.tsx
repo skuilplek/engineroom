@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
-import { AGENTS } from "@engineroom/protocol";
+import { AGENTS, agentLabel } from "@engineroom/protocol";
 import {
   ApiError,
   addAccount,
   cancelChat,
   createChat,
+  followChat,
   getChat,
   getSettings,
   listAccounts,
@@ -319,7 +320,7 @@ function StartView({
           {agents.length > 1 && (
             <label className="chip">
               <select aria-label="Agent" value={agent} onChange={(event) => setAgent(event.target.value as AgentId)}>
-                {agents.map((item) => <option key={item} value={item}>{item}</option>)}
+                {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
               </select>
             </label>
           )}
@@ -378,7 +379,7 @@ function SettingsView({ agents }: { agents: AgentId[] }) {
           value={settings.defaultAgent}
           onChange={(event) => setSettings({ ...settings, defaultAgent: event.target.value as Settings["defaultAgent"] })}
         >
-          {agents.map((item) => <option key={item} value={item}>{item}</option>)}
+          {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
         </select>
       </label>
       <label>
@@ -393,7 +394,7 @@ function SettingsView({ agents }: { agents: AgentId[] }) {
         <summary>CLI paths</summary>
         {agents.map((agent) => (
           <label key={agent}>
-            {agent}
+            {agentLabel(agent)}
             <input
               value={settings.binaries[agent] || ""}
               placeholder="Absolute path, or blank to use PATH"
@@ -509,7 +510,7 @@ function AdminView({
         {AGENTS.map((agent) => (
           <label className="check" key={agent}>
             <input type="checkbox" checked={flags[agent]} onChange={() => toggle(agent)} />
-            {agent}
+            {agentLabel(agent)}
           </label>
         ))}
         <button className="primary" type="submit" disabled={busy}>Save agents</button>
@@ -684,9 +685,15 @@ function ChatView({
   const [prompt, setPrompt] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
+  const scroller = useRef<HTMLDivElement>(null);
+  const serverCount = useRef(0);
+  const skipUser = useRef<string | null>(null);
+  const followGeneration = useRef(0);
 
   async function load() {
+    followGeneration.current += 1;
     const next = await getChat(chatId);
+    serverCount.current = next.transcript.length;
     setDetail(next);
     setDraft(next.transcript);
     return next;
@@ -695,10 +702,11 @@ function ChatView({
   async function runPrompt(text: string) {
     setStreaming(true);
     setError("");
+    skipUser.current = text;
     setDraft((current) => [...current, { kind: "user", text, at: new Date().toISOString() }]);
     try {
       await sendMessage(chatId, text, (streamEvent) => {
-        setDraft((current) => applyStreamEvent(current, streamEvent));
+        if (streamEvent.type === "error") setError(streamEvent.text);
       });
       await load();
       onChanged();
@@ -728,14 +736,35 @@ function ChatView({
   }, [chatId]);
 
   useEffect(() => {
-    if (!detail?.chat.running || streaming) return undefined;
-    const timer = setInterval(() => {
-      load().catch(() => undefined);
-    }, 1000);
-    return () => clearInterval(timer);
+    if (!streaming && !detail?.chat.running) return undefined;
+    const controller = new AbortController();
+    const generation = followGeneration.current;
+    void followChat(chatId, serverCount.current, (entry) => {
+      if (followGeneration.current !== generation) return;
+      if (skipUser.current && entry.kind === "user" && entry.text === skipUser.current) {
+        skipUser.current = null;
+        serverCount.current += 1;
+        return;
+      }
+      serverCount.current += 1;
+      setDraft((current) => [...current, entry]);
+    }, controller.signal).then(() => {
+      if (!controller.signal.aborted && followGeneration.current === generation) {
+        void load().catch(() => undefined);
+      }
+    }).catch(() => undefined);
+    return () => controller.abort();
   }, [detail?.chat.running, streaming, chatId]);
 
   const blocks = useMemo(() => groupTranscript(draft), [draft]);
+  const following = streaming || Boolean(detail?.chat.running);
+
+  useEffect(() => {
+    if (!following) return;
+    const node = scroller.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [blocks, following]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -757,7 +786,7 @@ function ChatView({
       <header className="topbar">
         <div>
           <h2>{detail.chat.title}</h2>
-          <p className="muted">{detail.chat.agent} · {workspaceLabel(detail.chat.workspace, home, repos)}</p>
+          <p className="muted">{agentLabel(detail.chat.agent)} · {workspaceLabel(detail.chat.workspace, home, repos)}</p>
         </div>
         <div className="row">
           {(streaming || detail.chat.running) && (
@@ -765,19 +794,22 @@ function ChatView({
           )}
         </div>
       </header>
-      <div className="transcript">
+      <div className="transcript" ref={scroller}>
         {blocks.map((block, index) => {
           if (block.kind === "text") {
             const user = block.role === "user";
             return <div className={user ? "bubble user" : "bubble assistant"} key={index}>{block.text}</div>;
           }
+          if (block.kind === "thinking") {
+            return <p className="thinking" key={index}>{block.text}</p>;
+          }
           if (block.kind === "tool") {
+            const shown = presentTool(block);
             return (
-              <details className="tool" key={index} open={block.phase !== "done"}>
-                <summary>{block.name} · {block.phase}</summary>
-                {block.input && <pre>{block.input}</pre>}
-                {block.output && <pre>{block.output}</pre>}
-              </details>
+              <div className="tool" key={index}>
+                <div>{shown.title}</div>
+                {shown.body ? <pre>{shown.body}</pre> : block.phase === "start" ? <pre>running…</pre> : null}
+              </div>
             );
           }
           if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
@@ -920,9 +952,61 @@ function relativeTime(iso: string): string {
 
 type Block =
   | { kind: "text"; role: "user" | "assistant"; text: string }
+  | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; phase: string; input?: string; output?: string }
   | { kind: "error"; text: string }
   | { kind: "status"; text: string };
+
+function presentTool(block: { name: string; phase: string; input?: string; output?: string }): { title: string; body: string } {
+  const action = readableField(block.input, ["command", "cmd", "globPattern", "glob_pattern", "pattern", "path", "file_path", "query", "url", "targetDirectory", "target_directory"]);
+  const body = readableOutput(block.output);
+  const title = action ? `${block.name} · ${action}` : `${block.name} · ${block.phase}`;
+  return { title: title.length > 180 ? `${title.slice(0, 179)}…` : title, body };
+}
+
+function readableOutput(value?: string): string {
+  const record = parseRecord(value);
+  if (!record) return value?.trim() ?? "";
+  const inner = unwrapRecord(record);
+  for (const key of ["stdout", "interleavedOutput", "content", "error"]) {
+    if (typeof inner[key] === "string" && inner[key]) return clipView(inner[key] as string);
+  }
+  if (Array.isArray(inner.files)) return clipView(inner.files.map(String).join("\n"));
+  return clipView(value?.trim() ?? "");
+}
+
+function readableField(value: string | undefined, keys: string[]): string {
+  const record = parseRecord(value);
+  if (!record) {
+    const line = value?.split("\n")[0]?.trim() ?? "";
+    return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+  }
+  for (const key of keys) {
+    if (typeof record[key] === "string" && record[key]) return record[key] as string;
+  }
+  return "";
+}
+
+function parseRecord(value?: string): Record<string, unknown> | null {
+  if (!value || !value.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function unwrapRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const nested = record.success ?? record.error ?? record.result ?? record.value;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) return unwrapRecord(nested as Record<string, unknown>);
+  return record;
+}
+
+function clipView(text: string): string {
+  return text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text;
+}
 
 function groupTranscript(entries: TranscriptEntry[]): Block[] {
   const blocks: Block[] = [];
@@ -935,6 +1019,12 @@ function groupTranscript(entries: TranscriptEntry[]): Block[] {
       const last = blocks.at(-1);
       if (last?.kind === "text" && last.role === "assistant") last.text += entry.text;
       else blocks.push({ kind: "text", role: "assistant", text: entry.text });
+      continue;
+    }
+    if (entry.kind === "thinking") {
+      const last = blocks.at(-1);
+      if (last?.kind === "thinking") last.text += entry.text;
+      else blocks.push({ kind: "thinking", text: entry.text });
       continue;
     }
     if (entry.kind === "tool") {
@@ -965,6 +1055,7 @@ function groupTranscript(entries: TranscriptEntry[]): Block[] {
 function applyStreamEvent(entries: TranscriptEntry[], event: StreamEvent): TranscriptEntry[] {
   const at = new Date().toISOString();
   if (event.type === "text_delta") return [...entries, { kind: "text", text: event.text, at }];
+  if (event.type === "thinking") return [...entries, { kind: "thinking", text: event.text, at }];
   if (event.type === "tool") {
     return [...entries, { kind: "tool", id: event.id, name: event.name, phase: event.phase, input: event.input, output: event.output, at }];
   }

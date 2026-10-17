@@ -1,3 +1,5 @@
 {$ENGINEROOM_HOST:localhost} {
-	reverse_proxy 127.0.0.1:8787
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
 }

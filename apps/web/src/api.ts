@@ -1,4 +1,4 @@
-import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent } from "@engineroom/protocol";
+import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
 
 export interface Session {
   username: string;
@@ -23,6 +23,7 @@ export class ApiError extends Error {
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
+    cache: "no-store",
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
@@ -118,6 +119,27 @@ export function cancelChat(id: string) {
   return api<{ ok: boolean }>(`/api/chats/${id}/cancel`, { method: "POST" });
 }
 
+export async function followChat(
+  chatId: string,
+  from: number,
+  onEntry: (entry: TranscriptEntry) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`/api/chats/${chatId}/live?from=${from}`, {
+    cache: "no-store",
+    signal,
+    headers: { Accept: "text/event-stream" },
+  });
+  if (!response.ok || !response.body) {
+    throw new ApiError(response.status, response.statusText || "live follow failed");
+  }
+  await readSse(response, (data) => {
+    const body = JSON.parse(data) as { entry?: TranscriptEntry; error?: string };
+    if (body.error) throw new Error(body.error);
+    if (body.entry) onEntry(body.entry);
+  });
+}
+
 export async function sendMessage(
   chatId: string,
   prompt: string,
@@ -126,6 +148,7 @@ export async function sendMessage(
 ): Promise<void> {
   const response = await fetch(`/api/chats/${chatId}/messages`, {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
     signal,
@@ -140,7 +163,11 @@ export async function sendMessage(
     }
     throw new ApiError(response.status, message);
   }
-  const reader = response.body.getReader();
+  await readSse(response, (data) => onEvent(JSON.parse(data) as StreamEvent));
+}
+
+async function readSse(response: Response, onData: (data: string) => void): Promise<void> {
+  const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   while (true) {
@@ -156,7 +183,7 @@ export async function sendMessage(
         .map((line) => line.slice(5).trim())
         .join("\n");
       if (!data) continue;
-      onEvent(JSON.parse(data) as StreamEvent);
+      onData(data);
     }
   }
 }

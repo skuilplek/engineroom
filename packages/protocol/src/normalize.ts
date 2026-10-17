@@ -52,6 +52,16 @@ export function createCliParser(agent: AgentId, knownSessionId: string | null): 
         });
       }
       if (msg.type === "user") return pushToolResults(msg.message);
+      if (msg.type === "thinking") {
+        if (msg.subtype === "completed") return [];
+        const text = typeof msg.text === "string" ? msg.text : "";
+        if (!text) return [];
+        return [{ type: "thinking", text }];
+      }
+      if (msg.type === "retry" || msg.type === "connection") {
+        const subtype = typeof msg.subtype === "string" ? msg.subtype : "";
+        return [{ type: "status", text: subtype ? `${msg.type} · ${subtype}` : String(msg.type) }];
+      }
       if (msg.type === "tool_call") {
         resetText();
         return pushCursorTool(msg, () => {
@@ -139,14 +149,12 @@ function pushClaudeStream(
   if (!event || typeof event !== "object") return [];
   const body = event as Record<string, unknown>;
   const delta = body.delta;
-  if (
-    body.type === "content_block_delta" &&
-    delta &&
-    typeof delta === "object" &&
-    (delta as Record<string, unknown>).type === "text_delta" &&
-    typeof (delta as Record<string, unknown>).text === "string"
-  ) {
-    return textFromAssistant((delta as Record<string, unknown>).text as string);
+  if (body.type === "content_block_delta" && delta && typeof delta === "object") {
+    const change = delta as Record<string, unknown>;
+    if (change.type === "text_delta" && typeof change.text === "string") return textFromAssistant(change.text);
+    if (change.type === "thinking_delta" && typeof change.thinking === "string" && change.thinking) {
+      return [{ type: "thinking", text: change.thinking }];
+    }
   }
   return [];
 }
@@ -242,10 +250,12 @@ function toolResultText(value: unknown): string {
     return clipText(parts.filter(Boolean).join("\n"));
   }
   if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (typeof record.stdout === "string") return clipText(record.stdout);
-    if (typeof record.content === "string") return clipText(record.content);
-    return clipText(JSON.stringify(value));
+    const record = unwrapToolPayload(value as Record<string, unknown>);
+    if (typeof record.stdout === "string" && record.stdout) return clipText(record.stdout);
+    if (typeof record.interleavedOutput === "string" && record.interleavedOutput) return clipText(record.interleavedOutput);
+    if (typeof record.content === "string" && record.content) return clipText(record.content);
+    if (typeof record.error === "string" && record.error) return clipText(record.error);
+    return clipText(JSON.stringify(record));
   }
   return "";
 }
@@ -281,7 +291,7 @@ export function summarizeInput(value: unknown): string {
   if (typeof value === "string") return clipText(value);
   if (typeof value !== "object") return clipText(String(value));
   const record = value as Record<string, unknown>;
-  for (const key of ["command", "cmd", "file_path", "path", "pattern", "query", "url", "description"]) {
+  for (const key of ["command", "cmd", "file_path", "path", "targetDirectory", "target_directory", "globPattern", "glob_pattern", "pattern", "query", "url", "description"]) {
     if (typeof record[key] === "string" && record[key]) return clipText(record[key] as string);
   }
   return clipText(JSON.stringify(value));
@@ -289,6 +299,12 @@ export function summarizeInput(value: unknown): string {
 
 function stringField(record: Record<string, unknown>, key: string): string {
   return typeof record[key] === "string" ? (record[key] as string) : "";
+}
+
+function unwrapToolPayload(record: Record<string, unknown>): Record<string, unknown> {
+  const nested = record.success ?? record.error ?? record.result ?? record.value;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) return unwrapToolPayload(nested as Record<string, unknown>);
+  return record;
 }
 
 function clipText(text: string): string {

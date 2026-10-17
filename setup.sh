@@ -74,7 +74,9 @@ fi
 cat > /etc/caddy/Caddyfile <<EOF
 # engineroom
 ${site} {
-	reverse_proxy 127.0.0.1:8787
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+	}
 }
 EOF
 

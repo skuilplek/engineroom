@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { assertUsername, isAgentId, isInsidePath, type AgentId, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent } from "@engineroom/protocol";
+import { assertUsername, isAgentId, isInsidePath, type AgentId, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, saveAgentFlags } from "./agents.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
@@ -245,6 +245,11 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "cancel", chatId: parts[2]! }));
       return;
     }
+    if (parts[1] === "chats" && parts[3] === "live" && parts.length === 4 && req.method === "GET") {
+      const from = Number(url.searchParams.get("from") || "0");
+      await followChat(req, res, user, parts[2]!, Number.isInteger(from) && from > 0 ? from : 0);
+      return;
+    }
     if (parts[1] === "chats" && parts[3] === "messages" && req.method === "POST") {
       const body = (await readJson(req)) as { prompt?: unknown };
       if (typeof body.prompt !== "string") throw new Error("prompt is empty");
@@ -254,13 +259,46 @@ export function createHub(options: HubOptions) {
     sendJson(res, 404, { error: "not found" });
   }
 
+  async function followChat(req: IncomingMessage, res: ServerResponse, user: LinuxUser, chatId: string, from: number) {
+    let closed = false;
+    const markClosed = () => {
+      closed = true;
+    };
+    res.on("close", markClosed);
+    beginSse(res);
+    let cursor = from;
+    let sawRunning = false;
+    let quiet = 0;
+    try {
+      while (!closed) {
+        const detail = (await call(user, { type: "get_chat", chatId })) as {
+          chat: { running?: boolean };
+          transcript: TranscriptEntry[];
+        };
+        if (detail.chat.running) sawRunning = true;
+        const fresh = detail.transcript.slice(cursor);
+        for (const entry of fresh) writeSse(res, { entry });
+        cursor += fresh.length;
+        if (sawRunning && !detail.chat.running && fresh.length === 0) {
+          quiet += 1;
+          if (quiet >= 3) break;
+        } else {
+          quiet = 0;
+        }
+        if (closed) break;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    } catch (error) {
+      if (!res.headersSent) throw error;
+      const message = error instanceof Error ? error.message : "live follow failed";
+      if (!res.writableEnded) writeSse(res, { error: message });
+    } finally {
+      if (!res.writableEnded) res.end();
+    }
+  }
+
   async function streamMessage(res: ServerResponse, user: LinuxUser, chatId: string, prompt: string) {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
+    beginSse(res);
     let finished = false;
     let sawFailure = false;
     res.on("close", () => {
@@ -275,14 +313,14 @@ export function createHub(options: HubOptions) {
         { type: "send", chatId, prompt },
         (event) => {
           if (event.type === "error") sawFailure = true;
-          if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+          if (!res.writableEnded) writeSse(res, event);
         },
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "send failed";
       if (!sawFailure && !res.writableEnded) {
         const event: StreamEvent = { type: "error", text: message };
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        writeSse(res, event);
       }
     } finally {
       finished = true;
@@ -331,7 +369,26 @@ function streamFile(res: ServerResponse, file: string) {
     ".woff2": "font/woff2",
   };
   res.setHeader("Content-Type", types[path.extname(file)] || "application/octet-stream");
+  if (path.extname(file) === ".html") res.setHeader("Cache-Control", "no-store");
   createReadStream(file).pipe(res);
+}
+
+function beginSse(res: ServerResponse) {
+  res.socket?.setNoDelay(true);
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-store, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.write(`: ${" ".repeat(2048)}\n\n`);
+}
+
+function writeSse(res: ServerResponse, body: unknown) {
+  if (res.writableEnded) return;
+  res.write(`data: ${JSON.stringify(body)}\n\n`);
+  const flushable = res as ServerResponse & { flush?: () => void };
+  flushable.flush?.();
 }
 
 function statusFor(message: string): number {
@@ -379,6 +436,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(payload),
   });
   res.end(payload);

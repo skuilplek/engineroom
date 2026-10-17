@@ -37,6 +37,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   const hubUser = options.hubUser ?? process.env.ENGINEROOM_HUB_USER ?? "engineroom";
 
   const server = createServer((socket) => {
+    socket.setNoDelay(true);
     void handleConnection(socket).catch((error) => {
       write(socket, {
         id: "0",
@@ -250,6 +251,7 @@ async function record(home: string, chatId: string, event: StreamEvent) {
   }
   else if (event.type === "error") entry = { kind: "error", text: event.text, at };
   else if (event.type === "status") entry = { kind: "status", text: event.text, at };
+  else if (event.type === "thinking") entry = { kind: "thinking", text: event.text, at };
   if (entry) await appendTranscript(home, chatId, entry);
 }
 

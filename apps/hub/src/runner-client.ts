@@ -77,7 +77,10 @@ export async function openRunnerSocket(link: RunnerLink, username: string, uid: 
   await ensureSocket(link, sock, username);
   const info = await stat(sock);
   const socket = await new Promise<Socket>((resolve, reject) => {
-    const client = connect(sock, () => resolve(client));
+    const client = connect(sock, () => {
+      client.setNoDelay(true);
+      resolve(client);
+    });
     client.once("error", reject);
   });
   try {

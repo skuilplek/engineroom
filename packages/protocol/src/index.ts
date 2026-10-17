@@ -2,6 +2,11 @@ export const AGENTS = ["cursor", "claude", "pi"] as const;
 
 export type AgentId = (typeof AGENTS)[number];
 
+export function agentLabel(agent: AgentId): string {
+  if (agent === "cursor") return "agent";
+  return agent;
+}
+
 export const USERNAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
 
 export const CHAT_ID_RE =
@@ -44,7 +49,8 @@ export type TranscriptEntry =
       at: string;
     }
   | { kind: "error"; text: string; at: string }
-  | { kind: "status"; text: string; at: string };
+  | { kind: "status"; text: string; at: string }
+  | { kind: "thinking"; text: string; at: string };
 
 export interface ChatDetail {
   chat: ChatMeta;
@@ -73,6 +79,7 @@ export type StreamEvent =
       output?: string;
     }
   | { type: "status"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "error"; text: string }
   | { type: "done"; agentSessionId?: string | null };
 
