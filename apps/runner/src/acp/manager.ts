@@ -2,7 +2,7 @@ import type { AgentId, AgentOptionChoice, ListedSession, PermissionPolicy, Strea
 import { childEnv, resolveBinary } from "../cli.ts";
 import { binaryFor, loadPolicy } from "../policy.ts";
 import { loadSettings } from "../store.ts";
-import { AcpSession, AcpUnavailable, catalogFromSession, type AcpStart } from "./session.ts";
+import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, type AcpStart } from "./session.ts";
 
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_SESSIONS = 4;
@@ -133,17 +133,19 @@ export class AcpManager {
     const { JsonRpc } = await import("./rpc.ts");
     const rpc = new JsonRpc(child, async () => ({}), () => undefined);
     try {
-      const initialized = (await rpc.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: "engineroom", version: "0.1.0" },
-      })) as { authMethods?: { id: string }[] };
+      const initialized = (await rpcTimeout(
+        rpc.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: "engineroom", version: "0.1.0" },
+        }),
+      )) as { authMethods?: { id: string }[] };
       const method = initialized.authMethods?.[0]?.id;
-      if (method) await rpc.request("authenticate", { methodId: method });
-      const created = await rpc.request("session/new", { cwd, mcpServers: [] });
+      if (method) await rpcTimeout(rpc.request("authenticate", { methodId: method }));
+      const created = await rpcTimeout(rpc.request("session/new", { cwd, mcpServers: [] }));
       return catalogFromSession(created);
     } finally {
-      child.kill("SIGTERM");
+      await stopChild(child);
     }
   }
 
@@ -165,14 +167,16 @@ export class AcpManager {
     const { JsonRpc } = await import("./rpc.ts");
     const rpc = new JsonRpc(child, async () => ({}), () => undefined);
     try {
-      const initialized = (await rpc.request("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {},
-        clientInfo: { name: "engineroom", version: "0.1.0" },
-      })) as { authMethods?: { id: string }[] };
+      const initialized = (await rpcTimeout(
+        rpc.request("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: "engineroom", version: "0.1.0" },
+        }),
+      )) as { authMethods?: { id: string }[] };
       const method = initialized.authMethods?.[0]?.id;
-      if (method) await rpc.request("authenticate", { methodId: method });
-      const listed = (await rpc.request("session/list", { cwd })) as { sessions?: ListedSession[] } | ListedSession[];
+      if (method) await rpcTimeout(rpc.request("authenticate", { methodId: method }));
+      const listed = (await rpcTimeout(rpc.request("session/list", { cwd }))) as { sessions?: ListedSession[] } | ListedSession[];
       const sessions = Array.isArray(listed) ? listed : listed.sessions ?? [];
       return sessions
         .filter((item) => item && typeof item.sessionId === "string")
@@ -183,7 +187,7 @@ export class AcpManager {
           title: typeof item.title === "string" ? item.title : undefined,
         }));
     } finally {
-      child.kill("SIGTERM");
+      await stopChild(child);
     }
   }
 

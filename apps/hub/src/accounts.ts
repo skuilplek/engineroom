@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { assertUsername } from "@engineroom/protocol";
-import { lookupUser } from "./auth.ts";
+import { invalidateUserCache, lookupUser } from "./auth.ts";
 
 export interface Account {
   username: string;
@@ -53,8 +53,12 @@ export function runAdminCtl(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(stderr.trim() || "admin command failed"));
+      if (code === 0) {
+        invalidateUserCache(username);
+        resolve();
+      } else {
+        reject(new Error(stderr.trim() || "admin command failed"));
+      }
     });
     if (action === "add" || action === "passwd") child.stdin.write(`${password}\n`);
     child.stdin.end();

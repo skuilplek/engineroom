@@ -38,6 +38,8 @@ test("paths stay inside the home directory", () => {
   assert.equal(isInsidePath("/home/alice", "/home/alice/proj"), true);
   assert.equal(isInsidePath("/home/alice", "/home/alice-evil"), false);
   assert.equal(isInsidePath("/home/alice", "/tmp/out"), false);
+  assert.equal(isInsidePath("/home/alice", "/home/alice/../../etc/passwd"), false);
+  assert.equal(isInsidePath("/home/alice", "/home/alice/proj/../notes"), true);
 });
 
 test("socket paths cannot escape the socket directory", () => {
@@ -194,7 +196,11 @@ test("cli arguments match the headless auto-run contract", () => {
     "--",
     "hello",
   ]);
+  assert.equal(cursorArgs("/home/alice", "chat-1", "gpt", "hello", "ask").includes("--force"), false);
+  assert.equal(cursorArgs("/home/alice", "chat-1", "gpt", "hello", "edits").includes("--force"), true);
   assert.ok(claudeArgs("", "sid", "hello").includes("bypassPermissions"));
+  assert.ok(claudeArgs("", "sid", "hello", "edits").includes("acceptEdits"));
+  assert.ok(claudeArgs("", "sid", "hello", "ask").includes("default"));
   assert.ok(claudeArgs("", "sid", "hello").includes("--resume"));
   assert.deepEqual(piArgs("erabc123", "", "hello").slice(0, 4), ["--mode", "json", "--session-id", "erabc123"]);
 });

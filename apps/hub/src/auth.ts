@@ -10,19 +10,33 @@ export interface LinuxUser {
   groups: string[];
 }
 
+const USER_CACHE_TTL_MS = 5_000;
+const userCache = new Map<string, { user: LinuxUser | null; expires: number }>();
+
+export function invalidateUserCache(username?: string) {
+  if (username) userCache.delete(username);
+  else userCache.clear();
+}
+
 export function lookupUser(username: string): LinuxUser | null {
   try {
     assertUsername(username);
   } catch {
     return null;
   }
+  const now = Date.now();
+  const cached = userCache.get(username);
+  if (cached && cached.expires > now) return cached.user;
   const passwd = spawnSync("getent", ["passwd", username], { encoding: "utf8" });
-  if (passwd.status !== 0 || !passwd.stdout.trim()) return null;
+  if (passwd.status !== 0 || !passwd.stdout.trim()) {
+    userCache.set(username, { user: null, expires: now + USER_CACHE_TTL_MS });
+    return null;
+  }
   const [name, , uid, gid, , home, shell] = passwd.stdout.trim().split(":");
   if (!name || !home || !shell) return null;
   const groups = spawnSync("id", ["-Gn", username], { encoding: "utf8" });
   const list = groups.status === 0 ? groups.stdout.trim().split(/\s+/).filter(Boolean) : [];
-  return {
+  const user: LinuxUser = {
     username: name,
     uid: Number(uid),
     gid: Number(gid),
@@ -30,6 +44,8 @@ export function lookupUser(username: string): LinuxUser | null {
     shell,
     groups: list,
   };
+  userCache.set(username, { user, expires: now + USER_CACHE_TTL_MS });
+  return user;
 }
 
 export function userMayLogin(user: LinuxUser | null): user is LinuxUser {

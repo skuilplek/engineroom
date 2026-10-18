@@ -78,22 +78,26 @@ export class AcpSession {
     this.rpc = new JsonRpc(child, (method, params, id) => this.incoming(method, params, id), (method, params) => {
       this.note(method, params);
     });
-    const initialized = (await this.rpc.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
-      clientInfo: { name: "engineroom", version: "0.1.0" },
-    })) as { authMethods?: { id: string }[] };
+    const initialized = (await rpcTimeout(
+      this.rpc.request("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
+        clientInfo: { name: "engineroom", version: "0.1.0" },
+      }),
+    )) as { authMethods?: { id: string }[] };
     const method = initialized.authMethods?.[0]?.id;
-    if (method) await this.rpc.request("authenticate", { methodId: method });
+    if (method) await rpcTimeout(this.rpc.request("authenticate", { methodId: method }));
     if (this.start.needsResync) this.suppress = false;
     else this.suppress = Boolean(this.start.sessionId);
     const created = this.start.sessionId
-      ? ((await this.rpc.request("session/load", {
-          sessionId: this.start.sessionId,
-          cwd: this.start.cwd,
-          mcpServers: [],
-        })) as Record<string, unknown>)
-      : ((await this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers: [] })) as Record<string, unknown>);
+      ? ((await rpcTimeout(
+          this.rpc.request("session/load", {
+            sessionId: this.start.sessionId,
+            cwd: this.start.cwd,
+            mcpServers: [],
+          }),
+        )) as Record<string, unknown>)
+      : ((await rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers: [] }))) as Record<string, unknown>);
     this.suppress = false;
     this.sessionId = typeof created.sessionId === "string" ? created.sessionId : this.start.sessionId;
     if (!this.sessionId) throw new Error(stderr.trim() || "agent did not open a session");
@@ -157,23 +161,9 @@ export class AcpSession {
 
   async stop() {
     this.alive = false;
-    for (const terminal of this.terminals.values()) terminal.child.kill("SIGTERM");
-    const child = this.child;
-    if (!child?.pid) return;
-    const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      return;
-    }
-    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 500))]);
-    if (child.exitCode == null && child.signalCode == null) {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* already gone */
-      }
-    }
+    await Promise.all([...this.terminals.values()].map((terminal) => stopChild(terminal.child)));
+    this.terminals.clear();
+    await stopChild(this.child);
   }
 
   private note(method: string, params: unknown) {
@@ -248,18 +238,22 @@ export class AcpSession {
     const cwd = body.cwd ? await this.confine(body.cwd) : this.workspace;
     const child = spawn(body.command, Array.isArray(body.args) ? body.args.map(String) : [], { cwd, stdio: ["ignore", "pipe", "pipe"] });
     const id = randomUUID();
-    let output = "";
-    const exit = new Promise<{ exitCode: number }>((resolve) => {
-      child.on("close", (code) => resolve({ exitCode: code ?? 1 }));
-    });
+    const record: LiveTerminal = {
+      child,
+      output: "",
+      exit: new Promise<{ exitCode: number }>((resolve) => {
+        child.on("error", () => resolve({ exitCode: 1 }));
+        child.on("close", (code) => resolve({ exitCode: code ?? 1 }));
+      }),
+    };
     const push = (chunk: Buffer) => {
       const data = chunk.toString("utf8");
-      output = (output + data).slice(-64_000);
+      record.output = (record.output + data).slice(-64_000);
       this.start.onEvent({ type: "terminal_output", terminalId: id, data });
     };
     child.stdout?.on("data", push);
     child.stderr?.on("data", push);
-    this.terminals.set(id, { child, output, exit });
+    this.terminals.set(id, record);
     return { terminalId: id };
   }
 
@@ -326,7 +320,26 @@ export function catalogFromSession(created: unknown): { modes: AgentOptionChoice
   };
 }
 
-function rpcTimeout<T>(work: Promise<T>, ms = 8000): Promise<T> {
+export async function stopChild(child: ChildProcess | undefined) {
+  if (!child?.pid) return;
+  if (child.exitCode != null || child.signalCode != null) return;
+  const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    return;
+  }
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 500))]);
+  if (child.exitCode == null && child.signalCode == null) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+export function rpcTimeout<T>(work: Promise<T>, ms = 8000): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("agent did not answer")), ms);
     timer.unref?.();

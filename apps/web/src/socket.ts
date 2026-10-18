@@ -1,15 +1,6 @@
-import { decodePtyFrame, encodePtyFrame, type ChatMeta, type ListedSession, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
 
-export interface AgentMode {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-export interface AgentModel {
-  modelId: string;
-  name: string;
-}
+export type { AgentMode, AgentModel };
 
 export type ServerMessage =
   | {

@@ -52,6 +52,30 @@ async function handle(msg) {
       notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "held" } } });
       return;
     }
+    if (text === "run-terminal") {
+      const created = await request(11, "terminal/create", {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('term-out-✓')"],
+      });
+      const waited = await request(12, "terminal/wait_for_exit", {
+        terminalId: created.terminalId,
+      });
+      const missing = await request(13, "terminal/create", {
+        command: "/nonexistent-binary-er-test",
+        args: [],
+      });
+      const missingWait = await request(14, "terminal/wait_for_exit", {
+        terminalId: missing.terminalId,
+      });
+      notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: `out:${waited.output}:missing:${missingWait.exitStatus.exitCode}` },
+        },
+      });
+      return reply(msg.id, { stopReason: "end_turn" });
+    }
     notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello " } } });
     notify("session/update", {
       sessionId,

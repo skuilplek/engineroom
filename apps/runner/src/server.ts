@@ -198,7 +198,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           running: runs.has(request.chatId),
           modes: info?.modes,
           models: info?.models,
-          scrollback: Buffer.from(pty.scrollback(request.chatId), "latin1").toString("base64"),
+          scrollback: Buffer.from(pty.scrollback(request.chatId), "utf8").toString("base64"),
         };
       }
       case "unwatch":
@@ -221,7 +221,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "pty_open":
         return openPty(request.chatId, request.cols, request.rows, held);
       case "pty_input":
-        pty.write(request.chatId, Buffer.from(request.data, "base64").toString("latin1"));
+        pty.write(request.chatId, Buffer.from(request.data, "base64").toString("utf8"));
         return { ok: true };
       case "pty_resize":
         pty.resize(request.chatId, request.cols, request.rows);
@@ -245,6 +245,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "list_chats":
         return listChats(home, new Set(runs.keys()));
       case "get_chat":
+        await writer.flush(request.chatId);
         return getChat(home, request.chatId, runs.has(request.chatId));
       case "get_settings":
         return withLocks(await loadSettings(home), await loadPolicy(home));
@@ -475,7 +476,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     const detail = await getChat(home, chatId, false);
     const chat = detail.chat;
     if (held.has(chatId) && pty.has(chatId)) {
-      return { attached: true, scrollback: Buffer.from(pty.scrollback(chatId), "latin1").toString("base64") };
+      return { attached: true, scrollback: Buffer.from(pty.scrollback(chatId), "utf8").toString("base64") };
     }
     const policy = await loadPolicy(home);
     if (!policy.rawTerminal) throw new Error("terminal is not enabled");
@@ -488,12 +489,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     const scroll = await pty.open(
       chatId,
       { file: binary, args: command.args, cwd: chat.workspace, env, cols, rows },
-      (data) => bus.pty(chatId, Buffer.from(data, "latin1").toString("base64")),
+      (data) => bus.pty(chatId, Buffer.from(data, "utf8").toString("base64")),
     );
     if (!held.has(chatId)) {
       held.add(chatId);
     }
-    return { attached: true, scrollback: Buffer.from(scroll, "latin1").toString("base64") };
+    return { attached: true, scrollback: Buffer.from(scroll, "utf8").toString("base64") };
   }
 
   async function closePty(chatId: string, held: Set<string>) {
@@ -592,11 +593,17 @@ function assertClient(socket: Socket, hubUser: string) {
   throw new Error("refusing connection from an unexpected user");
 }
 
+const uidCache = new Map<string, number>();
+
 function uidOf(username: string): number {
+  const cached = uidCache.get(username);
+  if (cached !== undefined) return cached;
   const result = spawnSync("id", ["-u", username], { encoding: "utf8" });
   if (result.status !== 0) return -1;
   const uid = Number(result.stdout.trim());
-  return Number.isInteger(uid) ? uid : -1;
+  if (!Number.isInteger(uid)) return -1;
+  uidCache.set(username, uid);
+  return uid;
 }
 
 function readRequest(socket: Socket): Promise<string> {

@@ -99,6 +99,18 @@ test("the hub only opens the signed-in user's runner", async () => {
     const forged = await fetch(`${base}/api/chats`, { headers: { Cookie: "engineroom_session=alice.forged" } });
     assert.equal(forged.status, 401);
 
+    const crossOriginPost = await fetch(`${base}/api/logout`, {
+      method: "POST",
+      headers: { Cookie: cookie!, Origin: "https://evil.example" },
+    });
+    assert.equal(crossOriginPost.status, 403);
+
+    const crossSiteFetch = await fetch(`${base}/api/logout`, {
+      method: "POST",
+      headers: { Cookie: cookie!, "Sec-Fetch-Site": "cross-site" },
+    });
+    assert.equal(crossSiteFetch.status, 403);
+
     const created = await fetch(`${base}/api/chats`, {
       method: "POST",
       headers,

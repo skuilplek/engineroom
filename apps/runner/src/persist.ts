@@ -3,6 +3,7 @@ import { appendTranscript } from "./store.ts";
 
 export class TranscriptWriter {
   private pending = new Map<string, { kind: "text" | "thinking"; text: string; seq: number; at: string; timer: NodeJS.Timeout }>();
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(privateHome: string) {
     this.home = privateHome;
@@ -10,7 +11,31 @@ export class TranscriptWriter {
 
   private readonly home: string;
 
-  async record(chatId: string, event: StreamEvent, seq: number): Promise<void> {
+  record(chatId: string, event: StreamEvent, seq: number): Promise<void> {
+    return this.enqueue(() => this.recordNow(chatId, event, seq));
+  }
+
+  flush(chatId: string): Promise<void> {
+    return this.enqueue(async () => {
+      await this.flushKind(chatId, "text");
+      await this.flushKind(chatId, "thinking");
+    });
+  }
+
+  flushAll(): Promise<void> {
+    return this.enqueue(async () => {
+      const keys = [...this.pending.keys()];
+      for (const key of keys) await this.flushKey(key);
+    });
+  }
+
+  private enqueue(work: () => Promise<void>): Promise<void> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async recordNow(chatId: string, event: StreamEvent, seq: number): Promise<void> {
     if (event.type === "text_delta" || event.type === "thinking") {
       const kind = event.type === "text_delta" ? "text" : "thinking";
       await this.flushKind(chatId, kind === "text" ? "thinking" : "text");
@@ -29,20 +54,11 @@ export class TranscriptWriter {
       return;
     }
     if (event.type === "tool" || event.type === "plan" || event.type === "error" || event.type === "user_message" || event.type === "turn_end" || event.type === "done") {
-      await this.flush(chatId);
+      await this.flushKind(chatId, "text");
+      await this.flushKind(chatId, "thinking");
     }
     const entry = toEntry(event, seq);
     if (entry) await appendTranscript(this.home, chatId, entry);
-  }
-
-  async flush(chatId: string): Promise<void> {
-    await this.flushKind(chatId, "text");
-    await this.flushKind(chatId, "thinking");
-  }
-
-  async flushAll(): Promise<void> {
-    const keys = [...this.pending.keys()];
-    for (const key of keys) await this.flushKey(key);
   }
 
   private async flushKind(chatId: string, kind: "text" | "thinking") {
@@ -64,7 +80,7 @@ export class TranscriptWriter {
 
   private timer(key: string): NodeJS.Timeout {
     const timer = setTimeout(() => {
-      void this.flushKey(key).catch(() => undefined);
+      void this.enqueue(() => this.flushKey(key)).catch(() => undefined);
     }, 500);
     timer.unref?.();
     return timer;

@@ -1,5 +1,4 @@
-import type { AgentId, ChatMeta, PermissionOption, PlanEntry, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
-import type { AgentMode, AgentModel } from "../socket.ts";
+import type { AgentId, AgentMode, AgentModel, ChatMeta, PermissionOption, PlanEntry, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
 
 export interface LivePermission {
   requestId: string;

@@ -36,15 +36,23 @@ test("raw mode is refused while a turn is running, then hands the session back f
     async list() { return []; },
   } as unknown as AcpManager;
   let spawned = 0;
+  let lastWritten = "";
   const pty = new PtyManager(() => {
     spawned += 1;
+    let onDataCb: ((data: string) => void) | undefined;
     const proc: PtyProcess = {
-      write() { /* unused */ },
+      write(data: string) {
+        lastWritten = data;
+      },
       resize() { /* unused */ },
       kill() { /* unused */ },
-      onData() { /* unused */ },
+      onData(cb) {
+        onDataCb = cb;
+        cb("╭─╮ ✓ Claude");
+      },
       onExit() { /* unused */ },
     };
+    void onDataCb;
     return proc;
   });
   const runner = await startRunner({ home, socketPath: sock, acp, pty, peerCheck: () => undefined });
@@ -74,6 +82,11 @@ test("raw mode is refused while a turn is running, then hands the session back f
     live.send({ id: "o2", type: "pty_open", chatId, cols: 80, rows: 24 });
     const opened = await live.next((message) => message.id === "o2");
     assert.equal((opened.result as { attached?: boolean }).attached, true);
+    const scrollbackB64 = (opened.result as { scrollback?: string }).scrollback || "";
+    assert.equal(Buffer.from(scrollbackB64, "base64").toString("utf8"), "╭─╮ ✓ Claude");
+    live.send({ id: "in1", type: "pty_input", chatId, data: Buffer.from("λ-input", "utf8").toString("base64") });
+    await live.next((message) => message.id === "in1");
+    assert.equal(lastWritten, "λ-input");
     assert.equal(stopped, 1);
     assert.equal(spawned, 1);
     live.send({ id: "x", type: "pty_close", chatId });

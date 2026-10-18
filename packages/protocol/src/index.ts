@@ -388,7 +388,8 @@ function normalizePosix(value: string): string {
   for (const part of value.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
-      if (parts.length > 0) parts.pop();
+      if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop();
+      else if (!absolute) parts.push("..");
       continue;
     }
     parts.push(part);
@@ -397,9 +398,10 @@ function normalizePosix(value: string): string {
 }
 
 function relativePosix(root: string, target: string): string {
-  const from = root.endsWith("/") ? root.slice(0, -1) : root;
-  const to = target.endsWith("/") ? target.slice(0, -1) : target;
+  const from = normalizePosix(root);
+  const to = normalizePosix(target);
   if (from === to) return "";
+  if (from === "/") return to.startsWith("/") ? to.slice(1) : `../${to}`;
   if (to.startsWith(`${from}/`)) return to.slice(from.length + 1);
   return `../${to}`;
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -75,7 +76,7 @@ export async function saveEnv(home: string, entries: EnvEntry[]): Promise<EnvEnt
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const next = applyEnvEntries(current, clean);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, next, { mode: 0o600 });
   await rename(tmp, file);
   return readEnvEntries(next);

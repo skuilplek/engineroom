@@ -46,6 +46,16 @@ test("an ACP session streams chunks and can import a CLI session", async () => {
       workspace: home,
     });
     assert.equal((imported.result as { needsResync?: boolean }).needsResync, true);
+
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "run-terminal" });
+    await live.next((message) => message.event?.type === "done");
+    const afterTerm = (await once(sock, { id: "g2", type: "get_chat", chatId })).result as {
+      transcript: Array<{ kind: string; text?: string }>;
+    };
+    assert.equal(
+      afterTerm.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("out:term-out-✓:missing:1")),
+      true,
+    );
   } finally {
     live.close();
     await runner.close();

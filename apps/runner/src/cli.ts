@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import type { AgentId } from "@engineroom/protocol";
+import type { AgentId, PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
 
 export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
@@ -87,25 +87,44 @@ export function binaryNames(agent: AgentId): string[] {
   return ["pi"];
 }
 
-export function cursorArgs(workspace: string, sessionId: string, model: string, prompt: string): string[] {
+export function cursorArgs(
+  workspace: string,
+  sessionId: string,
+  model: string,
+  prompt: string,
+  permission: PermissionPolicy = "allow",
+): string[] {
   const args = [
     "-p",
     "--output-format",
     "stream-json",
     "--stream-partial-output",
-    "--force",
+  ];
+  if (permission !== "ask") args.push("--force");
+  args.push(
     "--trust",
     "--workspace",
     workspace,
     "--resume",
     sessionId,
-  ];
+  );
   if (model) args.push("--model", model);
   args.push("--", prompt);
   return args;
 }
 
-export function claudeArgs(model: string, sessionId: string | null, prompt: string): string[] {
+export function claudeArgs(
+  model: string,
+  sessionId: string | null,
+  prompt: string,
+  permission: PermissionPolicy = "allow",
+): string[] {
+  const mode =
+    permission === "allow"
+      ? "bypassPermissions"
+      : permission === "edits"
+        ? "acceptEdits"
+        : "default";
   const args = [
     "-p",
     prompt,
@@ -114,7 +133,7 @@ export function claudeArgs(model: string, sessionId: string | null, prompt: stri
     "--verbose",
     "--include-partial-messages",
     "--permission-mode",
-    "bypassPermissions",
+    mode,
   ];
   if (model) args.push("--model", model);
   if (sessionId) args.push("--resume", sessionId);

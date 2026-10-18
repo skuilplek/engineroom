@@ -10,7 +10,7 @@ import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadAppName, loadCliImp
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
-import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
+import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
 import { clearCookie, cookieValue, readSession, sessionCookie, signSession } from "./session.ts";
@@ -71,10 +71,11 @@ export function createHub(options: HubOptions) {
   const checksFile = options.checksFile || "";
   const commandDirs = options.commandDirs;
   const accounts = options.listAccounts ?? (() => listAccounts());
-  const runAdmin =
-    options.runAdmin ??
-    ((action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) =>
-      runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password));
+  const runAdmin = async (action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) => {
+    if (options.runAdmin) await options.runAdmin(action, username, password);
+    else await runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password);
+    invalidateUserCache(username);
+  };
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
@@ -109,6 +110,12 @@ export function createHub(options: HubOptions) {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
     const url = new URL(req.url || "/", "http://hub.local");
+    if (url.pathname.startsWith("/api/") && req.method !== "GET" && req.method !== "HEAD") {
+      if (!mutationOriginAllowed(req)) {
+        sendJson(res, 403, { error: "forbidden origin" });
+        return;
+      }
+    }
     if (url.pathname === "/api/health" && req.method === "GET") {
       sendJson(res, 200, { ok: true });
       return;
@@ -151,7 +158,7 @@ export function createHub(options: HubOptions) {
     const body = (await readJson(req)) as { username?: unknown; password?: unknown };
     const username = typeof body.username === "string" ? body.username : "";
     const password = typeof body.password === "string" ? body.password : "";
-    const key = `${req.socket.remoteAddress || ""}:${username}`;
+    const key = `${clientAddress(req)}:${username}`;
     if (limited(key)) {
       sendJson(res, 429, { error: "too many attempts" });
       return;
@@ -697,6 +704,26 @@ function originAllowed(req: IncomingMessage): boolean {
   }
 }
 
+function mutationOriginAllowed(req: IncomingMessage): boolean {
+  if (req.headers.origin !== undefined) return originAllowed(req);
+  const site = req.headers["sec-fetch-site"];
+  if (typeof site === "string" && site !== "same-origin" && site !== "none") return false;
+  return true;
+}
+
+function clientAddress(req: IncomingMessage): string {
+  const remote = req.socket.remoteAddress || "";
+  if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") {
+    const forwarded = req.headers["x-forwarded-for"];
+    const raw = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded;
+    if (typeof raw === "string") {
+      const last = raw.split(",").map((part) => part.trim()).filter(Boolean).at(-1);
+      if (last) return last;
+    }
+  }
+  return remote;
+}
+
 function fitChoice(current: string, choices: AgentOptionChoice[]): string {
   if (choices.length === 0) return current;
   if (choices.some((choice) => choice.id === current)) return current;
@@ -785,16 +812,37 @@ function statusFor(message: string): number {
   return 500;
 }
 
+const MAX_FAILURES = 4096;
+const FAILURE_TTL_MS = 10 * 60 * 1000;
+
+function pruneFailures(now: number) {
+  for (const [k, v] of failures) {
+    if (v.reset <= now) failures.delete(k);
+  }
+  while (failures.size >= MAX_FAILURES) {
+    const oldest = failures.keys().next().value;
+    if (oldest === undefined) break;
+    failures.delete(oldest);
+  }
+}
+
 function limited(key: string): boolean {
+  const now = Date.now();
   const entry = failures.get(key);
-  if (!entry || entry.reset < Date.now()) return false;
+  if (!entry) return false;
+  if (entry.reset <= now) {
+    failures.delete(key);
+    return false;
+  }
   return entry.count >= 8;
 }
 
 function noteFailure(key: string) {
+  const now = Date.now();
   const entry = failures.get(key);
-  if (!entry || entry.reset < Date.now()) {
-    failures.set(key, { count: 1, reset: Date.now() + 10 * 60 * 1000 });
+  if (!entry || entry.reset <= now) {
+    if (failures.size >= MAX_FAILURES) pruneFailures(now);
+    failures.set(key, { count: 1, reset: now + FAILURE_TTL_MS });
     return;
   }
   entry.count += 1;

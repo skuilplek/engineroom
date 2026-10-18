@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isInsidePath, type CatalogEntry, type RepositoryEntry } from "@engineroom/protocol";
@@ -49,7 +50,7 @@ export async function syncGrantedRepositories(
   await detectRepositories(home, directory);
   const ids = repos.map((repo) => repo.id);
   const file = grantsFile(home);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify({ ids }, null, 2)}\n`, { mode: 0o600 });
   await rename(tmp, file);
   return { grants: ids, repositories: await listRepositories(home) };

@@ -69,7 +69,7 @@ async function runCursor(ctx: DriverContext): Promise<{ agentSessionId: string |
   return streamAgent({
     agent: "cursor",
     binary,
-    args: cursorArgs(ctx.workspace, sessionId, ctx.model, ctx.prompt),
+    args: cursorArgs(ctx.workspace, sessionId, ctx.model, ctx.prompt, ctx.settings.permission),
     sessionId,
     ctx,
     env,
@@ -81,7 +81,7 @@ async function runClaude(ctx: DriverContext): Promise<{ agentSessionId: string |
   return streamAgent({
     agent: "claude",
     binary,
-    args: claudeArgs(ctx.model, ctx.agentSessionId, ctx.prompt),
+    args: claudeArgs(ctx.model, ctx.agentSessionId, ctx.prompt, ctx.settings.permission),
     sessionId: ctx.agentSessionId,
     ctx,
     env,

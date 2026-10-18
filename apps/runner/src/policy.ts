@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -30,7 +31,7 @@ export async function savePolicy(home: string, policy: UserPolicy): Promise<User
   await mkdir(root, { recursive: true, mode: 0o700 });
   await chmod(root, 0o700);
   const file = policyFile(home);
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   await rename(tmp, file);
   return next;
