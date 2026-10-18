@@ -93,9 +93,9 @@ function Shell({
   const [error, setError] = useState("");
   const [filesOpen, setFilesOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("engineroom.filesOpen") !== "0";
+      return localStorage.getItem("engineroom.filesOpen") === "1";
     } catch {
-      return true;
+      return false;
     }
   });
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
