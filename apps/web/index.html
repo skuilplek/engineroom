@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Engineroom</title>
+    <script>
+      try {
+        var stored = localStorage.getItem("engineroom-theme");
+        if (stored === "light" || stored === "dark") document.documentElement.setAttribute("data-theme", stored);
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

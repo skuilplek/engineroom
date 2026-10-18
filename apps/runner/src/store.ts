@@ -9,6 +9,7 @@ import {
   cleanModel,
   DEFAULT_SETTINGS,
   isAgentId,
+  isTheme,
   type AgentId,
   type ChatDetail,
   type ChatMeta,
@@ -47,6 +48,7 @@ export async function loadSettings(home: string): Promise<Settings> {
     if (parsed.permission === "ask" || parsed.permission === "allow" || parsed.permission === "edits") {
       patch.permission = parsed.permission;
     }
+    if (isTheme(parsed.theme)) patch.theme = parsed.theme;
     if (parsed.binaries && typeof parsed.binaries === "object") patch.binaries = parsed.binaries;
     return applySettings(DEFAULT_SETTINGS, patch);
   } catch (error) {

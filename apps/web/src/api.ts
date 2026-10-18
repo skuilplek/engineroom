@@ -8,6 +8,7 @@ import type {
   RepositoryEntry,
   Settings,
   SettingsPatch,
+  ThemePreference,
   UserAccess,
   UserPolicy,
 } from "@engineroom/protocol";
@@ -25,6 +26,7 @@ export interface Session {
   admin: boolean;
   agents: AgentId[];
   rawTerminal: boolean;
+  theme: ThemePreference;
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
 

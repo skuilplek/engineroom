@@ -14,6 +14,7 @@ import {
   effectiveAgentOptions,
   parseClientCommand,
   parseRunnerRequest,
+  parseSettingsPatch,
   parseUserPolicy,
   socketPathForUser,
 } from "@engineroom/protocol";
@@ -161,6 +162,11 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(next.defaultAgent, "claude");
   assert.equal(next.defaultModel, "sonnet");
   assert.equal(next.binaries.claude, undefined);
+  assert.equal(next.theme, "dark");
+  const themed = applySettings(next, { theme: "light" });
+  assert.equal(themed.theme, "light");
+  assert.equal(applySettings(themed, { defaultModel: "opus" }).theme, "light");
+  assert.throws(() => parseSettingsPatch({ theme: "sepia" }), /invalid theme/);
 });
 
 test("session cookies are signed and expire", () => {

@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { onAgent, sendCommand, sendPty, sendPtyResize } from "../socket.ts";
+import { terminalColors } from "../theme.ts";
 
 export function TerminalPanel({ chatId }: { chatId: string }) {
   const host = useRef<HTMLDivElement>(null);
@@ -14,7 +15,7 @@ export function TerminalPanel({ chatId }: { chatId: string }) {
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       fontSize: 13,
-      theme: { background: "#101010", foreground: "#f3f3f3", cursor: "#f3f3f3" },
+      theme: terminalColors(),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -35,10 +36,15 @@ export function TerminalPanel({ chatId }: { chatId: string }) {
     };
     const observer = new ResizeObserver(resize);
     observer.observe(node);
+    const themeObserver = new MutationObserver(() => {
+      term.options.theme = terminalColors();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => {
       stop();
       input.dispose();
       observer.disconnect();
+      themeObserver.disconnect();
       sendCommand({ type: "pty_close", chatId });
       term.dispose();
     };

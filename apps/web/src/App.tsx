@@ -8,6 +8,7 @@ import { AdminView } from "./settings/AdminView.tsx";
 import { SettingsView } from "./settings/SettingsView.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { onAgent, startAgentSocket } from "./socket.ts";
+import { applyTheme, rememberTheme } from "./theme.ts";
 
 type View = "chat" | "settings" | "start" | "admin";
 
@@ -18,6 +19,10 @@ export function App() {
   useEffect(() => {
     me().then(setSession).catch(() => setSession(null)).finally(() => setReady(true));
   }, []);
+
+  useEffect(() => {
+    if (session?.theme === "light" || session?.theme === "dark") rememberTheme(session.theme);
+  }, [session?.theme]);
 
   if (!ready) return <main className="login-screen"><p className="muted">Loading…</p></main>;
   if (!session) return <Login onSuccess={setSession} />;
@@ -110,6 +115,11 @@ function Shell({
   }, [refresh]);
 
   useEffect(() => {
+    if (view === "settings") return;
+    if (session.theme === "light" || session.theme === "dark") applyTheme(session.theme);
+  }, [view, session.theme]);
+
+  useEffect(() => {
     if (strip(target) === strip(session.home)) return;
     if (repos.some((repo) => strip(repo.path) === strip(target))) return;
     setTarget(session.home);
@@ -162,7 +172,14 @@ function Shell({
         }}
       />
       <section className="main">
-        {view === "settings" && <SettingsView agents={session.agents} options={session.options} />}
+        {view === "settings" && (
+          <SettingsView
+            agents={session.agents}
+            options={session.options}
+            onTheme={applyTheme}
+            onSaved={(theme) => onSession({ ...session, theme })}
+          />
+        )}
         {view === "admin" && session.admin && (
           <AdminView
             session={session}

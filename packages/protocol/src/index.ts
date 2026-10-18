@@ -14,11 +14,18 @@ export const CHAT_ID_RE =
 
 export type PermissionPolicy = "ask" | "allow" | "edits";
 
+export type ThemePreference = "dark" | "light";
+
+export function isTheme(value: unknown): value is ThemePreference {
+  return value === "dark" || value === "light";
+}
+
 export interface Settings {
   defaultAgent: AgentId;
   defaultModel: string;
   binaries: Partial<Record<AgentId, string>>;
   permission: PermissionPolicy;
+  theme: ThemePreference;
   lockedBinaries?: AgentId[];
 }
 
@@ -27,6 +34,7 @@ export interface SettingsPatch {
   defaultModel?: string;
   binaries?: Partial<Record<AgentId, string | null>>;
   permission?: PermissionPolicy;
+  theme?: ThemePreference;
 }
 
 export interface ChatMeta {
@@ -257,6 +265,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultModel: "",
   binaries: {},
   permission: "ask",
+  theme: "dark",
 };
 
 export function isAgentId(value: unknown): value is AgentId {
@@ -723,6 +732,10 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     }
     patch.permission = body.permission;
   }
+  if (body.theme != null) {
+    if (!isTheme(body.theme)) throw new Error("invalid theme");
+    patch.theme = body.theme;
+  }
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
     const binaries: SettingsPatch["binaries"] = {};
@@ -749,6 +762,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     defaultModel: patch.defaultModel ?? current.defaultModel,
     binaries: { ...current.binaries },
     permission: patch.permission ?? current.permission ?? "ask",
+    theme: patch.theme ?? current.theme ?? "dark",
   };
   if (patch.binaries) {
     for (const agent of AGENTS) {
