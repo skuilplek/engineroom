@@ -44,6 +44,16 @@ run_as_owner() {
 echo "Pulling the latest commit as ${owner}..."
 run_as_owner git pull --ff-only
 
+install -d -m 0755 /etc/engineroom
+if [[ ! -f /etc/engineroom/checks.json ]]; then
+  cat > /etc/engineroom/checks.json <<'EOF'
+{
+  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura"]
+}
+EOF
+  chmod 0644 /etc/engineroom/checks.json
+fi
+
 if [[ -d node_modules ]]; then
   chown -R "$owner" node_modules
 fi
@@ -60,8 +70,9 @@ if [[ ${#runners[@]} -gt 0 ]]; then
   systemctl restart "${runners[@]}"
 fi
 
+echo "Waiting for the hub..."
 for _ in $(seq 1 20); do
-  if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
     rev="$(run_as_owner git rev-parse --short HEAD)"
     echo "Engineroom ${rev} is active and the hub is responding."
     exit 0
