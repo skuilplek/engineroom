@@ -800,6 +800,19 @@ test("only installed agent commands are listed, and a custom agent can be added"
       body: JSON.stringify({ label: "Cursor", binary: "agent" }),
     });
     assert.equal(clash.status, 400);
+    const clashBody = (await clash.json()) as { error: string };
+    assert.match(clashBody.error, /built-in agent/);
+
+    const byPath = await fetch(`${base}/api/admin/agents/custom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie! },
+      body: JSON.stringify({ label: "Shop Agent", binary: path.join(bin, "codex") }),
+    });
+    assert.equal(byPath.status, 201);
+    const pathed = (await byPath.json()) as { agents: { id: string; binary: string; available: boolean }[] };
+    const shop = pathed.agents.find((agent) => agent.id === "shop-agent");
+    assert.equal(shop?.binary, path.join(bin, "codex"));
+    assert.equal(shop?.available, true);
   } finally {
     hub.close();
     await rm(root, { recursive: true, force: true });

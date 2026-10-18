@@ -987,7 +987,8 @@ function statusFor(message: string): number {
     message.includes("not a regular file") ||
     message.includes("too large") ||
     message.includes("cannot edit binary") ||
-    message.includes("already exists")
+    message.includes("already exists") ||
+    message.includes("built-in agent")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;

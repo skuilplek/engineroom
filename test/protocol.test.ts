@@ -17,6 +17,7 @@ import {
   effectiveAgentOptions,
   parseClientCommand,
   parseAgentCatalog,
+  parseAgentCommand,
   parseRunnerRequest,
   parseSettingsPatch,
   defaultPolicy,
@@ -40,7 +41,8 @@ test("agent labels follow the catalog and custom slugs stay separate from comman
   const catalog = parseAgentCatalog([{ id: "codex", label: "Codex", binary: "codex" }]);
   assert.deepEqual(catalog, [{ id: "codex", label: "Codex", binary: "codex" }]);
   assert.throws(() => parseAgentCatalog([{ id: "cursor", label: "Cursor", binary: "agent" }]), /invalid agents/);
-  assert.throws(() => parseAgentCatalog([{ id: "codex", label: "Codex", binary: "../codex" }]), /invalid agent/);
+  assert.throws(() => parseAgentCatalog([{ id: "codex", label: "Codex", binary: "../codex" }]), /absolute path/);
+  assert.equal(parseAgentCommand("/usr/local/bin/codex"), "/usr/local/bin/codex");
   const policy = parseUserPolicy({ agents: ["cursor", "codex"], rawTerminal: true, binaries: { codex: "/opt/codex" } });
   assert.deepEqual(policy.agents, ["cursor", "codex"]);
   assert.equal(policy.binaries.codex, "/opt/codex");

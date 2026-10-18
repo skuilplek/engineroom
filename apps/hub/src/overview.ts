@@ -70,15 +70,23 @@ export async function serverOverview(options: {
 }
 
 export async function findCommand(name: string, dirs: string[]): Promise<string | null> {
+  if (name.startsWith("/")) {
+    return executable(name);
+  }
   for (const dir of dirs) {
-    const full = path.join(dir, name);
-    try {
-      await access(full, constants.X_OK);
-      const info = await stat(full);
-      if (info.isFile() && (info.mode & 0o111) !== 0) return full;
-    } catch {
-      continue;
-    }
+    const found = await executable(path.join(dir, name));
+    if (found) return found;
+  }
+  return null;
+}
+
+async function executable(full: string): Promise<string | null> {
+  try {
+    await access(full, constants.X_OK);
+    const info = await stat(full);
+    if (info.isFile() && (info.mode & 0o111) !== 0) return full;
+  } catch {
+    return null;
   }
   return null;
 }

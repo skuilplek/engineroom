@@ -376,8 +376,19 @@ export function agentSlug(label: string): string {
 }
 
 export function parseAgentCommand(value: unknown): string {
-  if (typeof value !== "string" || !AGENT_COMMAND_RE.test(value)) throw new Error("invalid agent");
-  return value;
+  if (typeof value !== "string") throw new Error("invalid agent");
+  const command = value.trim();
+  if (AGENT_COMMAND_RE.test(command)) return command;
+  if (
+    command.startsWith("/") &&
+    command.length <= 4096 &&
+    !command.includes("\0") &&
+    !command.includes("..") &&
+    !/[\u0000-\u001f\s]/.test(command)
+  ) {
+    return command;
+  }
+  throw new Error("invalid agent command. Use a command name or an absolute path");
 }
 
 export function parseAgentCatalog(value: unknown): AgentDefinition[] {

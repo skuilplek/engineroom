@@ -200,9 +200,9 @@ export function addCustomAgent(file: string, label: string, binary: string): Cus
   const name = parseAgentLabel(label);
   const command = parseAgentCommand(binary);
   const id = agentSlug(name);
-  if (isBuiltinAgent(id)) throw new Error("invalid agent");
+  if (isBuiltinAgent(id)) throw new Error(`${name} is a built-in agent. Offer it from its tab.`);
   const existing = loadCustomAgents(file);
-  if (existing.some((agent) => agent.id === id)) throw new Error("invalid agent");
+  if (existing.some((agent) => agent.id === id)) throw new Error("an agent with that name already exists");
   const next: CustomAgent = { id, label: name, binary: command, enabled: false };
   const current = readAgentFile(file);
   const flags = loadAgentFlags(file);

@@ -370,7 +370,7 @@ export function AdminView({
   const offered = inventory.length > 0
     ? inventory.filter((agent) => flags[agent.id] && (agent.builtin || agent.available)).map((agent) => agent.label)
     : session.agents.map((agent) => agentLabel(agent, session.agentCatalog));
-  const installed = inventory.filter((agent) => agent.available);
+  const installed = inventory.filter((agent) => agent.builtin || agent.available);
   const selectedAgent = installed.find((agent) => agent.id === agentTab);
   const missingCustom = inventory.filter((agent) => !agent.builtin && !agent.available);
 
@@ -491,6 +491,9 @@ export function AdminView({
                     <input type="checkbox" checked={Boolean(flags[selectedAgent.id])} onChange={() => toggle(selectedAgent.id)} />
                     Offer {selectedAgent.label}
                   </label>
+                  {selectedAgent.builtin && !selectedAgent.available && (
+                    <p className="muted">This command was not found in the system path. Chats still look for {selectedAgent.binary} on that person's PATH, including ~/.local/bin.</p>
+                  )}
                   {selectedAgent.builtin ? null : (
                     <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
                   )}
@@ -513,7 +516,7 @@ export function AdminView({
             {agentTab === "+" && (
               <form onSubmit={(event) => void addAgent(event)}>
                 <h3>Add an agent</h3>
-                <p className="muted">Give it a display name and the command to look up. Chats launch that command with acp. It gets a tab once the command is installed.</p>
+                <p className="muted">Give it a display name and the command to launch with acp. Use a command name such as codex, or an absolute path. Built-in agents already have their own tabs.</p>
                 <label>
                   Display name
                   <input value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="Codex" required />
