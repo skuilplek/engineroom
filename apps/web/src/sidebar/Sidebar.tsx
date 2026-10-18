@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AgentId, ChatMeta, ListedSession, RepositoryEntry } from "@engineroom/protocol";
+import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { buildGroups, strip, type RepoGroup } from "../format.ts";
 import { IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
@@ -164,8 +164,8 @@ function ImportList({
     <div className="import-list">
       <div className="row">
         <select aria-label="Agent to import" value={agent} onChange={(event) => onAgent(event.target.value as AgentId)}>
-          <option value="cursor">agent</option>
-          <option value="claude">claude</option>
+          <option value="cursor">{agentLabel("cursor")}</option>
+          <option value="claude">{agentLabel("claude")}</option>
         </select>
         <button type="button" onClick={onClose}>Close</button>
       </div>

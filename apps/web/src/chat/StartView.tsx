@@ -7,6 +7,7 @@ import { IconArrow, IconPanelRight } from "../icons.tsx";
 
 export function StartView({
   agents,
+  agentCatalog,
   options,
   workspace,
   targetLabel,
@@ -15,6 +16,7 @@ export function StartView({
   onToggleFiles,
 }: {
   agents: AgentId[];
+  agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   workspace: string;
   targetLabel: string;
@@ -112,7 +114,7 @@ export function StartView({
           {agents.length > 1 && (
             <label className="chip">
               <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
-                {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
+                {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
               </select>
             </label>
           )}

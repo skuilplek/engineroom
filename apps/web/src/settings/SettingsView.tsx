@@ -7,11 +7,13 @@ import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
 export function SettingsView({
   agents,
+  agentCatalog,
   options,
   onTheme,
   onSaved,
 }: {
   agents: AgentId[];
+  agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   onTheme: (theme: ThemePreference) => void;
   onSaved: (theme: ThemePreference) => void;
@@ -144,7 +146,7 @@ export function SettingsView({
           value={settings.defaultAgent}
           onChange={(event) => chooseAgent(event.target.value as Settings["defaultAgent"])}
         >
-          {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
+          {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
         </select>
       </label>
       {models.length > 0 && (
@@ -175,7 +177,7 @@ export function SettingsView({
           const locked = settings.lockedBinaries?.includes(agent) ?? false;
           return (
             <label key={agent}>
-              {agentLabel(agent)}
+              {agentLabel(agent, agentCatalog)}
               <input
                 value={settings.binaries[agent] || ""}
                 placeholder="Absolute path, or blank to use PATH"

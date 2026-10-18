@@ -702,6 +702,110 @@ test("the administrator sees disk space and which commands are installed", async
   }
 });
 
+test("only installed agent commands are listed, and a custom agent can be added", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-agent-tabs-"));
+  const home = path.join(root, "home");
+  const bin = path.join(root, "bin");
+  const agentsFile = path.join(root, "agents.json");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(bin);
+  await mkdir(socketDir);
+  await writeFile(path.join(bin, "agent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(path.join(bin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: false }));
+  const uid = process.getuid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("agent-tab-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    commandDirs: [bin],
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const login = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (login.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const listed = await fetch(`${base}/api/admin/agents`, { headers: { Cookie: cookie! } });
+    assert.equal(listed.status, 200);
+    const body = (await listed.json()) as {
+      agents: { id: string; label: string; binary: string; available: boolean; path: string | null; builtin: boolean }[];
+    };
+    const cursor = body.agents.find((agent) => agent.id === "cursor");
+    const claude = body.agents.find((agent) => agent.id === "claude");
+    const pi = body.agents.find((agent) => agent.id === "pi");
+    assert.equal(cursor?.label, "Cursor");
+    assert.equal(cursor?.binary, "agent");
+    assert.equal(cursor?.available, true);
+    assert.equal(cursor?.path, path.join(bin, "agent"));
+    assert.equal(claude?.label, "Claude");
+    assert.equal(claude?.available, false);
+    assert.equal(pi?.label, "Pi");
+    assert.equal(pi?.available, false);
+
+    const created = await fetch(`${base}/api/admin/agents/custom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie! },
+      body: JSON.stringify({ label: "Codex", binary: "codex" }),
+    });
+    assert.equal(created.status, 201);
+    const added = (await created.json()) as { agents: { id: string; label: string; available: boolean; builtin: boolean; enabled: boolean }[] };
+    const codex = added.agents.find((agent) => agent.id === "codex");
+    assert.equal(codex?.label, "Codex");
+    assert.equal(codex?.builtin, false);
+    assert.equal(codex?.available, true);
+    assert.equal(codex?.enabled, false);
+
+    const missing = await fetch(`${base}/api/admin/agents/custom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie! },
+      body: JSON.stringify({ label: "Ghost", binary: "ghost" }),
+    });
+    assert.equal(missing.status, 201);
+    const withGhost = (await missing.json()) as { agents: { id: string; available: boolean }[] };
+    assert.equal(withGhost.agents.find((agent) => agent.id === "ghost")?.available, false);
+
+    const removed = await fetch(`${base}/api/admin/agents/custom/ghost`, {
+      method: "DELETE",
+      headers: { Cookie: cookie! },
+    });
+    assert.equal(removed.status, 200);
+    const after = (await removed.json()) as { agents: { id: string }[] };
+    assert.equal(after.agents.some((agent) => agent.id === "ghost"), false);
+    assert.equal(after.agents.some((agent) => agent.id === "codex"), true);
+    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { customAgents: { id: string }[] };
+    assert.deepEqual(stored.customAgents.map((agent) => agent.id), ["codex"]);
+
+    const clash = await fetch(`${base}/api/admin/agents/custom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie! },
+      body: JSON.stringify({ label: "Cursor", binary: "agent" }),
+    });
+    assert.equal(clash.status, 400);
+  } finally {
+    hub.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("offered modes and models are probed, then narrowed per person", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-options-"));
   const aliceHome = path.join(root, "alice");

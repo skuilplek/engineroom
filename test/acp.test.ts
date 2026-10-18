@@ -1,16 +1,51 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { AgentId } from "@engineroom/protocol";
-import { AcpManager } from "../apps/runner/src/acp/manager.ts";
+import { AcpManager, acpCommand } from "../apps/runner/src/acp/manager.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { getChat } from "../apps/runner/src/store.ts";
 
 const fake = path.resolve("test/fake-acp.mjs");
+
+test("a custom agent launches its command with acp", () => {
+  const commands = new Map([["codex", "codex"]]);
+  assert.deepEqual(acpCommand("codex", commands), { names: ["codex"], args: ["acp"] });
+  assert.deepEqual(acpCommand("cursor", new Map()), { names: ["agent"], args: ["acp"] });
+  assert.deepEqual(acpCommand("claude", new Map()), { names: ["claude-agent-acp"], args: [] });
+  assert.throws(() => acpCommand("pi", new Map()));
+  const acp = new AcpManager();
+  assert.equal(acp.supports("codex"), false);
+  acp.setCatalog([{ id: "codex", binary: "codex" }]);
+  assert.equal(acp.supports("codex"), true);
+  assert.equal(acp.supports("cursor"), true);
+  assert.equal(acp.supports("pi"), false);
+});
+
+test("the runner stores a custom agent catalog", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-catalog-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager();
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  try {
+    const saved = await once(sock, {
+      id: "cat",
+      type: "put_agent_catalog",
+      agents: [{ id: "codex", label: "Codex", binary: "codex" }],
+    });
+    assert.equal(saved.type, "ok");
+    const stored = JSON.parse(await readFile(path.join(home, ".engineroom", "agent-catalog.json"), "utf8")) as { id: string; binary: string }[];
+    assert.deepEqual(stored, [{ id: "codex", label: "Codex", binary: "codex" }]);
+    assert.equal(acp.supports("codex"), true);
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("an ACP session streams chunks and can import a CLI session", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-acp-"));

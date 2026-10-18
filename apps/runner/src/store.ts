@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  AGENTS,
   assertRepoDirectory,
   applySettings,
   CHAT_ID_RE,
@@ -64,7 +63,7 @@ export async function saveSettings(home: string, patch: SettingsPatch): Promise<
   const editable: SettingsPatch = { ...patch };
   if (patch.binaries) {
     const binaries = { ...patch.binaries };
-    for (const agent of AGENTS) {
+    for (const agent of Object.keys(binaries)) {
       if (policy.binaries[agent]) delete binaries[agent];
     }
     editable.binaries = binaries;

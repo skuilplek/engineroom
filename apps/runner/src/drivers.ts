@@ -1,4 +1,4 @@
-import { agentLabel, createCliParser, type AgentId, type Settings, type StreamEvent } from "@engineroom/protocol";
+import { agentLabel, createCliParser, type AgentId, type BuiltinAgentId, type Settings, type StreamEvent } from "@engineroom/protocol";
 import {
   binaryNames,
   childEnv,
@@ -25,11 +25,11 @@ export interface DriverContext {
 }
 
 export interface AgentDriver {
-  id: AgentId;
+  id: BuiltinAgentId;
   run(ctx: DriverContext): Promise<{ agentSessionId: string | null }>;
 }
 
-export function defaultDrivers(): Record<AgentId, AgentDriver> {
+export function defaultDrivers(): Record<BuiltinAgentId, AgentDriver> {
   return {
     cursor: { id: "cursor", run: runCursor },
     claude: { id: "claude", run: runClaude },

@@ -26,12 +26,21 @@ export interface AcpContext {
   onSession?: (sessionId: string) => void | Promise<void>;
 }
 
+export function acpCommand(agent: string, commands: ReadonlyMap<string, string>): { names: string[]; args: string[] } {
+  const custom = commands.get(agent);
+  if (custom) return { names: [custom], args: ["acp"] };
+  if (agent === "cursor") return { names: ["agent"], args: ["acp"] };
+  if (agent === "claude") return { names: ["claude-agent-acp"], args: [] };
+  throw new AcpUnavailable();
+}
+
 export class AcpManager {
   private sessions = new Map<string, AcpSession>();
   private starting = new Map<string, Promise<AcpSession>>();
   private opening = new Map<string, AcpSession>();
   private idle = new Map<string, NodeJS.Timeout>();
   private order: string[] = [];
+  private commands = new Map<string, string>();
 
   private readonly options: {
     launch?: (agent: AgentId, ctx: AcpContext) => Promise<AcpLaunch>;
@@ -41,8 +50,12 @@ export class AcpManager {
     this.options = options;
   }
 
+  setCatalog(agents: readonly { id: string; binary: string }[]) {
+    this.commands = new Map(agents.map((agent) => [agent.id, agent.binary]));
+  }
+
   supports(agent: AgentId): boolean {
-    return agent === "cursor" || agent === "claude";
+    return agent === "cursor" || agent === "claude" || this.commands.has(agent);
   }
 
   info(chatId: string): { modes: AcpSession["modes"]; models: AcpSession["models"] } | null {
@@ -240,13 +253,12 @@ export class AcpManager {
 
   private async launch(agent: AgentId, ctx: AcpContext): Promise<AcpLaunch> {
     if (this.options.launch) return this.options.launch(agent, ctx);
-    const names = agent === "cursor" ? ["agent"] : agent === "claude" ? ["claude-agent-acp"] : [];
-    if (names.length === 0) throw new AcpUnavailable();
+    const command = acpCommand(agent, this.commands);
     const [policy, settings] = await Promise.all([loadPolicy(ctx.home), loadSettings(ctx.home)]);
-    const binary = await resolveBinary(binaryFor(policy, settings, agent), names, childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
-      throw new AcpUnavailable(`could not find ${names[0]} on PATH`);
+    const binary = await resolveBinary(binaryFor(policy, settings, agent), command.names, childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
+      throw new AcpUnavailable(`could not find ${command.names[0]} on PATH`);
     });
-    return { binary, args: agent === "cursor" ? ["acp"] : [] };
+    return { binary, args: command.args };
   }
 
   private scheduleIdle(chatId: string) {

@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  AGENTS,
   defaultPolicy,
+  isAgentId,
   parseUserPolicy,
   type AgentId,
   type Settings,
@@ -40,7 +40,8 @@ export async function savePolicy(home: string, policy: UserPolicy): Promise<User
 export function withLocks(settings: Settings, policy: UserPolicy): Settings {
   const binaries = { ...settings.binaries };
   const lockedBinaries: AgentId[] = [];
-  for (const agent of AGENTS) {
+  for (const agent of Object.keys(policy.binaries)) {
+    if (!isAgentId(agent)) continue;
     const override = policy.binaries[agent];
     if (!override) continue;
     binaries[agent] = override;

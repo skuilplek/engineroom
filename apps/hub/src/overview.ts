@@ -69,7 +69,7 @@ export async function serverOverview(options: {
   };
 }
 
-async function findCommand(name: string, dirs: string[]): Promise<string | null> {
+export async function findCommand(name: string, dirs: string[]): Promise<string | null> {
   for (const dir of dirs) {
     const full = path.join(dir, name);
     try {

@@ -33,7 +33,24 @@ export interface Session {
   appName: string;
   theme: ThemePreference;
   fileVisibility?: FileVisibility;
+  agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
+}
+
+export interface AdminAgent {
+  id: string;
+  label: string;
+  binary: string;
+  builtin: boolean;
+  available: boolean;
+  path: string | null;
+  enabled: boolean;
+}
+
+export interface AgentInventory {
+  agents: AdminAgent[];
+  rawTerminal: boolean;
+  cliImport: boolean;
 }
 
 export interface Account {
@@ -248,8 +265,23 @@ export function saveBranding(appName: string) {
   });
 }
 
-export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean, cliImport?: boolean) {
-  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean }>("/api/admin/agents", {
+export function listAdminAgents() {
+  return api<AgentInventory>("/api/admin/agents");
+}
+
+export function createCustomAgent(label: string, binary: string) {
+  return api<AgentInventory>("/api/admin/agents/custom", {
+    method: "POST",
+    body: JSON.stringify({ label, binary }),
+  });
+}
+
+export function deleteCustomAgent(id: string) {
+  return api<AgentInventory>(`/api/admin/agents/custom/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function saveAgents(flags: Record<string, boolean>, rawTerminal?: boolean, cliImport?: boolean) {
+  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean; agentCatalog?: { id: string; label: string }[] }>("/api/admin/agents", {
     method: "PUT",
     body: JSON.stringify({ ...flags, rawTerminal, cliImport }),
   });

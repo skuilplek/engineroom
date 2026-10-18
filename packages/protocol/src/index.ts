@@ -1,10 +1,41 @@
 export const AGENTS = ["cursor", "claude", "pi"] as const;
 
-export type AgentId = (typeof AGENTS)[number];
+export type BuiltinAgentId = (typeof AGENTS)[number];
 
-export function agentLabel(agent: AgentId): string {
-  if (agent === "cursor") return "agent";
-  return agent;
+/** Builtin ids plus custom slugs stored by the hub. */
+export type AgentId = string;
+
+export interface AgentName {
+  id: string;
+  label: string;
+}
+
+export interface AgentDefinition extends AgentName {
+  binary: string;
+}
+
+export const AGENT_CATALOG: readonly AgentDefinition[] = [
+  { id: "cursor", label: "Cursor", binary: "agent" },
+  { id: "claude", label: "Claude", binary: "claude" },
+  { id: "pi", label: "Pi", binary: "pi" },
+];
+
+export const AGENT_SLUG_RE = /^[a-z][a-z0-9-]{0,31}$/;
+export const AGENT_COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
+export const MAX_AGENTS = 40;
+
+export function agentLabel(agent: string, names?: readonly AgentName[]): string {
+  const named = names?.find((item) => item.id === agent)?.label;
+  if (named) return named;
+  return AGENT_CATALOG.find((item) => item.id === agent)?.label ?? agent;
+}
+
+export function agentBinary(agent: string): string {
+  return AGENT_CATALOG.find((item) => item.id === agent)?.binary ?? agent;
+}
+
+export function isBuiltinAgent(value: unknown): value is BuiltinAgentId {
+  return typeof value === "string" && (AGENTS as readonly string[]).includes(value);
 }
 
 export const USERNAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
@@ -301,6 +332,7 @@ export type RunnerRequest =
   | { id: string; type: "list_sessions"; agent?: AgentId }
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
   | { id: string; type: "probe_agent"; agent: AgentId }
+  | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility };
 
@@ -318,7 +350,41 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export function isAgentId(value: unknown): value is AgentId {
-  return typeof value === "string" && (AGENTS as readonly string[]).includes(value);
+  return typeof value === "string" && AGENT_SLUG_RE.test(value);
+}
+
+export function parseAgentLabel(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid agent");
+  const label = value.trim();
+  if (!label || label.length > 64 || /[\u0000-\u001f]/.test(label)) throw new Error("invalid agent");
+  return label;
+}
+
+export function agentSlug(label: string): string {
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+  if (!isAgentId(slug)) throw new Error("invalid agent");
+  return slug;
+}
+
+export function parseAgentCommand(value: unknown): string {
+  if (typeof value !== "string" || !AGENT_COMMAND_RE.test(value)) throw new Error("invalid agent");
+  return value;
+}
+
+export function parseAgentCatalog(value: unknown): AgentDefinition[] {
+  if (!Array.isArray(value) || value.length > MAX_AGENTS) throw new Error("invalid agents");
+  const agents: AgentDefinition[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") throw new Error("invalid agents");
+    const record = item as Record<string, unknown>;
+    if (!isAgentId(record.id) || isBuiltinAgent(record.id) || seen.has(record.id)) throw new Error("invalid agents");
+    const label = parseAgentLabel(record.label);
+    const binary = parseAgentCommand(record.binary);
+    seen.add(record.id);
+    agents.push({ id: record.id, label, binary });
+  }
+  return agents;
 }
 
 export function assertUsername(value: string): string {
@@ -502,6 +568,8 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "probe_agent":
       if (!isAgentId(body.agent)) throw new Error("invalid agent");
       return { id: body.id, type: "probe_agent", agent: body.agent };
+    case "put_agent_catalog":
+      return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "set_model":
       return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
     case "pty_open":
@@ -725,11 +793,22 @@ export function parseCatalogEntries(value: unknown): CatalogEntry[] {
   return entries;
 }
 
+function agentKeys(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const keys: string[] = [];
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    if (!isAgentId(key) || keys.includes(key)) continue;
+    if (keys.length >= MAX_AGENTS) break;
+    keys.push(key);
+  }
+  return keys;
+}
+
 export function parsePolicyBinaries(value: unknown): Partial<Record<AgentId, string>> {
   if (value == null) return {};
-  if (typeof value !== "object") throw new Error("invalid binaries");
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid binaries");
   const binaries: Partial<Record<AgentId, string>> = {};
-  for (const agent of AGENTS) {
+  for (const agent of agentKeys(value)) {
     const raw = (value as Record<string, unknown>)[agent];
     if (raw == null || raw === "") continue;
     if (typeof raw !== "string" || !raw.startsWith("/") || raw.length > 4096 || raw.includes("\0") || raw.includes("\n")) {
@@ -743,7 +822,7 @@ export function parsePolicyBinaries(value: unknown): Partial<Record<AgentId, str
 export function parseUserPolicy(value: unknown): UserPolicy {
   if (!value || typeof value !== "object") throw new Error("invalid policy");
   const body = value as Record<string, unknown>;
-  if (!Array.isArray(body.agents) || body.agents.length === 0 || body.agents.length > AGENTS.length) {
+  if (!Array.isArray(body.agents) || body.agents.length === 0 || body.agents.length > MAX_AGENTS) {
     throw new Error("at least one agent must stay on");
   }
   const agents: AgentId[] = [];
@@ -772,7 +851,7 @@ function parsePolicyOptions(value: unknown): UserPolicy["options"] {
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid options");
   const options: NonNullable<UserPolicy["options"]> = {};
   let seen = false;
-  for (const agent of AGENTS) {
+  for (const agent of agentKeys(value)) {
     const raw = (value as Record<string, unknown>)[agent];
     if (raw == null) continue;
     if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid options");
@@ -874,7 +953,7 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
     const binaries: SettingsPatch["binaries"] = {};
-    for (const agent of AGENTS) {
+    for (const agent of agentKeys(body.binaries)) {
       const raw = (body.binaries as Record<string, unknown>)[agent];
       if (raw == null || raw === "") {
         binaries[agent] = null;
@@ -900,8 +979,8 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     theme: patch.theme ?? current.theme ?? "dark",
   };
   if (patch.binaries) {
-    for (const agent of AGENTS) {
-      if (!(agent in patch.binaries)) continue;
+    for (const agent of Object.keys(patch.binaries)) {
+      if (!isAgentId(agent)) continue;
       const value = patch.binaries[agent];
       if (value == null || value === "") delete next.binaries[agent];
       else next.binaries[agent] = value;

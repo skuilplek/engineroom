@@ -6,16 +6,20 @@ import path from "node:path";
 import { peerCredentials } from "@engineroom/peercred";
 import {
   assertChatId,
+  isBuiltinAgent,
   maxSeq,
   parseRunnerRequest,
   titleFromPrompt,
+  type AgentDefinition,
   type AgentId,
+  type BuiltinAgentId,
   type ChatEvent,
   type ChatMeta,
   type RunnerRequest,
   type RunnerResponse,
   type StreamEvent,
 } from "@engineroom/protocol";
+import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
@@ -45,7 +49,7 @@ export interface RunnerOptions {
   home: string;
   socketPath?: string;
   fd?: number;
-  drivers?: Record<AgentId, AgentDriver>;
+  drivers?: Partial<Record<BuiltinAgentId, AgentDriver>>;
   peerCheck?: (socket: Socket) => void;
   hubUser?: string;
   acp?: AcpManager | null;
@@ -69,6 +73,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   const home = options.home;
   const drivers = options.drivers ?? defaultDrivers();
   const acp = options.acp === undefined ? (options.drivers ? null : new AcpManager()) : options.acp;
+  let agentCatalog: AgentDefinition[] = await loadAgentCatalog(home);
+  acp?.setCatalog?.(agentCatalog);
+
+  function driverFor(agent: string): AgentDriver | undefined {
+    if (!isBuiltinAgent(agent)) return undefined;
+    return drivers[agent];
+  }
   const pty = options.pty ?? new PtyManager();
   const runs = new Map<string, RunState>();
   const bus = new ChatBus();
@@ -298,6 +309,11 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listSessions(request.agent);
       case "import_session":
         return importSession(request.agent, request.agentSessionId, request.workspace);
+      case "put_agent_catalog": {
+        agentCatalog = await saveAgentCatalog(home, request.agents);
+        acp?.setCatalog?.(agentCatalog);
+        return { ok: true };
+      }
       case "list_repo_files":
         return listRepositoryFiles(home, request.workspace, request.visibility);
       case "read_repo_file":
@@ -433,11 +449,15 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           if (chat.needsResync) await updateChat(home, chatId, { needsResync: false });
         } catch (error) {
           if (!(error instanceof AcpUnavailable)) throw error;
-          const finished = await drivers[chat.agent].run(ctx);
+          const fallback = driverFor(chat.agent);
+          if (!fallback) throw error;
+          const finished = await fallback.run(ctx);
           sessionId = finished.agentSessionId ?? sessionId;
         }
       } else {
-        const finished = await drivers[chat.agent].run(ctx);
+        const driver = driverFor(chat.agent);
+        if (!driver) throw new Error("invalid agent");
+        const finished = await driver.run(ctx);
         sessionId = finished.agentSessionId ?? sessionId;
       }
       if (sessionId && sessionId !== chat.agentSessionId) await updateChat(home, chatId, { agentSessionId: sessionId });
@@ -484,7 +504,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     const settings = await loadSettings(home);
     const env = childEnv(process.env, home);
     env.TERM = "xterm-256color";
-    const binary = await resolveBinary(binaryFor(policy, settings, chat.agent), binaryNames(chat.agent), env);
+    const binary = await resolveBinary(binaryFor(policy, settings, chat.agent), binaryNames(chat.agent, agentCatalog), env);
     const command = ptyCommand(chat.agent, chat.agentSessionId, chat.workspace);
     const scroll = await pty.open(
       chatId,

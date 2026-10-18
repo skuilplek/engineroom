@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import type { AgentId, PermissionPolicy } from "@engineroom/protocol";
+import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
 
 export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
@@ -81,10 +81,10 @@ export async function resolveBinary(
   throw new Error(`could not find ${names.join(" or ")} on PATH`);
 }
 
-export function binaryNames(agent: AgentId): string[] {
-  if (agent === "cursor") return ["agent"];
-  if (agent === "claude") return ["claude"];
-  return ["pi"];
+export function binaryNames(agent: AgentId, catalog: readonly { id: string; binary: string }[] = []): string[] {
+  if (isBuiltinAgent(agent)) return [agentBinary(agent)];
+  const custom = catalog.find((item) => item.id === agent);
+  return [custom?.binary ?? agent];
 }
 
 export function cursorArgs(

@@ -234,6 +234,7 @@ function Shell({
         {view === "settings" && (
           <SettingsView
             agents={session.agents}
+            agentCatalog={session.agentCatalog}
             options={session.options}
             onTheme={applyTheme}
             onSaved={(theme) => onSession({ ...session, theme })}
@@ -242,7 +243,13 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport) => onSession({ ...session, agents, rawTerminal, cliImport })}
+            onAgents={(agents, rawTerminal, cliImport, agentCatalog) => onSession({
+              ...session,
+              agents,
+              rawTerminal,
+              cliImport,
+              agentCatalog: agentCatalog ?? session.agentCatalog,
+            })}
             onBranding={(appName) => onSession({ ...session, appName })}
             onAccess={() => {
               me().then(onSession).catch(() => undefined);
@@ -253,6 +260,7 @@ function Shell({
         {view === "start" && selectedRepo && (
           <StartView
             agents={session.agents}
+            agentCatalog={session.agentCatalog}
             options={session.options}
             workspace={target}
             targetLabel={selectedRepo.name}
@@ -277,6 +285,7 @@ function Shell({
             key={activeId}
             chatId={activeId}
             home={session.home}
+            agentCatalog={session.agentCatalog}
             repos={repos}
             rawTerminal={session.rawTerminal}
             claimOpening={claimOpening}

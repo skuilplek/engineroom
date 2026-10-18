@@ -3,10 +3,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, saveAgentFlags, saveAppName } from "./agents.ts";
+import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -52,6 +52,7 @@ interface RunnerCall {
   entries?: EnvEntry[];
   repos?: CatalogEntry[];
   catalog?: string[];
+  agents?: AgentDefinition[];
   directory?: string;
   modeId?: string;
   modelId?: string;
@@ -176,6 +177,7 @@ export function createHub(options: HubOptions) {
     }
     failures.delete(key);
     await call(user, { type: "detect_repositories", directory: loadRepoDirectory(reposFile) }).catch(() => undefined);
+    await syncAgentCatalog(user).catch(() => undefined);
     res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret), options.cookieSecure));
     sendJson(res, 200, await profile(user));
   }
@@ -194,6 +196,7 @@ export function createHub(options: HubOptions) {
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
       fileVisibility: loadFileVisibility(reposFile),
+      agentCatalog: namesFor(access.agents, agentsFile),
     };
   }
 
@@ -203,9 +206,11 @@ export function createHub(options: HubOptions) {
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
+    const listed = await listAgents(agentsFile, commandDirs);
+    const offerable = new Set(offeredAgentIds(flags, listed));
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
-    const agents = policy.agents.filter((agent) => flags[agent]);
+    const agents = policy.agents.filter((agent) => offerable.has(agent));
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
     for (const agent of agents) {
       const config = stored[agent];
@@ -275,14 +280,33 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, { appName });
       return;
     }
+    if (parts[2] === "agents" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, await agentState());
+      return;
+    }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body), cliImportFrom(body));
+      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body));
+      const listed = await listAgents(agentsFile, commandDirs);
       sendJson(res, 200, {
-        agents: enabledAgentIds(flags),
+        agents: offeredAgentIds(flags, listed),
         rawTerminal: loadRawTerminal(agentsFile),
         cliImport: loadCliImport(agentsFile),
+        agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
       });
+      return;
+    }
+    if (parts[2] === "agents" && parts[3] === "custom" && parts.length === 4 && req.method === "POST") {
+      const body = (await readJson(req)) as { label?: unknown; binary?: unknown };
+      addCustomAgent(agentsFile, parseAgentLabel(body.label), parseAgentCommand(body.binary));
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 201, await agentState());
+      return;
+    }
+    if (parts[2] === "agents" && parts[3] === "custom" && parts.length === 5 && req.method === "DELETE") {
+      removeCustomAgent(agentsFile, decodeURIComponent(parts[4] || ""));
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 200, await agentState());
       return;
     }
     if (parts[2] === "agent-options" && parts.length === 3 && req.method === "GET") {
@@ -296,6 +320,11 @@ export function createHub(options: HubOptions) {
     if (parts[2] === "agent-options" && parts.length === 5 && parts[4] === "probe" && req.method === "POST") {
       const agent = decodeURIComponent(parts[3] || "");
       if (!isAgentId(agent) || !loadAgentFlags(agentsFile)[agent]) throw new Error("invalid agent");
+      if (!isBuiltinAgent(agent)) {
+        const listed = await listAgents(agentsFile, commandDirs);
+        if (!listed.some((item) => item.id === agent && item.available)) throw new Error("invalid agent");
+      }
+      await syncAgentCatalog(user);
       const found = (await call(user, { type: "probe_agent", agent })) as { modes: AgentOptionChoice[]; models: AgentOptionChoice[] };
       sendJson(res, 200, recordProbe(agentOptionsFile, agent, found));
       return;
@@ -353,7 +382,10 @@ export function createHub(options: HubOptions) {
       if (action === "policy" && req.method === "PUT") {
         const policy = restrictPolicy(parseUserPolicy(await readJson(req)), loadAgentOptions(agentOptionsFile));
         const flags = loadAgentFlags(agentsFile);
-        if (policy.agents.some((agent) => !flags[agent])) throw new Error("invalid agent");
+        const listed = await listAgents(agentsFile, commandDirs);
+        const offerable = new Set(offeredAgentIds(flags, listed));
+        if (policy.agents.some((agent) => !offerable.has(agent))) throw new Error("invalid agent");
+        await syncAgentCatalog(target);
         sendJson(res, 200, await call(target, { type: "put_policy", policy }));
         return;
       }
@@ -650,6 +682,19 @@ export function createHub(options: HubOptions) {
     const agent = patch.defaultAgent ?? current.defaultAgent;
     const model = patch.defaultModel != null ? patch.defaultModel : current.defaultModel;
     await assertModelChoice(user, agent, model);
+  }
+
+  async function agentState() {
+    const listed = await listAgents(agentsFile, commandDirs);
+    return {
+      agents: listed,
+      rawTerminal: loadRawTerminal(agentsFile),
+      cliImport: loadCliImport(agentsFile),
+    };
+  }
+
+  function syncAgentCatalog(user: LinuxUser) {
+    return call(user, { type: "put_agent_catalog", agents: customCatalog(agentsFile) });
   }
 
   function call(user: LinuxUser, request: RunnerCall) {

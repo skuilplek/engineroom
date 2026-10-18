@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  agentLabel,
+  agentSlug,
   applySettings,
   assertGitUrl,
   DEFAULT_SETTINGS,
@@ -14,6 +16,7 @@ import {
   parseEnvEntries,
   effectiveAgentOptions,
   parseClientCommand,
+  parseAgentCatalog,
   parseRunnerRequest,
   parseSettingsPatch,
   parseUserPolicy,
@@ -25,6 +28,22 @@ import { readSession, signSession } from "../apps/hub/src/session.ts";
 import { childEnv, claudeArgs, cursorArgs, piArgs } from "../apps/runner/src/cli.ts";
 import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
+
+test("agent labels follow the catalog and custom slugs stay separate from commands", () => {
+  assert.equal(agentLabel("cursor"), "Cursor");
+  assert.equal(agentLabel("claude"), "Claude");
+  assert.equal(agentLabel("pi"), "Pi");
+  assert.equal(agentLabel("codex", [{ id: "codex", label: "Codex" }]), "Codex");
+  assert.equal(agentSlug("Codex CLI"), "codex-cli");
+  assert.throws(() => agentSlug("123"), /invalid agent/);
+  const catalog = parseAgentCatalog([{ id: "codex", label: "Codex", binary: "codex" }]);
+  assert.deepEqual(catalog, [{ id: "codex", label: "Codex", binary: "codex" }]);
+  assert.throws(() => parseAgentCatalog([{ id: "cursor", label: "Cursor", binary: "agent" }]), /invalid agents/);
+  assert.throws(() => parseAgentCatalog([{ id: "codex", label: "Codex", binary: "../codex" }]), /invalid agent/);
+  const policy = parseUserPolicy({ agents: ["cursor", "codex"], rawTerminal: true, binaries: { codex: "/opt/codex" } });
+  assert.deepEqual(policy.agents, ["cursor", "codex"]);
+  assert.equal(policy.binaries.codex, "/opt/codex");
+});
 
 test("login is limited to real user accounts in the group", () => {
   assert.equal(loginAllowed({ uid: 1000, shell: "/bin/bash", groups: ["engineroom-users"] }), true);
@@ -159,7 +178,8 @@ test("policy options stay optional and narrow the offered catalog", () => {
   assert.deepEqual(open.modes.map((mode) => mode.id), ["agent"]);
   const probed = parseRunnerRequest({ id: "1", type: "probe_agent", agent: "cursor" });
   assert.equal(probed.type, "probe_agent");
-  assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "nope" }));
+  assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "Nope" }));
+  assert.equal(parseRunnerRequest({ id: "3", type: "probe_agent", agent: "codex" }).type, "probe_agent");
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

@@ -64,7 +64,7 @@ export function saveOfferedOptions(file: string, body: unknown): AgentOptionsFil
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid options");
   const all = loadAgentOptions(file);
   const record = body as Record<string, unknown>;
-  for (const agent of AGENTS) {
+  for (const agent of optionAgentIds(record)) {
     if (record[agent] == null) continue;
     const current = all[agent];
     if (!current) throw new Error("invalid options");
@@ -129,7 +129,7 @@ export function choicesFrom(value: unknown): AgentOptionChoice[] {
 function parseAgentOptions(value: unknown): AgentOptionsFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const options: AgentOptionsFile = {};
-  for (const agent of AGENTS) {
+  for (const agent of optionAgentIds(value as Record<string, unknown>)) {
     const raw = (value as Record<string, unknown>)[agent];
     if (raw == null) continue;
     if (!isAgentId(agent) || !raw || typeof raw !== "object" || Array.isArray(raw)) continue;
@@ -165,6 +165,14 @@ function parseAgentOptions(value: unknown): AgentOptionsFile {
     };
   }
   return options;
+}
+
+function optionAgentIds(record: Record<string, unknown>): string[] {
+  const ids: string[] = [...AGENTS];
+  for (const key of Object.keys(record)) {
+    if (isAgentId(key) && !ids.includes(key)) ids.push(key);
+  }
+  return ids;
 }
 
 function writeAgentOptions(file: string, options: AgentOptionsFile) {

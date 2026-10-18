@@ -13,6 +13,7 @@ import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from 
 export function ChatView({
   chatId,
   home,
+  agentCatalog,
   repos,
   rawTerminal,
   claimOpening,
@@ -24,6 +25,7 @@ export function ChatView({
 }: {
   chatId: string;
   home: string;
+  agentCatalog?: { id: string; label: string }[];
   repos: RepositoryEntry[];
   rawTerminal: boolean;
   claimOpening: (id: string) => string | null;
@@ -144,7 +146,7 @@ export function ChatView({
       <header className="topbar">
         <div>
           <h2>{live.title}</h2>
-          <p className="muted">{agentLabel(live.agent)} · {workspaceLabel(live.workspace || home, home, repos)}</p>
+          <p className="muted">{agentLabel(live.agent, agentCatalog)} · {workspaceLabel(live.workspace || home, home, repos)}</p>
         </div>
         <div className="row">
           {live.running && (
