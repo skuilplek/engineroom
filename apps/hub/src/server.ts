@@ -683,7 +683,19 @@ function filterModes(
   allowed: AgentOptionChoice[],
   selected: string,
 ) {
-  if (!raw) return raw ?? null;
+  // Opening a chat does not start ACP, so the runner has no catalog yet.
+  // The saved offer is enough to show the dropdown until a live session exists.
+  if (!raw) {
+    if (allowed.length === 0) return raw ?? null;
+    return {
+      currentModeId: fitChoice(selected, allowed),
+      availableModes: allowed.map((choice) => ({
+        id: choice.id,
+        name: choice.name,
+        ...(choice.description ? { description: choice.description } : {}),
+      })),
+    };
+  }
   const ids = new Set(allowed.map((choice) => choice.id));
   const availableModes = raw.availableModes.filter((mode) => ids.has(mode.id));
   const currentModeId = availableModes.some((mode) => mode.id === selected) ? selected : availableModes[0]?.id || "";
@@ -695,7 +707,13 @@ function filterModels(
   allowed: AgentOptionChoice[],
   selected: string,
 ) {
-  if (!raw) return raw ?? null;
+  if (!raw) {
+    if (allowed.length === 0) return raw ?? null;
+    return {
+      currentModelId: fitChoice(selected, allowed),
+      availableModels: allowed.map((choice) => ({ modelId: choice.id, name: choice.name })),
+    };
+  }
   const ids = new Set(allowed.map((choice) => choice.id));
   const availableModels = raw.availableModels.filter((model) => ids.has(model.modelId));
   const currentModelId = availableModels.some((model) => model.modelId === selected) ? selected : availableModels[0]?.modelId || "";

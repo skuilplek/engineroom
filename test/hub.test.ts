@@ -8,6 +8,7 @@ import test from "node:test";
 import WebSocket from "ws";
 import type { LinuxUser } from "../apps/hub/src/auth.ts";
 import { createHub } from "../apps/hub/src/server.ts";
+import { AcpManager } from "../apps/runner/src/acp/manager.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
@@ -260,6 +261,107 @@ test("a websocket emits a line before the agent finishes and rejects a foreign o
     }
   } finally {
     release();
+    ws?.close();
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a fresh watch shows saved modes and models before ACP starts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-hub-options-"));
+  const home = path.join(root, "home");
+  const socketDir = path.join(root, "socks");
+  const agentsFile = path.join(root, "agents.json");
+  await mkdir(home);
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
+  const uid = process.getuid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const fake = path.resolve("test/fake-acp.mjs");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    acp,
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("hub-options-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  let ws: WebSocket | undefined;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const probed = await fetch(`${base}/api/admin/agent-options/cursor/probe`, { method: "POST", headers });
+    assert.equal(probed.status, 200);
+    const saved = await fetch(`${base}/api/admin/agent-options`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: { modes: ["agent", "plan"], models: ["fake"] } }),
+    });
+    assert.equal(saved.status, 200);
+    const created = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", model: "fake", workspace: home }),
+    });
+    assert.equal(created.status, 201);
+    const chat = (await created.json()) as { id: string };
+    ws = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+      headers: { Cookie: cookie!, Origin: base },
+    });
+    const messages: string[] = [];
+    ws.on("message", (data) => messages.push(data.toString()));
+    await new Promise<void>((resolve, reject) => {
+      ws?.once("open", () => resolve());
+      ws?.once("error", reject);
+    });
+    ws.send(JSON.stringify({ type: "watch", chatId: chat.id, lastSeq: 0 }));
+    const ready = Date.now() + 3000;
+    let snapshot = "";
+    while (!snapshot) {
+      snapshot = messages.find((line) => line.includes('"snapshot"')) || "";
+      if (snapshot) break;
+      if (Date.now() > ready) throw new Error(`watch never settled: ${messages.join("\n").slice(0, 400)}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const body = JSON.parse(snapshot) as {
+      modes: { availableModes: Array<{ id: string }> } | null;
+      models: { availableModels: Array<{ modelId: string }> } | null;
+    };
+    assert.deepEqual(body.modes?.availableModes.map((mode) => mode.id), ["agent", "plan"]);
+    assert.deepEqual(body.models?.availableModels.map((model) => model.modelId), ["fake"]);
+  } finally {
     ws?.close();
     hub.close();
     await runner.close();
