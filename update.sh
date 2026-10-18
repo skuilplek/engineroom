@@ -1,0 +1,73 @@
+#!/bin/bash
+# Update an existing Engineroom install from this checkout.
+# Run as root:
+#   sudo ./update.sh
+#
+# Pulls the current branch, installs dependencies, runs deploy/install.sh,
+# and restarts the hub and any running per-user runners. Leaves
+# /etc/engineroom/hub.env and the Caddy site config alone.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+cd "$root"
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "run as root: sudo ./update.sh" >&2
+  exit 1
+fi
+
+if [[ ! -d .git ]]; then
+  echo "update.sh must be run from a git checkout" >&2
+  exit 1
+fi
+
+if ! command -v node >/dev/null; then
+  echo "Node.js 24 or newer is required. Run setup.sh first." >&2
+  exit 1
+fi
+node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+if (( node_major < 24 )); then
+  echo "Node.js 24 or newer is required (found $(node --version))" >&2
+  exit 1
+fi
+
+owner="$(stat -c '%U' .git)"
+if [[ "$owner" == "root" ]]; then
+  echo "this checkout is owned by root; clone it as the administrator and update from there" >&2
+  exit 1
+fi
+
+run_as_owner() {
+  sudo -u "$owner" -H -- env PATH="/usr/local/bin:/usr/bin:${PATH}" "$@"
+}
+
+echo "Pulling the latest commit as ${owner}..."
+run_as_owner git pull --ff-only
+
+if [[ -d node_modules ]]; then
+  chown -R "$owner" node_modules
+fi
+echo "Installing dependencies..."
+run_as_owner npm ci
+run_as_owner node --input-type=module -e 'await import("node-pty")'
+
+bash "$root/deploy/install.sh"
+
+echo "Restarting services..."
+systemctl restart engineroom-hub.service
+mapfile -t runners < <(systemctl list-units --type=service --state=active --no-legend 'engineroom-runner@*' | awk '{print $1}')
+if [[ ${#runners[@]} -gt 0 ]]; then
+  systemctl restart "${runners[@]}"
+fi
+
+for _ in $(seq 1 20); do
+  if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+    rev="$(run_as_owner git rev-parse --short HEAD)"
+    echo "Engineroom ${rev} is active and the hub is responding."
+    exit 0
+  fi
+  sleep 0.5
+done
+
+echo "the hub did not respond on 127.0.0.1:8787" >&2
+exit 1
