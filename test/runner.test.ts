@@ -124,6 +124,40 @@ test("git repositories are discovered inside the home and stay disabled", async 
   }
 });
 
+test("listChats omits workspaces outside the repository folder", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-chats-"));
+  const outside = path.join(home, "engineroom");
+  const repo = path.join(home, "Sites", "kept");
+  await mkdir(path.join(outside, ".git"), { recursive: true });
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  try {
+    await setEnabledRepositories(home, [repo]);
+    const kept = await createChat(home, { workspace: repo, title: "kept" });
+    const loose = await createChat(home, { title: "home" });
+    const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const dir = path.join(home, ".engineroom", "chats", id);
+    await mkdir(dir, { recursive: true });
+    const now = new Date().toISOString();
+    await writeFile(
+      path.join(dir, "meta.json"),
+      `${JSON.stringify({
+        id,
+        title: "old",
+        agent: "cursor",
+        model: "",
+        workspace: outside,
+        agentSessionId: null,
+        createdAt: now,
+        updatedAt: now,
+      })}\n`,
+    );
+    const listed = await listChats(home, new Set());
+    assert.deepEqual(listed.map((item) => item.id).sort(), [kept.id, loose.id].sort());
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("chats in one home are invisible from another", async () => {
   const alice = await mkdtemp(path.join(tmpdir(), "er-alice-"));
   const bob = await mkdtemp(path.join(tmpdir(), "er-bob-"));

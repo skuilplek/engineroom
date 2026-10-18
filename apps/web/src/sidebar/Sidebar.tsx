@@ -74,9 +74,11 @@ export function Sidebar({
             Admin
           </button>
         )}
-        <button className="nav-item" type="button" onClick={importList}>Import CLI sessions</button>
+        {session.cliImport && (
+          <button className="nav-item" type="button" onClick={importList}>Import CLI sessions</button>
+        )}
       </div>
-      {sessions && (
+      {session.cliImport && sessions && (
         <ImportList
           agent={agent}
           sessions={sessions}

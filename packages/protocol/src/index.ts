@@ -321,6 +321,35 @@ export function isInsidePath(root: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
 }
 
+const REPO_PATH_SKIP = new Set(["node_modules", "vendor", "dist", "build"]);
+
+export function repositoryPathAllowed(homeReal: string, resolved: string, directory = "Sites"): boolean {
+  const sites = resolvePosix(homeReal, directory);
+  if (!isInsidePath(sites, resolved) || stripSlash(resolved) === sites) return false;
+  const rel = relativePosix(sites, resolved);
+  if (!rel || rel.startsWith("..") || rel.startsWith("/")) return false;
+  return !rel.split("/").some((segment) => segment.startsWith(".") || REPO_PATH_SKIP.has(segment));
+}
+
+function resolvePosix(root: string, directory: string): string {
+  if (directory.startsWith("/")) return normalizePosix(directory);
+  return normalizePosix(`${stripSlash(root)}/${directory}`);
+}
+
+function normalizePosix(value: string): string {
+  const absolute = value.startsWith("/");
+  const parts: string[] = [];
+  for (const part of value.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length > 0) parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return absolute ? `/${parts.join("/")}` : parts.join("/") || ".";
+}
+
 function relativePosix(root: string, target: string): string {
   const from = root.endsWith("/") ? root.slice(0, -1) : root;
   const to = target.endsWith("/") ? target.slice(0, -1) : target;

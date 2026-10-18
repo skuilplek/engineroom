@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
+import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadCliImport, loadRawTerminal, saveAgentFlags } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -181,6 +181,7 @@ export function createHub(options: HubOptions) {
       rawTerminal: access.rawTerminal,
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
+      cliImport: loadCliImport(agentsFile),
     };
   }
 
@@ -251,8 +252,12 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body));
-      sendJson(res, 200, { agents: enabledAgentIds(flags), rawTerminal: loadRawTerminal(agentsFile) });
+      const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body), cliImportFrom(body));
+      sendJson(res, 200, {
+        agents: enabledAgentIds(flags),
+        rawTerminal: loadRawTerminal(agentsFile),
+        cliImport: loadCliImport(agentsFile),
+      });
       return;
     }
     if (parts[2] === "agent-options" && parts.length === 3 && req.method === "GET") {
@@ -545,6 +550,9 @@ export function createHub(options: HubOptions) {
       }
     }
     if (command.type === "pty_open" && !(await loadAccess(user)).rawTerminal) throw new Error("terminal is not enabled");
+    if ((command.type === "list_sessions" || command.type === "import_session") && !loadCliImport(agentsFile)) {
+      throw new Error("CLI import is not enabled");
+    }
     if ((command.type === "list_sessions" || command.type === "import_session") && command.agent) {
       await assertAgentAllowed(user, command.agent);
     }
@@ -690,6 +698,12 @@ function filterModels(
 function rawTerminalFrom(body: unknown): boolean | undefined {
   if (!body || typeof body !== "object") return undefined;
   const value = (body as { rawTerminal?: unknown }).rawTerminal;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function cliImportFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { cliImport?: unknown }).cliImport;
   return typeof value === "boolean" ? value : undefined;
 }
 

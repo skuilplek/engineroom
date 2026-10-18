@@ -182,7 +182,7 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal) => onSession({ ...session, agents, rawTerminal })}
+            onAgents={(agents, rawTerminal, cliImport) => onSession({ ...session, agents, rawTerminal, cliImport })}
             onAccess={() => {
               me().then(onSession).catch(() => undefined);
               refresh().catch(() => undefined);

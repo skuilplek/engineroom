@@ -53,12 +53,24 @@ export function loadRawTerminal(file: string): boolean {
   return true;
 }
 
-export function saveAgentFlags(file: string, flags: AgentFlags, rawTerminal?: boolean): AgentFlags {
+export function loadCliImport(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { cliImport?: unknown };
+    if (typeof parsed.cliImport === "boolean") return parsed.cliImport;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
+export function saveAgentFlags(file: string, flags: AgentFlags, rawTerminal?: boolean, cliImport?: boolean): AgentFlags {
   const next = flagsFromBody(flags);
   if (!AGENTS.some((agent) => next[agent])) throw new Error("at least one agent must stay on");
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
+  const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const tmp = `${file}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify({ ...next, rawTerminal: terminal })}\n`, { mode: 0o644 });
+  writeFileSync(tmp, `${JSON.stringify({ ...next, rawTerminal: terminal, cliImport: imports })}\n`, { mode: 0o644 });
   renameSync(tmp, file);
   return next;
 }

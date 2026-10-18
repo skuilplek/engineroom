@@ -26,6 +26,7 @@ export interface Session {
   admin: boolean;
   agents: AgentId[];
   rawTerminal: boolean;
+  cliImport: boolean;
   theme: ThemePreference;
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
@@ -225,10 +226,10 @@ export function probeAgentOptions(agent: AgentId) {
   return api<AgentOptionConfig>(`/api/admin/agent-options/${agent}/probe`, { method: "POST" });
 }
 
-export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean) {
-  return api<{ agents: AgentId[]; rawTerminal?: boolean }>("/api/admin/agents", {
+export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean, cliImport?: boolean) {
+  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport }),
   });
 }
 

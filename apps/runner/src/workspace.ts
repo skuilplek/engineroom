@@ -1,6 +1,6 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { isInsidePath, type WorkspaceEntry } from "@engineroom/protocol";
+import { isInsidePath, repositoryPathAllowed, type WorkspaceEntry } from "@engineroom/protocol";
 
 const SKIP = new Set(["node_modules", "vendor", "dist", "build"]);
 const DEFAULT_REPO_DIRECTORY = "Sites";
@@ -23,13 +23,7 @@ export async function resolveWorkspace(home: string, requested?: string): Promis
   return resolved;
 }
 
-export function repositoryPathAllowed(homeReal: string, resolved: string, directory = DEFAULT_REPO_DIRECTORY): boolean {
-  const sites = path.resolve(homeReal, directory);
-  if (!isInsidePath(sites, resolved) || resolved === sites) return false;
-  const rel = path.relative(sites, resolved);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return false;
-  return !rel.split(path.sep).some((segment) => segment.startsWith(".") || SKIP.has(segment));
-}
+export { repositoryPathAllowed };
 
 export async function isGitRepository(dir: string): Promise<boolean> {
   try {

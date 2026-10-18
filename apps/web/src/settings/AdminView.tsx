@@ -51,11 +51,12 @@ export function AdminView({
   onAccess,
 }: {
   session: Session;
-  onAgents: (agents: AgentId[], rawTerminal: boolean) => void;
+  onAgents: (agents: AgentId[], rawTerminal: boolean, cliImport: boolean) => void;
   onAccess: () => void;
 }) {
   const [flags, setFlags] = useState<Record<AgentId, boolean>>(() => agentFlags(session.agents));
   const [rawTerminal, setRawTerminal] = useState(session.rawTerminal);
+  const [cliImport, setCliImport] = useState(session.cliImport);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [selected, setSelected] = useState("");
@@ -124,8 +125,8 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
-      const savedAgents = await saveAgents(flags, rawTerminal);
-      onAgents(savedAgents.agents, savedAgents.rawTerminal ?? rawTerminal);
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport);
+      onAgents(savedAgents.agents, savedAgents.rawTerminal ?? rawTerminal, savedAgents.cliImport ?? cliImport);
       if (Object.keys(offeredDraft).length > 0) {
         const savedOptions = await saveAgentOptions(offeredDraft);
         setAgentOptions(savedOptions);
@@ -263,7 +264,7 @@ export function AdminView({
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>
                 <span>Agents</span>
                 <strong>{offered.length}</strong>
-                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."}</span>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
               </button>
               <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
                 <span>Repositories</span>
@@ -293,6 +294,10 @@ export function AdminView({
               <label className="check">
                 <input type="checkbox" checked={rawTerminal} onChange={() => setRawTerminal((value) => !value)} />
                 Raw terminal
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={cliImport} onChange={() => setCliImport((value) => !value)} />
+                Import CLI sessions
               </label>
             </div>
             {AGENTS.filter((agent) => flags[agent] && agent !== "pi").map((agent) => {

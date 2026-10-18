@@ -13,8 +13,13 @@ export interface RepoGroup {
 export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: string, query = ""): RepoGroup[] {
   const needle = query.trim().toLowerCase();
   const homeKey = strip(home);
-  const homeIsRepo = repos.some((repo) => strip(repo.path) === homeKey);
-  const listed = homeIsRepo ? chats : chats.filter((chat) => strip(chat.workspace) !== homeKey);
+  const enabled = new Set(repos.map((repo) => strip(repo.path)));
+  const homeIsRepo = enabled.has(homeKey);
+  const allowed = chats.filter((chat) => {
+    const key = strip(chat.workspace);
+    return enabled.has(key) || key === homeKey;
+  });
+  const listed = homeIsRepo ? allowed : allowed.filter((chat) => strip(chat.workspace) !== homeKey);
   const visible = needle
     ? listed.filter((chat) => chat.title.toLowerCase().includes(needle) || chat.workspace.toLowerCase().includes(needle))
     : listed;
@@ -42,18 +47,6 @@ export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: s
   const groups: RepoGroup[] = [];
   for (const repo of [...repos].sort((a, b) => a.name.localeCompare(b.name))) {
     groups.push(take(strip(repo.path), repo.name, true));
-  }
-  for (const [key, items] of [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const label = key.split("/").filter(Boolean).pop() || key;
-    groups.push({
-      key,
-      label,
-      path: key,
-      chats: items,
-      canStart: false,
-      time: items[0] ? relativeTime(items[0].updatedAt) : undefined,
-      marked: items.some((chat) => chat.running) || newestKey === key,
-    });
   }
   return groups.filter((group) => !needle || group.chats.length > 0 || group.label.toLowerCase().includes(needle));
 }

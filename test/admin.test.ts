@@ -82,9 +82,39 @@ test("the administrator sets agents and accounts", async () => {
     const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     assert.ok(cookie);
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
-    const me = (await (await fetch(`${base}/api/me`, { headers })).json()) as { admin: boolean; agents: string[] };
+    const me = (await (await fetch(`${base}/api/me`, { headers })).json()) as {
+      admin: boolean;
+      agents: string[];
+      cliImport: boolean;
+    };
     assert.equal(me.admin, true);
     assert.deepEqual(me.agents, ["cursor"]);
+    assert.equal(me.cliImport, false);
+
+    const blockedImport = await new Promise<string>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+        headers: { Cookie: cookie!, Origin: base },
+      });
+      const timer = setTimeout(() => {
+        socket.close();
+        reject(new Error("cli import was not rejected"));
+      }, 3000);
+      socket.on("message", (data) => {
+        const text = data.toString();
+        if (!text.includes("CLI import is not enabled")) return;
+        clearTimeout(timer);
+        socket.close();
+        resolve(text);
+      });
+      socket.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      socket.once("open", () => {
+        socket.send(JSON.stringify({ type: "list_sessions", agent: "cursor" }));
+      });
+    });
+    assert.match(blockedImport, /CLI import is not enabled/);
 
     const blocked = await fetch(`${base}/api/chats`, {
       method: "POST",
@@ -141,10 +171,20 @@ test("the administrator sets agents and accounts", async () => {
       body: JSON.stringify({ cursor: false, claude: true, pi: false }),
     });
     assert.equal(enabled.status, 200);
-    const enabledBody = (await enabled.json()) as { agents: string[] };
+    const enabledBody = (await enabled.json()) as { agents: string[]; cliImport: boolean };
     assert.deepEqual(enabledBody.agents, ["claude"]);
-    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { claude: boolean };
+    assert.equal(enabledBody.cliImport, false);
+    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { claude: boolean; cliImport: boolean };
     assert.equal(stored.claude, true);
+    assert.equal(stored.cliImport, false);
+
+    const imports = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: false, claude: true, pi: false, cliImport: true }),
+    });
+    assert.equal(imports.status, 200);
+    assert.equal(((await imports.json()) as { cliImport: boolean }).cliImport, true);
 
     const carol = await fetch(`${base}/api/login`, {
       method: "POST",
@@ -157,9 +197,11 @@ test("the administrator sets agents and accounts", async () => {
     const carolMe = (await (await fetch(`${base}/api/me`, { headers: { Cookie: carolCookie! } })).json()) as {
       admin: boolean;
       agents: string[];
+      cliImport: boolean;
     };
     assert.equal(carolMe.admin, false);
     assert.deepEqual(carolMe.agents, ["claude"]);
+    assert.equal(carolMe.cliImport, true);
   } finally {
     hub.close();
     await runner.close();

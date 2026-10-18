@@ -76,8 +76,11 @@ export async function saveSettings(home: string, patch: SettingsPatch): Promise<
 
 export async function listRepositories(home: string): Promise<RepositoryEntry[]> {
   const state = await loadRepoState(home);
+  const homeReal = await realpath(home);
   const found = await listGitRepositories(home, state.directory);
-  return found.map((entry) => ({ ...entry, enabled: state.enabled.has(entry.path) }));
+  return found
+    .filter((entry) => repositoryPathAllowed(homeReal, entry.path, state.directory))
+    .map((entry) => ({ ...entry, enabled: state.enabled.has(entry.path) }));
 }
 
 export async function detectRepositories(home: string, directory: string): Promise<RepositoryEntry[]> {
@@ -134,11 +137,18 @@ export async function listChats(home: string, running: Set<string>): Promise<Cha
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+  const homeReal = await realpath(home);
+  const state = await loadRepoState(home);
+  const allowed = new Set<string>();
+  for (const item of state.enabled) {
+    if (repositoryPathAllowed(homeReal, item, state.directory)) allowed.add(item);
+  }
   const chats: ChatMeta[] = [];
   for (const name of names) {
     if (!CHAT_ID_RE.test(name)) continue;
     try {
       const chat = await readMeta(home, name);
+      if (chat.workspace !== homeReal && !allowed.has(chat.workspace)) continue;
       chat.running = running.has(chat.id);
       chats.push(chat);
     } catch {
