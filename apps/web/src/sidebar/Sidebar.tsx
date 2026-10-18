@@ -41,6 +41,7 @@ export function Sidebar({
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
   const [agent, setAgent] = useState<AgentId>("cursor");
   const groups = buildGroups(chats, repos, home, query);
+  const repoSelected = repos.some((repo) => strip(repo.path) === strip(target));
 
   useEffect(() => onAgent((message) => {
     if (message.type === "sessions") setSessions(message.sessions);
@@ -54,7 +55,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <button className="new-chat" type="button" onClick={() => onNew(target)}>
+      <button className="new-chat" type="button" disabled={!repoSelected} onClick={() => onNew(target)}>
         <IconPlus />
         New Chat
       </button>

@@ -12,10 +12,12 @@ export interface RepoGroup {
 
 export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: string, query = ""): RepoGroup[] {
   const needle = query.trim().toLowerCase();
-  const visible = needle
-    ? chats.filter((chat) => chat.title.toLowerCase().includes(needle) || chat.workspace.toLowerCase().includes(needle))
-    : chats;
   const homeKey = strip(home);
+  const homeIsRepo = repos.some((repo) => strip(repo.path) === homeKey);
+  const listed = homeIsRepo ? chats : chats.filter((chat) => strip(chat.workspace) !== homeKey);
+  const visible = needle
+    ? listed.filter((chat) => chat.title.toLowerCase().includes(needle) || chat.workspace.toLowerCase().includes(needle))
+    : listed;
   const buckets = new Map<string, ChatMeta[]>();
   for (const chat of visible) {
     const key = strip(chat.workspace);
@@ -37,7 +39,7 @@ export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: s
       marked: items.some((chat) => chat.running) || (newestKey !== "" && newestKey === key),
     };
   }
-  const groups = [take(homeKey, "No repository", true)];
+  const groups: RepoGroup[] = [];
   for (const repo of [...repos].sort((a, b) => a.name.localeCompare(b.name))) {
     groups.push(take(strip(repo.path), repo.name, true));
   }

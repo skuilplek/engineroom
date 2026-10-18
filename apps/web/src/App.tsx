@@ -125,8 +125,7 @@ function Shell({
     setTarget(session.home);
   }, [repos, session.home, target]);
 
-  const targetLabel = repos.find((repo) => strip(repo.path) === strip(target))?.name
-    ?? (strip(target) === strip(session.home) ? "No repository" : "No repository");
+  const selectedRepo = repos.find((repo) => strip(repo.path) === strip(target));
 
   function remember(chat: ChatMeta) {
     setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
@@ -190,12 +189,12 @@ function Shell({
             }}
           />
         )}
-        {view === "start" && (
+        {view === "start" && selectedRepo && (
           <StartView
             agents={session.agents}
             options={session.options}
             workspace={target}
-            targetLabel={targetLabel}
+            targetLabel={selectedRepo.name}
             onStarted={(chat, prompt) => {
               remember(chat);
               openingRef.current = { id: chat.id, prompt };
@@ -204,6 +203,11 @@ function Shell({
               setView("chat");
             }}
           />
+        )}
+        {view === "start" && !selectedRepo && (
+          <div className="start">
+            <p className="lede">Use the plus next to a repository to start a chat.</p>
+          </div>
         )}
         {view === "chat" && activeId && (
           <ChatView

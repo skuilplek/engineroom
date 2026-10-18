@@ -87,8 +87,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(circle at top, var(--glow), transparent 28%),
-    var(--bg);
+    linear-gradient(rgba(16, 16, 16, 0.55), rgba(16, 16, 16, 0.72)),
+    url("/engine_room.png") center / cover no-repeat;
 }
 .login-card {
   width: min(420px, 100%);
@@ -246,7 +246,9 @@ textarea { resize: vertical; }
   align-items: center;
   padding: 14vh 24px 48px;
 }
-.start h1 { text-align: center; margin-bottom: 28px; }
+.start h1, .start .lede { text-align: center; }
+.start h1 { margin-bottom: 28px; }
+.start .lede { max-width: 28rem; }
 .launch {
   width: min(760px, 100%);
   display: flex;
