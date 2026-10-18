@@ -1112,7 +1112,16 @@ test("the administrator controls repository file visibility for the file manager
 
     const offered = (await (await fetch(`${base}/api/me`, { headers })).json()) as { fileManager: boolean; fileManagerOffered: boolean };
     assert.equal(offered.fileManagerOffered, true);
-    assert.equal(offered.fileManager, false);
+    assert.equal(offered.fileManager, true);
+    const opened = await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers });
+    assert.equal(opened.status, 200);
+
+    const hiddenForPerson = await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: false }),
+    });
+    assert.equal(hiddenForPerson.status, 200);
     const stillBlocked = await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers });
     assert.equal(stillBlocked.status, 403);
 

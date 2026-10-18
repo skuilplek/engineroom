@@ -897,7 +897,7 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     agents.push(agent);
   }
   if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
-  const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : false;
+  const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : true;
   if (body.fileEditor != null && typeof body.fileEditor !== "boolean") throw new Error("invalid file editor");
   const fileEditor = body.fileEditor == null ? true : body.fileEditor;
   const options = parsePolicyOptions(body.options);
@@ -967,7 +967,7 @@ function offeredChoices(available: AgentOptionChoice[], offeredIds: string[], pe
 }
 
 export function defaultPolicy(): UserPolicy {
-  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: false, fileEditor: true };
+  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: true, fileEditor: true };
 }
 
 export function parseEnvEntries(value: unknown): EnvEntry[] {

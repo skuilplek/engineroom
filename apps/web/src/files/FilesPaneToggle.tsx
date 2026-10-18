@@ -18,6 +18,7 @@ export function FilesPaneToggle({
       onClick={onToggle}
     >
       <IconPanelRight />
+      <span>Files</span>
     </button>
   );
 }
