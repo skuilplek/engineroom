@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   AGENTS,
   agentLabel,
   DEFAULT_FILE_VISIBILITY,
   type AgentId,
+  type AgentName,
   type AgentOptionChoice,
   type CatalogEntry,
+  type ChatDetail,
+  type ChatMeta,
   type EnvEntry,
   type FileVisibility,
   type Settings,
@@ -20,9 +23,11 @@ import {
   getAgentOptions,
   getRepoDirectory,
   getUserAccess,
+  getUserChat,
   listAccounts,
   listAdminAgents,
   listCatalog,
+  listUserChats,
   probeAgentOptions,
   removeAccount,
   removeCatalog,
@@ -41,15 +46,18 @@ import {
   type AdminAgent,
   type Session,
 } from "../api.ts";
-import { message } from "../format.ts";
+import { DiffView } from "../chat/Diff.tsx";
+import { groupTranscript, presentTool } from "../chat/group.ts";
+import { Markdown } from "../chat/Markdown.tsx";
+import { message, relativeTime } from "../format.ts";
 
-type AdminTab = "overview" | "agents" | "repositories" | "people";
+type AdminTab = "overview" | "agents" | "repositories" | "users";
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "agents", label: "Agents" },
   { id: "repositories", label: "Repositories" },
-  { id: "people", label: "People" },
+  { id: "users", label: "Users" },
 ];
 
 export function AdminView({
@@ -399,8 +407,8 @@ export function AdminView({
                 <strong>{catalog.length}</strong>
                 <span className="muted">{catalog.length === 0 ? "Nothing in the catalog yet." : "Ready to grant."}</span>
               </button>
-              <button className="overview-link" type="button" onClick={() => openTab("people")}>
-                <span>People</span>
+              <button className="overview-link" type="button" onClick={() => openTab("users")}>
+                <span>Users</span>
                 <strong>{accounts.length}</strong>
                 <span className="muted">{accounts.length === 0 ? "No accounts yet." : "Linux accounts on this machine."}</span>
               </button>
@@ -517,7 +525,7 @@ export function AdminView({
           <>
           <form className="admin-pane" onSubmit={(event) => void saveFolder(event)}>
             <h2>Repository folder</h2>
-            <p className="muted">People can start a chat in any git repository inside this folder of their home, including ones they add themselves. The folder is scanned when they sign in. The default is Sites.</p>
+            <p className="muted">Users can start a chat in any git repository inside this folder of their home, including ones they add themselves. The folder is scanned when they sign in. The default is Sites.</p>
             <label>
               Folder
               <input value={repoFolder} onChange={(event) => setRepoFolder(event.target.value)} placeholder="Sites" required />
@@ -580,10 +588,10 @@ export function AdminView({
           </>
         )}
 
-        {tab === "people" && (
+        {tab === "users" && (
           <div className="admin-people-layout">
-            <section className="admin-pane" aria-label="People">
-              <h2>People</h2>
+            <section className="admin-pane" aria-label="Users">
+              <h2>Users</h2>
               <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
               <div className="accounts">
                 {accounts.map((account) => (
@@ -598,7 +606,7 @@ export function AdminView({
                 {accounts.length === 0 && <p className="muted">No accounts yet.</p>}
               </div>
               <form onSubmit={(event) => void addUser(event)}>
-                <h3>Add a person</h3>
+                <h3>Add a user</h3>
                 <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
                 <label>
                   Username
@@ -611,7 +619,7 @@ export function AdminView({
                 <button className="primary" type="submit" disabled={busy}>Add user</button>
               </form>
             </section>
-            <section className="admin-pane admin-detail" aria-label="Person">
+            <section className="admin-pane admin-detail" aria-label="User">
               {selected ? (
                 <PersonPanel
                   key={selected}
@@ -637,8 +645,8 @@ export function AdminView({
                 />
               ) : (
                 <div className="admin-empty">
-                  <h2>No person selected</h2>
-                  <p className="muted">Choose a person to set their agents, modes, models, terminal, repositories, environment, and password.</p>
+                  <h2>No user selected</h2>
+                  <p className="muted">Choose a user to set their agents, modes, models, terminal, repositories, environment, and password, and to read their conversations.</p>
                 </div>
               )}
             </section>
@@ -864,6 +872,7 @@ function PersonPanel({
     return (
       <div className="person-panel" aria-busy="true">
         <h2>{username}</h2>
+        <UserConversations username={username} agentNames={agentNames} />
         <p className="muted">Loading {username}…</p>
         <div className="admin-skeleton wide" />
         <div className="admin-skeleton" />
@@ -875,6 +884,7 @@ function PersonPanel({
   return (
     <div className="person-panel">
       <h2>{username}</h2>
+      <UserConversations username={username} agentNames={agentNames} />
       <form onSubmit={(event) => void saveAccess(event)}>
         <p className="muted">Agents, modes, models, the terminal, the file manager, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
@@ -1052,6 +1062,149 @@ function PersonPanel({
       )}
     </div>
   );
+}
+
+function UserConversations({
+  username,
+  agentNames,
+}: {
+  username: string;
+  agentNames?: AgentName[];
+}) {
+  const [chats, setChats] = useState<ChatMeta[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ChatDetail | null>(null);
+  const [detailError, setDetailError] = useState("");
+  const [detailBusy, setDetailBusy] = useState(false);
+  const openRef = useRef<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await listUserChats(username);
+      setChats(next);
+      setOpenId((current) => {
+        const kept = current && next.some((chat) => chat.id === current) ? current : null;
+        if (kept !== current) openRef.current = kept;
+        return kept;
+      });
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [username]);
+
+  useEffect(() => {
+    openRef.current = null;
+    setOpenId(null);
+    setDetail(null);
+    setDetailError("");
+    void load();
+  }, [load]);
+
+  const blocks = useMemo(() => groupTranscript(detail?.transcript ?? []), [detail]);
+
+  async function open(chat: ChatMeta) {
+    if (openRef.current === chat.id) {
+      openRef.current = null;
+      setOpenId(null);
+      setDetail(null);
+      setDetailError("");
+      setDetailBusy(false);
+      return;
+    }
+    openRef.current = chat.id;
+    setOpenId(chat.id);
+    setDetail(null);
+    setDetailBusy(true);
+    setDetailError("");
+    try {
+      const result = await getUserChat(username, chat.id);
+      if (openRef.current !== chat.id) return;
+      setDetail(result);
+    } catch (err) {
+      if (openRef.current !== chat.id) return;
+      setDetailError(message(err));
+    } finally {
+      if (openRef.current === chat.id) setDetailBusy(false);
+    }
+  }
+
+  return (
+    <section className="user-conversations" aria-label="Conversations">
+      <div className="user-conversations-head">
+        <h3>Conversations</h3>
+        <button className="ghost" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Loading…" : "Refresh"}</button>
+      </div>
+      <p className="muted">What this user asked each agent, with the agent's replies.</p>
+      {error && <p className="alert" role="alert">{error}</p>}
+      {chats && chats.length === 0 && <p className="muted">No conversations yet.</p>}
+      {!chats && !error && <p className="muted">Loading conversations…</p>}
+      <div className="user-chat-list">
+        {chats?.map((chat) => (
+          <div className={openId === chat.id ? "user-chat open" : "user-chat"} key={chat.id}>
+            <button
+              className="user-chat-pick"
+              type="button"
+              aria-expanded={openId === chat.id}
+              onClick={() => void open(chat)}
+            >
+              <strong>{chat.title}</strong>
+              <span>
+                {agentLabel(chat.agent, agentNames)}
+                {" · "}
+                {workspaceName(chat.workspace)}
+                {chat.updatedAt ? ` · ${relativeTime(chat.updatedAt)}` : ""}
+                {chat.running ? " · Running" : ""}
+              </span>
+            </button>
+            {openId === chat.id && (
+              <div className="user-transcript" aria-live="polite">
+                {detailBusy && <p className="muted">Loading conversation…</p>}
+                {detailError && <p className="alert" role="alert">{detailError}</p>}
+                {detail && blocks.length === 0 && !detailBusy && <p className="muted">This conversation has no messages yet.</p>}
+                {detail && blocks.map((block, index) => {
+                  if (block.kind === "text") {
+                    if (block.role === "user") return <div className="bubble user" key={index}>{block.text}</div>;
+                    return <div className="bubble assistant" key={index}><Markdown text={block.text} /></div>;
+                  }
+                  if (block.kind === "thinking") {
+                    return (
+                      <details className="thinking" key={index}>
+                        <summary>Thinking</summary>
+                        <p>{block.text}</p>
+                      </details>
+                    );
+                  }
+                  if (block.kind === "tool") {
+                    const shown = presentTool(block);
+                    const diff = block.content?.find((item) => item.type === "diff");
+                    return (
+                      <div className="tool" key={index}>
+                        <div>{shown.title}</div>
+                        {diff && diff.type === "diff" ? <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} /> : null}
+                        {shown.body ? <pre>{shown.body}</pre> : null}
+                      </div>
+                    );
+                  }
+                  if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
+                  return <p className="status" key={index}>{block.text}</p>;
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function workspaceName(workspace: string): string {
+  return workspace.split("/").filter(Boolean).pop() || workspace || "No repository";
 }
 
 function ServerPanel() {

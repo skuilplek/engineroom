@@ -1173,3 +1173,116 @@ test("the administrator controls repository file visibility for the file manager
   }
 });
 
+test("the administrator can read another user's chats and transcripts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-user-chats-"));
+  const aliceHome = path.join(root, "alice");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  await mkdir(aliceHome);
+  await mkdir(carolHome);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home: aliceHome,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const aliceRunner = await startRunner({
+    home: aliceHome,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("user-chats-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const aliceLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const aliceCookie = (aliceLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(aliceCookie);
+    assert.ok(carolCookie);
+    const aliceHeaders = { Cookie: aliceCookie!, "Content-Type": "application/json" };
+    const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
+
+    const created = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ agent: "cursor", workspace: carolHome, title: "Login bug" }),
+    });
+    assert.equal(created.status, 201);
+    const chat = (await created.json()) as { id: string; title: string };
+    const transcript = [
+      JSON.stringify({ kind: "user", text: "Why does login fail?", at: "2026-10-18T12:00:00.000Z", seq: 1 }),
+      JSON.stringify({ kind: "text", text: "The session cookie was not set.", at: "2026-10-18T12:00:01.000Z", seq: 2 }),
+    ].join("\n") + "\n";
+    await writeFile(path.join(carolHome, ".engineroom", "chats", chat.id, "transcript.jsonl"), transcript);
+
+    const denied = await fetch(`${base}/api/admin/users/carol/chats`, { headers: carolHeaders });
+    assert.equal(denied.status, 403);
+    const deniedDetail = await fetch(`${base}/api/admin/users/carol/chats/${chat.id}`, { headers: carolHeaders });
+    assert.equal(deniedDetail.status, 403);
+
+    const listed = await fetch(`${base}/api/admin/users/carol/chats`, { headers: aliceHeaders });
+    assert.equal(listed.status, 200);
+    const chats = (await listed.json()) as Array<{ id: string; title: string; agent: string }>;
+    assert.deepEqual(chats.map((item) => item.id), [chat.id]);
+    assert.equal(chats[0]?.title, "Login bug");
+    assert.equal(chats[0]?.agent, "cursor");
+
+    const detail = await fetch(`${base}/api/admin/users/carol/chats/${chat.id}`, { headers: aliceHeaders });
+    assert.equal(detail.status, 200);
+    const body = (await detail.json()) as {
+      chat: { id: string; title: string };
+      transcript: Array<{ kind: string; text: string }>;
+    };
+    assert.equal(body.chat.id, chat.id);
+    assert.equal(body.chat.title, "Login bug");
+    assert.deepEqual(
+      body.transcript.map((entry) => ({ kind: entry.kind, text: entry.text })),
+      [
+        { kind: "user", text: "Why does login fail?" },
+        { kind: "text", text: "The session cookie was not set." },
+      ],
+    );
+
+    const missing = await fetch(`${base}/api/admin/users/carol/chats/not-a-chat`, { headers: aliceHeaders });
+    assert.equal(missing.status, 400);
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await carolRunner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

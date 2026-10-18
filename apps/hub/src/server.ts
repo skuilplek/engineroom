@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileManager, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
@@ -431,6 +431,10 @@ export function createHub(options: HubOptions) {
         }));
         return;
       }
+      if (action === "chats" && req.method === "GET") {
+        sendJson(res, 200, await call(target, { type: "list_chats" }));
+        return;
+      }
       if (action === "env" && req.method === "GET") {
         sendJson(res, 200, await call(target, { type: "get_env" }));
         return;
@@ -453,6 +457,12 @@ export function createHub(options: HubOptions) {
         sendJson(res, 200, { ok: true });
         return;
       }
+    }
+    if (parts[2] === "users" && parts.length === 6 && parts[4] === "chats" && req.method === "GET") {
+      const target = managedUser(parts[3] || "");
+      const chatId = assertChatId(decodeURIComponent(parts[5] || ""));
+      sendJson(res, 200, await call(target, { type: "get_chat", chatId }));
+      return;
     }
     sendJson(res, 404, { error: "not found" });
   }

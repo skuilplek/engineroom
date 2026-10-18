@@ -828,6 +828,55 @@ details summary { cursor: pointer; color: var(--soft); }
   padding-top: 16px;
   border-top: 1px solid var(--line);
 }
+.user-conversations {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.user-conversations-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.user-conversations-head h3 { margin: 0; }
+.user-chat-list { display: grid; gap: 6px; }
+.user-chat {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunken);
+}
+.user-chat.open { background: var(--panel-2); }
+.user-chat-pick {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+}
+.user-chat-pick strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-chat-pick span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.user-transcript {
+  max-height: 28rem;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+.user-transcript .bubble,
+.user-transcript .tool,
+.user-transcript .thinking {
+  max-width: 100%;
+}
 .admin-view button { transition: background 180ms ease, color 180ms ease, transform 180ms ease; }
 .admin-view .primary:hover:not(:disabled) { background: var(--primary-hover); }
 .admin-view .ghost:hover:not(:disabled),

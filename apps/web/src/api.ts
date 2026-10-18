@@ -177,6 +177,14 @@ export function getUserAccess(username: string) {
   return api<UserBundle>(`/api/admin/users/${encodeURIComponent(username)}`);
 }
 
+export function listUserChats(username: string) {
+  return api<ChatMeta[]>(`/api/admin/users/${encodeURIComponent(username)}/chats`);
+}
+
+export function getUserChat(username: string, chatId: string) {
+  return api<ChatDetail>(`/api/admin/users/${encodeURIComponent(username)}/chats/${encodeURIComponent(chatId)}`);
+}
+
 export function saveUserPolicy(username: string, policy: UserPolicy) {
   return api<UserPolicy>(`/api/admin/users/${encodeURIComponent(username)}/policy`, {
     method: "PUT",
