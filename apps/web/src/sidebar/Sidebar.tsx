@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
-import { buildGroups, strip, type RepoGroup } from "../format.ts";
-import { IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
+import { buildGroups, relativeTime, strip, type RepoGroup } from "../format.ts";
+import { IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
 type View = "chat" | "settings" | "start" | "admin";
@@ -200,15 +200,13 @@ function Group({
       <div className={selected ? "repo-line active" : "repo-line"}>
         {group.canStart ? (
           <button className="repo-select" type="button" onClick={() => onNew(group.path)}>
-            <span className="dot-slot">{group.marked ? <span className="dot" /> : null}</span>
+            <span className="repo-icon" aria-hidden="true"><IconFolder /></span>
             <span className="repo-name" title={group.label}>{group.label}</span>
-            {group.time ? <span className="repo-time">{group.time}</span> : null}
           </button>
         ) : (
           <div className="repo-select">
-            <span className="dot-slot">{group.marked ? <span className="dot" /> : null}</span>
+            <span className="repo-icon" aria-hidden="true"><IconFolder /></span>
             <span className="repo-name" title={group.label}>{group.label}</span>
-            {group.time ? <span className="repo-time">{group.time}</span> : null}
           </div>
         )}
         {group.canStart && (
@@ -224,8 +222,9 @@ function Group({
           type="button"
           onClick={() => onOpen(chat)}
         >
+          <span className={chat.running ? "dot" : "dot dot-idle"} />
           <span className="chat-title">{chat.title}</span>
-          {chat.running ? <span className="chat-state">Running</span> : null}
+          <span className="chat-time">{relativeTime(chat.updatedAt)}</span>
         </button>
       ))}
     </div>

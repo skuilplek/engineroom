@@ -362,18 +362,23 @@ textarea { resize: vertical; }
   min-width: 0;
 }
 .repo-name {
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--green);
+  font-weight: 400;
+  color: var(--muted);
 }
-.repo-time, .chat-state {
+.repo-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.chat-time {
   margin-left: auto;
   color: var(--muted);
   font-size: 12px;
   flex: none;
 }
-.dot-slot { width: 8px; height: 8px; flex: none; display: grid; place-items: center; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+.dot.dot-idle { background: var(--muted); }
 .plus {
   width: 28px;
   height: 28px;
@@ -1648,5 +1653,11 @@ details summary { cursor: pointer; color: var(--soft); }
 [data-theme="engine"] .dot {
   background: #00f2ff;
   box-shadow: 0 0 8px #00f2ff, 0 0 14px rgba(43, 240, 160, 0.6);
+}
+[data-theme="haxor"] .dot.dot-idle,
+[data-theme="midnight"] .dot.dot-idle,
+[data-theme="engine"] .dot.dot-idle {
+  background: var(--muted);
+  box-shadow: none;
 }
 
