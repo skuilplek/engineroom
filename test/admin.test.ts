@@ -522,3 +522,94 @@ test("engineroom-admin refuses reserved accounts before it changes anything", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the administrator sees disk space and which commands are installed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-overview-"));
+  const home = path.join(root, "home");
+  const bin = path.join(root, "bin");
+  const checksFile = path.join(root, "checks.json");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(bin);
+  await mkdir(socketDir);
+  await writeFile(path.join(bin, "present"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(
+    checksFile,
+    JSON.stringify({ commands: ["present", "absent", "../secret", "bin/present", "present"] }),
+  );
+  const uid = process.getuid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("overview-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    checksFile,
+    commandDirs: [bin],
+    lookup: (username) => {
+      if (username === "alice") return user;
+      if (username === "carol") return { ...user, username: "carol", uid: uid + 1 };
+      return null;
+    },
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const aliceLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const aliceCookie = (aliceLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(aliceCookie);
+    const overview = await fetch(`${base}/api/admin/overview`, { headers: { Cookie: aliceCookie! } });
+    assert.equal(overview.status, 200);
+    const body = (await overview.json()) as {
+      configFile: string;
+      host: { node: string; memoryTotal: number; memoryFree: number; uptimeSeconds: number };
+      disks: { path: string; total: number; free: number }[];
+      commands: { name: string; available: boolean; path: string | null }[];
+    };
+    assert.equal(body.configFile, checksFile);
+    assert.match(body.host.node, /^v/);
+    assert.ok(body.host.memoryTotal > 0);
+    assert.ok(body.host.memoryFree >= 0);
+    assert.ok(body.host.uptimeSeconds >= 0);
+    assert.ok(body.disks.length >= 1);
+    for (const disk of body.disks) {
+      assert.ok(disk.total > 0);
+      assert.ok(disk.free >= 0);
+      assert.ok(disk.free <= disk.total);
+    }
+    assert.deepEqual(
+      body.commands.map((command) => command.name),
+      ["present", "absent"],
+    );
+    assert.equal(body.commands[0]?.available, true);
+    assert.equal(body.commands[0]?.path, path.join(bin, "present"));
+    assert.equal(body.commands[1]?.available, false);
+    assert.equal(body.commands[1]?.path, null);
+
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(carolCookie);
+    const denied = await fetch(`${base}/api/admin/overview`, { headers: { Cookie: carolCookie! } });
+    assert.equal(denied.status, 403);
+  } finally {
+    hub.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

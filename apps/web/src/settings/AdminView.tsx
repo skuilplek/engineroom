@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   AGENTS,
   agentLabel,
@@ -22,7 +22,9 @@ import {
   saveUserGrants,
   saveUserPolicy,
   saveUserSettings,
+  serverOverview,
   type Account,
+  type ServerOverview,
   type Session,
 } from "../api.ts";
 import { message } from "../format.ts";
@@ -139,8 +141,8 @@ export function AdminView({
 
   return (
     <div className="settings">
+      <ServerPanel />
       <form onSubmit={(event) => void saveAgentList(event)}>
-        <p className="eyebrow">Admin</p>
         <h2>Available agents</h2>
         <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them.</p>
         {AGENTS.map((agent) => (
@@ -537,6 +539,90 @@ function PersonPanel({
       )}
     </div>
   );
+}
+
+function ServerPanel() {
+  const [overview, setOverview] = useState<ServerOverview | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      setOverview(await serverOverview());
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <section className="server-panel">
+      <p className="eyebrow">Admin</p>
+      <h2>Server</h2>
+      <p className="muted">
+        {overview
+          ? `${overview.host.hostname} · ${overview.host.platform} ${overview.host.arch} · ${overview.host.node} · up ${formatUptime(overview.host.uptimeSeconds)}`
+          : "Checking this machine."}
+      </p>
+      {overview && (
+        <div className="accounts">
+          <div className="account">
+            <div>
+              <strong>Memory</strong>
+              <span>{formatBytes(overview.host.memoryFree)} free of {formatBytes(overview.host.memoryTotal)}</span>
+            </div>
+          </div>
+          {overview.disks.map((disk) => (
+            <div className="account" key={disk.path}>
+              <div>
+                <strong>{disk.path}</strong>
+                <span>{formatBytes(disk.free)} free of {formatBytes(disk.total)}</span>
+              </div>
+            </div>
+          ))}
+          {overview.commands.map((command) => (
+            <div className="account" key={command.name}>
+              <div>
+                <strong>{command.name}</strong>
+                <span className={command.available ? undefined : "missing"}>{command.path ?? "Missing"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {overview && <p className="muted">Commands are read from {overview.configFile}.</p>}
+      <p className="alert" role="alert">{error}</p>
+      <button className="ghost" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
+    </section>
+  );
+}
+
+function formatBytes(value: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  const digits = index === 0 || size >= 10 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[index]}`;
+}
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function agentFlags(agents: AgentId[]): Record<AgentId, boolean> {

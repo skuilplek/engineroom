@@ -322,7 +322,9 @@ textarea { resize: vertical; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .remove-account { display: grid; gap: 8px; }
 .repo-choice strong { display: block; color: var(--ink); font-weight: 600; }
-.settings form + form, .settings .people, .settings .repo-access { margin-top: 28px; padding-top: 8px; }
+.settings form + form, .settings .people, .settings .repo-access, .settings .server-panel + form { margin-top: 28px; padding-top: 8px; }
+.server-panel { display: grid; gap: 12px; }
+.server-panel .account span.missing { color: var(--danger); }
 details summary { cursor: pointer; color: var(--soft); }
 
 .search input { background: #111; }

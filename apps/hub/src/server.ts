@@ -7,6 +7,7 @@ import { assertUsername, decodePtyFrame, encodePtyFrame, isAgentId, isInsidePath
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
+import { serverOverview } from "./overview.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
@@ -21,6 +22,8 @@ export interface HubOptions {
   adminUser?: string;
   agentsFile?: string;
   catalogFile?: string;
+  checksFile?: string;
+  commandDirs?: string[];
   adminCtl?: string;
   lookup?: (username: string) => LinuxUser | null;
   authenticate?: (username: string, password: string) => Promise<boolean>;
@@ -53,6 +56,8 @@ export function createHub(options: HubOptions) {
   const adminUser = (options.adminUser || "").trim();
   const agentsFile = options.agentsFile || "";
   const catalogFile = options.catalogFile || "";
+  const checksFile = options.checksFile || "";
+  const commandDirs = options.commandDirs;
   const accounts = options.listAccounts ?? (() => listAccounts());
   const runAdmin =
     options.runAdmin ??
@@ -185,6 +190,10 @@ export function createHub(options: HubOptions) {
       return;
     }
     const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[2] === "overview" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, await serverOverview({ configFile: checksFile, commandDirs }));
+      return;
+    }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
       const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body));

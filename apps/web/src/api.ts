@@ -169,6 +169,25 @@ export function removeAccount(username: string) {
   return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/remove`, { method: "POST" });
 }
 
+export interface ServerOverview {
+  configFile: string;
+  host: {
+    hostname: string;
+    platform: string;
+    arch: string;
+    node: string;
+    uptimeSeconds: number;
+    memoryFree: number;
+    memoryTotal: number;
+  };
+  disks: { path: string; total: number; free: number }[];
+  commands: { name: string; available: boolean; path: string | null }[];
+}
+
+export function serverOverview() {
+  return api<ServerOverview>("/api/admin/overview");
+}
+
 export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean) {
   return api<{ agents: AgentId[]; rawTerminal?: boolean }>("/api/admin/agents", {
     method: "PUT",

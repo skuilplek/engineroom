@@ -32,6 +32,7 @@ export function main() {
     adminUser: process.env.ENGINEROOM_ADMIN || "",
     agentsFile: process.env.ENGINEROOM_AGENTS_FILE || "/var/lib/engineroom/agents.json",
     catalogFile: process.env.ENGINEROOM_CATALOG_FILE || "/var/lib/engineroom/catalog.json",
+    checksFile: process.env.ENGINEROOM_CHECKS_FILE || "/etc/engineroom/checks.json",
     adminCtl: process.env.ENGINEROOM_ADMIN_CTL || "/usr/local/bin/engineroom-admin",
   });
   hub.listen(port, host, () => {

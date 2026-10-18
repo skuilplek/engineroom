@@ -66,6 +66,15 @@ ENGINEROOM_ADMIN=${admin}
 EOF
 chmod 0644 /etc/engineroom/hub.env
 
+if [[ ! -f /etc/engineroom/checks.json ]]; then
+  cat > /etc/engineroom/checks.json <<'EOF'
+{
+  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura"]
+}
+EOF
+  chmod 0644 /etc/engineroom/checks.json
+fi
+
 bash "$root/deploy/install.sh"
 
 if [[ -f /etc/caddy/Caddyfile ]] && ! grep -q 'engineroom' /etc/caddy/Caddyfile; then
