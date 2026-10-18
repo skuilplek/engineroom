@@ -167,7 +167,10 @@ function Shell({
           <AdminView
             session={session}
             onAgents={(agents, rawTerminal) => onSession({ ...session, agents, rawTerminal })}
-            onRepos={() => refresh().catch(() => undefined)}
+            onAccess={() => {
+              me().then(onSession).catch(() => undefined);
+              refresh().catch(() => undefined);
+            }}
           />
         )}
         {view === "start" && (

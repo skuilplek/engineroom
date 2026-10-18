@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  AGENTS,
   applySettings,
   CHAT_ID_RE,
   cleanModel,
@@ -15,6 +16,7 @@ import {
   type SettingsPatch,
   type TranscriptEntry,
 } from "@engineroom/protocol";
+import { loadPolicy, withLocks } from "./policy.ts";
 import { isGitRepository, listGitRepositories, repositoryPathAllowed, resolveWorkspace } from "./workspace.ts";
 
 export function dataRoot(home: string): string {
@@ -55,9 +57,18 @@ export async function loadSettings(home: string): Promise<Settings> {
 
 export async function saveSettings(home: string, patch: SettingsPatch): Promise<Settings> {
   await ensureRoot(home);
-  const next = applySettings(await loadSettings(home), patch);
+  const policy = await loadPolicy(home);
+  const editable: SettingsPatch = { ...patch };
+  if (patch.binaries) {
+    const binaries = { ...patch.binaries };
+    for (const agent of AGENTS) {
+      if (policy.binaries[agent]) delete binaries[agent];
+    }
+    editable.binaries = binaries;
+  }
+  const next = applySettings(await loadSettings(home), editable);
   await writeAtomic(path.join(dataRoot(home), "settings.json"), `${JSON.stringify(next, null, 2)}\n`);
-  return next;
+  return withLocks(next, policy);
 }
 
 export async function listRepositories(home: string): Promise<RepositoryEntry[]> {

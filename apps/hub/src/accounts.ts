@@ -34,7 +34,7 @@ export function cleanPassword(value: unknown): string {
 
 export function runAdminCtl(
   ctl: string,
-  action: "add" | "revoke",
+  action: "add" | "revoke" | "passwd" | "remove",
   username: string,
   password = "",
 ): Promise<void> {
@@ -56,7 +56,7 @@ export function runAdminCtl(
       if (code === 0) resolve();
       else reject(new Error(stderr.trim() || "admin command failed"));
     });
-    if (action === "add") child.stdin.write(`${password}\n`);
+    if (action === "add" || action === "passwd") child.stdin.write(`${password}\n`);
     child.stdin.end();
   });
 }

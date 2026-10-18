@@ -25,7 +25,7 @@ export async function callRunner(
   onEvent?: (event: StreamEvent) => void,
 ): Promise<unknown> {
   const socket = await openRunnerSocket(link, username, uid);
-  const timeoutMs = request.type === "send" ? 30 * 60 * 1000 : 30_000;
+  const timeoutMs = request.type === "send" ? 30 * 60 * 1000 : request.type === "sync_repositories" ? 150_000 : 30_000;
   return new Promise((resolve, reject) => {
     let buf = "";
     let settled = false;

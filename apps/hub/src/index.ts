@@ -31,6 +31,7 @@ export function main() {
     cookieSecure: process.env.ENGINEROOM_COOKIE_SECURE !== "0",
     adminUser: process.env.ENGINEROOM_ADMIN || "",
     agentsFile: process.env.ENGINEROOM_AGENTS_FILE || "/var/lib/engineroom/agents.json",
+    catalogFile: process.env.ENGINEROOM_CATALOG_FILE || "/var/lib/engineroom/catalog.json",
     adminCtl: process.env.ENGINEROOM_ADMIN_CTL || "/usr/local/bin/engineroom-admin",
   });
   hub.listen(port, host, () => {

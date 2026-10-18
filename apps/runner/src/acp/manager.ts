@@ -1,5 +1,7 @@
 import type { AgentId, ListedSession, PermissionPolicy, StreamEvent } from "@engineroom/protocol";
 import { childEnv, resolveBinary } from "../cli.ts";
+import { binaryFor, loadPolicy } from "../policy.ts";
+import { loadSettings } from "../store.ts";
 import { AcpSession, AcpUnavailable, type AcpStart } from "./session.ts";
 
 const IDLE_MS = 10 * 60 * 1000;
@@ -190,19 +192,13 @@ export class AcpManager {
 
   private async launch(agent: AgentId, ctx: AcpContext): Promise<AcpLaunch> {
     if (this.options.launch) return this.options.launch(agent, ctx);
-    if (agent === "cursor") {
-      const binary = await resolveBinary(undefined, ["agent"], childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
-        throw new AcpUnavailable("could not find agent on PATH");
-      });
-      return { binary, args: ["acp"] };
-    }
-    if (agent === "claude") {
-      const binary = await resolveBinary(undefined, ["claude-agent-acp"], childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
-        throw new AcpUnavailable("could not find claude-agent-acp on PATH");
-      });
-      return { binary, args: [] };
-    }
-    throw new AcpUnavailable();
+    const names = agent === "cursor" ? ["agent"] : agent === "claude" ? ["claude-agent-acp"] : [];
+    if (names.length === 0) throw new AcpUnavailable();
+    const [policy, settings] = await Promise.all([loadPolicy(ctx.home), loadSettings(ctx.home)]);
+    const binary = await resolveBinary(binaryFor(policy, settings, agent), names, childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
+      throw new AcpUnavailable(`could not find ${names[0]} on PATH`);
+    });
+    return { binary, args: agent === "cursor" ? ["acp"] : [] };
   }
 
   private scheduleIdle(chatId: string) {

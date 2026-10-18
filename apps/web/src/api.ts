@@ -1,4 +1,15 @@
-import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings } from "@engineroom/protocol";
+import type {
+  AgentId,
+  CatalogEntry,
+  ChatDetail,
+  ChatMeta,
+  EnvEntry,
+  RepositoryEntry,
+  Settings,
+  SettingsPatch,
+  UserAccess,
+  UserPolicy,
+} from "@engineroom/protocol";
 
 export interface Session {
   username: string;
@@ -9,6 +20,12 @@ export interface Session {
 }
 
 export interface Account {
+  username: string;
+  home: string;
+  uid: number;
+}
+
+export interface UserBundle extends UserAccess {
   username: string;
   home: string;
   uid: number;
@@ -83,14 +100,57 @@ export function listRepositories() {
   return api<RepositoryEntry[]>("/api/repositories");
 }
 
-export function listUserRepositories(username: string) {
-  return api<RepositoryEntry[]>(`/api/admin/users/${encodeURIComponent(username)}/repositories`);
+export function listCatalog() {
+  return api<{ repositories: CatalogEntry[] }>("/api/admin/catalog");
 }
 
-export function saveUserRepositories(username: string, enabled: string[]) {
-  return api<RepositoryEntry[]>(`/api/admin/users/${encodeURIComponent(username)}/repositories`, {
+export function addCatalog(name: string, url: string) {
+  return api<CatalogEntry>("/api/admin/catalog", {
+    method: "POST",
+    body: JSON.stringify({ name, url }),
+  });
+}
+
+export function removeCatalog(id: string) {
+  return api<{ repositories: CatalogEntry[] }>(`/api/admin/catalog/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function getUserAccess(username: string) {
+  return api<UserBundle>(`/api/admin/users/${encodeURIComponent(username)}`);
+}
+
+export function saveUserPolicy(username: string, policy: UserPolicy) {
+  return api<UserPolicy>(`/api/admin/users/${encodeURIComponent(username)}/policy`, {
     method: "PUT",
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify(policy),
+  });
+}
+
+export function saveUserSettings(username: string, settings: SettingsPatch) {
+  return api<Settings>(`/api/admin/users/${encodeURIComponent(username)}/settings`, {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export function saveUserGrants(username: string, ids: string[]) {
+  return api<{ grants: string[]; repositories: RepositoryEntry[] }>(`/api/admin/users/${encodeURIComponent(username)}/repositories`, {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function saveUserEnv(username: string, entries: EnvEntry[]) {
+  return api<EnvEntry[]>(`/api/admin/users/${encodeURIComponent(username)}/env`, {
+    method: "PUT",
+    body: JSON.stringify({ entries }),
+  });
+}
+
+export function changePassword(username: string, password: string) {
+  return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
   });
 }
 
@@ -105,8 +165,8 @@ export function addAccount(username: string, password: string) {
   });
 }
 
-export function revokeAccount(username: string) {
-  return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/revoke`, { method: "POST" });
+export function removeAccount(username: string) {
+  return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/remove`, { method: "POST" });
 }
 
 export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean) {

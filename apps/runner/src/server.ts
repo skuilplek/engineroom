@@ -18,9 +18,13 @@ import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
 import { childEnv, resolveBinary, binaryNames } from "./cli.ts";
+import { gitClone } from "./clone.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
+import { loadEnv, saveEnv } from "./envfile.ts";
 import { TranscriptWriter } from "./persist.ts";
+import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
+import { loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
 import {
   clearTranscript,
   createChat,
@@ -42,6 +46,7 @@ export interface RunnerOptions {
   hubUser?: string;
   acp?: AcpManager | null;
   pty?: PtyManager;
+  clone?: CloneRepository;
 }
 
 export interface RunningRunner {
@@ -65,6 +70,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   const bus = new ChatBus();
   const writer = new TranscriptWriter(home);
   const hubUser = options.hubUser ?? process.env.ENGINEROOM_HUB_USER ?? "engineroom";
+  const clone = options.clone ?? gitClone;
   const server = createServer((socket) => {
     socket.setNoDelay(true);
     void handleConnection(socket).catch((error) => {
@@ -240,18 +246,42 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listChats(home, new Set(runs.keys()));
       case "get_chat":
         return getChat(home, request.chatId, runs.has(request.chatId));
-      case "create_chat":
-        return createChat(home, request);
       case "get_settings":
-        return loadSettings(home);
+        return withLocks(await loadSettings(home), await loadPolicy(home));
       case "put_settings":
         return saveSettings(home, request.settings);
+      case "get_policy":
+        return loadPolicy(home);
+      case "put_policy":
+        return savePolicy(home, request.policy);
+      case "get_env":
+        return loadEnv(home);
+      case "put_env":
+        return saveEnv(home, request.entries);
+      case "get_access": {
+        const policy = await loadPolicy(home);
+        return {
+          policy,
+          settings: withLocks(await loadSettings(home), policy),
+          grants: await loadGrants(home),
+          env: await loadEnv(home),
+        };
+      }
+      case "sync_repositories":
+        return syncGrantedRepositories(home, request.repos, clone);
       case "list_workspaces":
         return (await import("./workspace.ts")).listWorkspaces(home);
       case "list_repositories":
         return listRepositories(home);
       case "set_repositories":
         return setEnabledRepositories(home, request.enabled);
+      case "create_chat": {
+        const policy = await loadPolicy(home);
+        const settings = await loadSettings(home);
+        const agent = request.agent ?? settings.defaultAgent;
+        if (!policy.agents.includes(agent)) throw new Error("invalid agent");
+        return createChat(home, request);
+      }
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -310,7 +340,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       }
       publishEvent({ type: "user_message", text: prompt });
       publishEvent({ type: "turn_start" });
-      const settings = await loadSettings(home);
+      const policy = await loadPolicy(home);
+      if (!policy.agents.includes(chat.agent)) throw new Error("invalid agent");
+      const settings = withLocks(await loadSettings(home), policy);
       const ctx: DriverContext = {
         home,
         workspace: chat.workspace,
@@ -397,11 +429,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     if (held.has(chatId) && pty.has(chatId)) {
       return { attached: true, scrollback: Buffer.from(pty.scrollback(chatId), "latin1").toString("base64") };
     }
+    const policy = await loadPolicy(home);
+    if (!policy.rawTerminal) throw new Error("terminal is not enabled");
     await acp?.stop(chatId);
     const settings = await loadSettings(home);
     const env = childEnv(process.env, home);
     env.TERM = "xterm-256color";
-    const binary = await resolveBinary(settings.binaries[chat.agent], binaryNames(chat.agent), env);
+    const binary = await resolveBinary(binaryFor(policy, settings, chat.agent), binaryNames(chat.agent), env);
     const command = ptyCommand(chat.agent, chat.agentSessionId, chat.workspace);
     const scroll = await pty.open(
       chatId,
@@ -452,6 +486,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
 
   async function importSession(agent: AgentId | undefined, agentSessionId: string, workspace?: string) {
     const chosen = agent ?? "cursor";
+    const policy = await loadPolicy(home);
+    if (!policy.agents.includes(chosen)) throw new Error("invalid agent");
     const chat = await createChat(home, { agent: chosen, workspace, title: "Imported chat" });
     return updateChat(home, chat.id, { agentSessionId, needsResync: true });
   }

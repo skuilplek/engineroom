@@ -19,6 +19,7 @@ export interface Settings {
   defaultModel: string;
   binaries: Partial<Record<AgentId, string>>;
   permission: PermissionPolicy;
+  lockedBinaries?: AgentId[];
 }
 
 export interface SettingsPatch {
@@ -110,6 +111,33 @@ export interface RepositoryEntry {
   enabled: boolean;
 }
 
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export interface UserPolicy {
+  agents: AgentId[];
+  binaries: Partial<Record<AgentId, string>>;
+  rawTerminal: boolean;
+}
+
+export interface EnvEntry {
+  key: string;
+  value: string;
+}
+
+export interface UserAccess {
+  policy: UserPolicy;
+  settings: Settings;
+  grants: string[];
+  env: EnvEntry[];
+}
+
+export const CATALOG_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+
 export type StreamEvent =
   | { type: "user_message"; text: string }
   | { type: "text_delta"; text: string; messageId?: string }
@@ -181,6 +209,12 @@ export type RunnerRequest =
   | { id: string; type: "list_workspaces" }
   | { id: string; type: "list_repositories" }
   | { id: string; type: "set_repositories"; enabled: string[] }
+  | { id: string; type: "get_policy" }
+  | { id: string; type: "put_policy"; policy: UserPolicy }
+  | { id: string; type: "get_env" }
+  | { id: string; type: "put_env"; entries: EnvEntry[] }
+  | { id: string; type: "get_access" }
+  | { id: string; type: "sync_repositories"; repos: CatalogEntry[] }
   | { id: string; type: "send"; chatId: string; prompt: string }
   | { id: string; type: "prompt"; chatId: string; prompt: string }
   | { id: string; type: "cancel"; chatId: string }
@@ -296,6 +330,16 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: body.type };
     case "set_repositories":
       return { id: body.id, type: "set_repositories", enabled: parseEnabledPaths(body.enabled) };
+    case "get_policy":
+    case "get_env":
+    case "get_access":
+      return { id: body.id, type: body.type };
+    case "put_policy":
+      return { id: body.id, type: "put_policy", policy: parseUserPolicy(body.policy) };
+    case "put_env":
+      return { id: body.id, type: "put_env", entries: parseEnvEntries(body.entries) };
+    case "sync_repositories":
+      return { id: body.id, type: "sync_repositories", repos: parseCatalogEntries(body.repos) };
     case "get_chat":
     case "cancel":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
@@ -420,6 +464,112 @@ export function decodePtyFrame(frame: Uint8Array): { chatId: string; data: Uint8
   const chatId = new TextDecoder().decode(frame.subarray(1, 1 + PTY_ID_BYTES));
   if (!CHAT_ID_RE.test(chatId)) return null;
   return { chatId, data: frame.subarray(1 + PTY_ID_BYTES) };
+}
+
+export function assertCatalogName(value: unknown): string {
+  if (typeof value !== "string" || !CATALOG_NAME_RE.test(value)) throw new Error("invalid repository name");
+  return value;
+}
+
+export function assertCatalogId(value: unknown): string {
+  if (typeof value !== "string" || !CHAT_ID_RE.test(value)) throw new Error("invalid repository");
+  return value;
+}
+
+export function assertGitUrl(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid repository url");
+  const url = value.trim();
+  if (url.length < 8 || url.length > 2000) throw new Error("invalid repository url");
+  if (/[\s\0]/.test(url) || url.includes("..") || /ext::/i.test(url) || url.startsWith("-")) {
+    throw new Error("invalid repository url");
+  }
+  if (/^https:\/\//i.test(url)) return assertRemoteUrl(url, "https:");
+  if (/^ssh:\/\//i.test(url)) return assertRemoteUrl(url, "ssh:");
+  if (/^git@[A-Za-z0-9][A-Za-z0-9.-]*:[A-Za-z0-9][A-Za-z0-9._~/-]*$/.test(url)) return url;
+  throw new Error("invalid repository url");
+}
+
+function assertRemoteUrl(value: string, protocol: "https:" | "ssh:"): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("invalid repository url");
+  }
+  if (parsed.protocol !== protocol || !parsed.hostname) throw new Error("invalid repository url");
+  if (parsed.password || (protocol === "https:" && parsed.username)) throw new Error("invalid repository url");
+  return value;
+}
+
+export function parseCatalogEntries(value: unknown): CatalogEntry[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("invalid repositories");
+  const entries: CatalogEntry[] = [];
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") throw new Error("invalid repositories");
+    const record = item as Record<string, unknown>;
+    const id = assertCatalogId(record.id);
+    const name = assertCatalogName(record.name);
+    const url = assertGitUrl(record.url);
+    if (ids.has(id) || names.has(name)) throw new Error("invalid repositories");
+    ids.add(id);
+    names.add(name);
+    entries.push({ id, name, url });
+  }
+  return entries;
+}
+
+export function parsePolicyBinaries(value: unknown): Partial<Record<AgentId, string>> {
+  if (value == null) return {};
+  if (typeof value !== "object") throw new Error("invalid binaries");
+  const binaries: Partial<Record<AgentId, string>> = {};
+  for (const agent of AGENTS) {
+    const raw = (value as Record<string, unknown>)[agent];
+    if (raw == null || raw === "") continue;
+    if (typeof raw !== "string" || !raw.startsWith("/") || raw.length > 4096 || raw.includes("\0") || raw.includes("\n")) {
+      throw new Error(`${agent} binary must be an absolute path`);
+    }
+    binaries[agent] = raw;
+  }
+  return binaries;
+}
+
+export function parseUserPolicy(value: unknown): UserPolicy {
+  if (!value || typeof value !== "object") throw new Error("invalid policy");
+  const body = value as Record<string, unknown>;
+  if (!Array.isArray(body.agents) || body.agents.length === 0 || body.agents.length > AGENTS.length) {
+    throw new Error("at least one agent must stay on");
+  }
+  const agents: AgentId[] = [];
+  for (const agent of body.agents) {
+    if (!isAgentId(agent) || agents.includes(agent)) throw new Error("invalid agent");
+    agents.push(agent);
+  }
+  if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
+  return { agents, binaries: parsePolicyBinaries(body.binaries), rawTerminal: body.rawTerminal };
+}
+
+export function defaultPolicy(): UserPolicy {
+  return { agents: [...AGENTS], binaries: {}, rawTerminal: true };
+}
+
+export function parseEnvEntries(value: unknown): EnvEntry[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("invalid environment");
+  const entries: EnvEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") throw new Error("invalid environment");
+    const record = item as Record<string, unknown>;
+    if (typeof record.key !== "string" || !ENV_KEY_RE.test(record.key)) throw new Error("invalid environment");
+    if (typeof record.value !== "string" || record.value.length > 8192 || /[\r\n\0]/.test(record.value)) {
+      throw new Error("invalid environment");
+    }
+    if (seen.has(record.key)) throw new Error("invalid environment");
+    seen.add(record.key);
+    entries.push({ key: record.key, value: record.value });
+  }
+  return entries;
 }
 
 function parseEnabledPaths(value: unknown): string[] {

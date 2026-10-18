@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -15,9 +16,11 @@ import "./peercred-helper.ts";
 test("the administrator sets agents and accounts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-admin-"));
   const home = path.join(root, "home");
+  const carolHome = path.join(root, "carol");
   const socketDir = path.join(root, "socks");
   const agentsFile = path.join(root, "agents.json");
   await mkdir(home);
+  await mkdir(carolHome);
   await mkdir(socketDir);
   await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
   const uid = process.getuid?.() ?? 1000;
@@ -40,6 +43,11 @@ test("the administrator sets agents and accounts", async () => {
     socketPath: socketPathForUser(socketDir, "alice"),
     drivers,
   });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+  });
   const hub = createHub({
     link: { socketDir },
     sessionSecret: Buffer.from("admin-test-secret-value"),
@@ -49,7 +57,7 @@ test("the administrator sets agents and accounts", async () => {
     agentsFile,
     lookup: (username) => {
       if (username === "alice") return user;
-      if (username === "carol") return { ...user, username: "carol", home: "/home/carol", uid: uid + 1 };
+      if (username === "carol") return { ...user, username: "carol", home: carolHome };
       return null;
     },
     authenticate: async () => true,
@@ -110,12 +118,12 @@ test("the administrator sets agents and accounts", async () => {
     assert.equal(self.status, 400);
     assert.equal(calls.length, 1);
 
-    const revoked = await fetch(`${base}/api/admin/users/carol/revoke`, { method: "POST", headers });
-    assert.equal(revoked.status, 200);
-    assert.equal(calls.at(-1)?.action, "revoke");
+    const removed = await fetch(`${base}/api/admin/users/carol/remove`, { method: "POST", headers });
+    assert.equal(removed.status, 200);
+    assert.equal(calls.at(-1)?.action, "remove");
 
-    const revokeSelf = await fetch(`${base}/api/admin/users/alice/revoke`, { method: "POST", headers });
-    assert.equal(revokeSelf.status, 400);
+    const removeSelf = await fetch(`${base}/api/admin/users/alice/remove`, { method: "POST", headers });
+    assert.equal(removeSelf.status, 400);
     assert.equal(calls.length, 2);
 
     const none = await fetch(`${base}/api/admin/agents`, {
@@ -153,6 +161,7 @@ test("the administrator sets agents and accounts", async () => {
   } finally {
     hub.close();
     await runner.close();
+    await carolRunner.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -162,9 +171,8 @@ test("the administrator enables repositories for one user", async () => {
   const aliceHome = path.join(root, "alice");
   const carolHome = path.join(root, "carol");
   const socketDir = path.join(root, "socks");
-  const carolRepo = path.join(carolHome, "Sites", "widget");
+  const catalogFile = path.join(root, "catalog.json");
   const carolOther = path.join(carolHome, "Sites", "other");
-  await mkdir(path.join(carolRepo, ".git"), { recursive: true });
   await mkdir(path.join(carolOther, ".git"), { recursive: true });
   await mkdir(aliceHome);
   await mkdir(socketDir);
@@ -184,15 +192,20 @@ test("the administrator enables repositories for one user", async () => {
     claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
+  const clone = async (_url: string, dest: string) => {
+    await mkdir(path.join(dest, ".git"), { recursive: true });
+  };
   const aliceRunner = await startRunner({
     home: aliceHome,
     socketPath: socketPathForUser(socketDir, "alice"),
     drivers,
+    clone,
   });
   const carolRunner = await startRunner({
     home: carolHome,
     socketPath: socketPathForUser(socketDir, "carol"),
     drivers,
+    clone,
   });
   const hub = createHub({
     link: { socketDir },
@@ -200,6 +213,7 @@ test("the administrator enables repositories for one user", async () => {
     pamHelper: "/bin/false",
     cookieSecure: false,
     adminUser: "alice",
+    catalogFile,
     lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
     authenticate: async () => true,
   });
@@ -226,29 +240,28 @@ test("the administrator enables repositories for one user", async () => {
     const denied = await fetch(`${base}/api/admin/users/carol/repositories`, {
       method: "PUT",
       headers: carolHeaders,
-      body: JSON.stringify({ enabled: [carolRepo] }),
+      body: JSON.stringify({ ids: [] }),
     });
     assert.equal(denied.status, 403);
 
-    const discovered = (await (await fetch(`${base}/api/admin/users/carol/repositories`, { headers: aliceHeaders })).json()) as Array<{
-      name: string;
-      path: string;
-      enabled: boolean;
-    }>;
-    assert.deepEqual(discovered.map((entry) => entry.name).sort(), ["other", "widget"]);
-    assert.equal(discovered.every((entry) => entry.enabled === false), true);
-
-    const widget = discovered.find((entry) => entry.name === "widget");
-    assert.ok(widget);
+    const added = await fetch(`${base}/api/admin/catalog`, {
+      method: "POST",
+      headers: aliceHeaders,
+      body: JSON.stringify({ name: "widget", url: "https://example.com/widget.git" }),
+    });
+    assert.equal(added.status, 201);
+    const entry = (await added.json()) as { id: string };
     const saved = await fetch(`${base}/api/admin/users/carol/repositories`, {
       method: "PUT",
       headers: aliceHeaders,
-      body: JSON.stringify({ enabled: [widget.path] }),
+      body: JSON.stringify({ ids: [entry.id] }),
     });
     assert.equal(saved.status, 200);
 
-    const visible = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
-    assert.deepEqual(visible.map((entry) => entry.name), ["widget"]);
+    const visible = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string; path: string }>;
+    assert.deepEqual(visible.map((item) => item.name), ["widget"]);
+    const widget = visible[0];
+    assert.ok(widget);
 
     const created = await fetch(`${base}/api/chats`, {
       method: "POST",
@@ -268,6 +281,21 @@ test("the administrator enables repositories for one user", async () => {
       body: JSON.stringify({ workspace: carolHome, title: "no repo" }),
     });
     assert.equal(loose.status, 201);
+
+    const cleared = await fetch(`${base}/api/admin/users/carol/repositories`, {
+      method: "PUT",
+      headers: aliceHeaders,
+      body: JSON.stringify({ ids: [] }),
+    });
+    assert.equal(cleared.status, 200);
+    const after = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as unknown[];
+    assert.deepEqual(after, []);
+    const blockedAgain = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ workspace: widget.path }),
+    });
+    assert.equal(blockedAgain.status, 403);
   } finally {
     hub.close();
     await aliceRunner.close();
@@ -275,6 +303,189 @@ test("the administrator enables repositories for one user", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the administrator sets one person's access, environment, and password", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-person-admin-"));
+  const home = path.join(root, "alice");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  const agentsFile = path.join(root, "agents.json");
+  await mkdir(home);
+  await mkdir(carolHome);
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
+  const calls: Array<{ action: string; username: string; password?: string }> = [];
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const aliceRunner = await startRunner({ home, socketPath: socketPathForUser(socketDir, "alice"), drivers });
+  const carolRunner = await startRunner({ home: carolHome, socketPath: socketPathForUser(socketDir, "carol"), drivers });
+  const carolSock = socketPathForUser(socketDir, "carol");
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("person-admin-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
+    authenticate: async () => true,
+    runAdmin: async (action, username, password) => {
+      calls.push({ action, username, password });
+    },
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
+
+    const policy = await fetch(`${base}/api/admin/users/carol/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], binaries: { cursor: "/opt/admin/agent" }, rawTerminal: false }),
+    });
+    assert.equal(policy.status, 200);
+
+    const me = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[]; rawTerminal: boolean };
+    assert.deepEqual(me.agents, ["cursor"]);
+    assert.equal(me.rawTerminal, false);
+
+    const blocked = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ agent: "pi", workspace: carolHome }),
+    });
+    assert.equal(blocked.status, 400);
+
+    await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: carolHeaders,
+      body: JSON.stringify({ binaries: { cursor: "/usr/bin/true" } }),
+    });
+    const settings = (await (await fetch(`${base}/api/settings`, { headers: carolHeaders })).json()) as {
+      binaries: { cursor?: string };
+      lockedBinaries?: string[];
+    };
+    assert.equal(settings.binaries.cursor, "/opt/admin/agent");
+    assert.deepEqual(settings.lockedBinaries, ["cursor"]);
+    const stored = JSON.parse(await readFile(path.join(carolHome, ".engineroom", "settings.json"), "utf8")) as { binaries?: { cursor?: string } };
+    assert.equal(stored.binaries?.cursor, undefined);
+
+    const env = await fetch(`${base}/api/admin/users/carol/env`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ entries: [{ key: "ANTHROPIC_API_KEY", value: "secret" }] }),
+    });
+    assert.equal(env.status, 200);
+    const file = await readFile(path.join(carolHome, ".env"), "utf8");
+    assert.match(file, /ANTHROPIC_API_KEY=secret/);
+
+    const password = await fetch(`${base}/api/admin/users/carol/password`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "changed" }),
+    });
+    assert.equal(password.status, 200);
+    assert.deepEqual(calls.at(-1), { action: "passwd", username: "carol", password: "changed" });
+    const ownPassword = await fetch(`${base}/api/admin/users/alice/password`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "nope" }),
+    });
+    assert.equal(ownPassword.status, 400);
+
+    const live = await subscribe(carolSock);
+    try {
+      live.send({ id: "c", type: "create_chat", agent: "cursor", workspace: carolHome });
+      const created = await live.next((message) => message.id === "c");
+      const chatId = (created.result as { id: string }).id;
+      live.send({ id: "o", type: "pty_open", chatId, cols: 80, rows: 24 });
+      const opened = await live.next((message) => message.id === "o");
+      assert.equal(opened.type, "error");
+      assert.match(opened.error || "", /terminal is not enabled/);
+    } finally {
+      live.close();
+    }
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await carolRunner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function subscribe(socketPath: string): Promise<{
+  send: (request: Record<string, unknown>) => void;
+  next: (match: (message: { id?: string; type?: string; error?: string; result?: unknown }) => boolean) => Promise<{ id?: string; type?: string; error?: string; result?: unknown }>;
+  close: () => void;
+}> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(socketPath);
+    let buf = "";
+    const pending: Array<{ id?: string; type?: string; error?: string; result?: unknown }> = [];
+    const waiters: Array<{ match: (message: { id?: string }) => boolean; resolve: (message: { id?: string; type?: string; error?: string; result?: unknown }) => void }> = [];
+    let opened = false;
+    const api = {
+      send: (request: Record<string, unknown>) => socket.write(`${JSON.stringify(request)}\n`),
+      next: (match: (message: { id?: string; type?: string; error?: string; result?: unknown }) => boolean) =>
+        new Promise<{ id?: string; type?: string; error?: string; result?: unknown }>((done) => {
+          const existing = pending.findIndex(match);
+          if (existing >= 0) done(pending.splice(existing, 1)[0]!);
+          else waiters.push({ match, resolve: done });
+        }),
+      close: () => socket.end(),
+    };
+    const push = (message: { id?: string; type?: string; error?: string; result?: unknown }) => {
+      if (!opened && message.id === "sub") {
+        opened = true;
+        resolve(api);
+        return;
+      }
+      const index = waiters.findIndex((waiter) => waiter.match(message));
+      if (index >= 0) waiters.splice(index, 1)[0]?.resolve(message);
+      else pending.push(message);
+    };
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buf += chunk;
+      let index = buf.indexOf("\n");
+      while (index >= 0) {
+        const line = buf.slice(0, index);
+        buf = buf.slice(index + 1);
+        index = buf.indexOf("\n");
+        if (line.trim()) push(JSON.parse(line) as { id?: string; type?: string; error?: string; result?: unknown });
+      }
+    });
+    socket.on("error", reject);
+    socket.write(`${JSON.stringify({ id: "sub", type: "subscribe" })}\n`);
+  });
+}
 
 test("engineroom-admin refuses reserved accounts before it changes anything", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-admin-script-"));
@@ -288,6 +499,16 @@ test("engineroom-admin refuses reserved accounts before it changes anything", as
     });
     assert.notEqual(reserved.status, 0);
     assert.match(reserved.stderr, /must not change this account/);
+
+    const removed = spawnSync("bash", [script, "remove", "serveradmin"], {
+      encoding: "utf8",
+      env: { ...process.env, ENGINEROOM_HUB_ENV: envFile },
+    });
+    assert.notEqual(removed.status, 0);
+    assert.match(removed.stderr, /must not change this account/);
+
+    const passwd = spawnSync("bash", [script, "passwd", "root"], { encoding: "utf8" });
+    assert.match(passwd.stderr, /must not change this account/);
 
     const system = spawnSync("bash", [script, "add", "root"], { encoding: "utf8" });
     assert.match(system.stderr, /must not change this account/);

@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import type { AgentId } from "@engineroom/protocol";
+import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
 
 export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -45,6 +46,10 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
   env.HOME = home;
   env.TERM = "dumb";
   env.NO_COLOR = "1";
+  for (const entry of readEnvFileSync(home)) {
+    if (!envKeyBlocked(entry.key)) env[entry.key] = entry.value;
+  }
+  env.HOME = home;
   delete env.LISTEN_FDS;
   delete env.LISTEN_PID;
   delete env.LISTEN_FDNAMES;

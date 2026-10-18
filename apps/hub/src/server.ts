@@ -3,9 +3,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertUsername, decodePtyFrame, encodePtyFrame, isAgentId, isInsidePath, parseClientCommand, type AgentId, type ChatMeta, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch } from "@engineroom/protocol";
+import { assertUsername, decodePtyFrame, encodePtyFrame, isAgentId, isInsidePath, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
+import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
@@ -19,11 +20,12 @@ export interface HubOptions {
   cookieSecure: boolean;
   adminUser?: string;
   agentsFile?: string;
+  catalogFile?: string;
   adminCtl?: string;
   lookup?: (username: string) => LinuxUser | null;
   authenticate?: (username: string, password: string) => Promise<boolean>;
   listAccounts?: () => Account[];
-  runAdmin?: (action: "add" | "revoke", username: string, password?: string) => Promise<void>;
+  runAdmin?: (action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) => Promise<void>;
 }
 
 const failures = new Map<string, { count: number; reset: number }>();
@@ -38,6 +40,9 @@ interface RunnerCall {
   settings?: SettingsPatch;
   prompt?: string;
   enabled?: string[];
+  policy?: UserPolicy;
+  entries?: EnvEntry[];
+  repos?: CatalogEntry[];
 }
 
 export function createHub(options: HubOptions) {
@@ -47,10 +52,11 @@ export function createHub(options: HubOptions) {
     ((username: string, password: string) => pamAuthenticate(username, password, options.pamHelper));
   const adminUser = (options.adminUser || "").trim();
   const agentsFile = options.agentsFile || "";
+  const catalogFile = options.catalogFile || "";
   const accounts = options.listAccounts ?? (() => listAccounts());
   const runAdmin =
     options.runAdmin ??
-    ((action: "add" | "revoke", username: string, password?: string) =>
+    ((action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) =>
       runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password));
 
   const server = createServer((req, res) => {
@@ -114,7 +120,7 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (url.pathname === "/api/me" && req.method === "GET") {
-      sendJson(res, 200, profile(user));
+      sendJson(res, 200, await profile(user));
       return;
     }
     if (url.pathname.startsWith("/api/admin")) {
@@ -145,21 +151,32 @@ export function createHub(options: HubOptions) {
     }
     failures.delete(key);
     res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret), options.cookieSecure));
-    sendJson(res, 200, profile(user));
+    sendJson(res, 200, await profile(user));
   }
 
-  function profile(user: LinuxUser) {
+  async function profile(user: LinuxUser) {
+    const access = await loadAccess(user);
     return {
       username: user.username,
       home: user.home,
       admin: adminUser !== "" && user.username === adminUser,
-      agents: enabledAgentIds(loadAgentFlags(agentsFile)),
-      rawTerminal: loadRawTerminal(agentsFile),
+      agents: access.agents,
+      rawTerminal: access.rawTerminal,
     };
   }
 
-  function assertAgentEnabled(agent: AgentId) {
-    if (!loadAgentFlags(agentsFile)[agent]) throw new Error("invalid agent");
+  async function loadAccess(user: LinuxUser): Promise<{ agents: AgentId[]; rawTerminal: boolean }> {
+    const flags = loadAgentFlags(agentsFile);
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    return {
+      agents: policy.agents.filter((agent) => flags[agent]),
+      rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
+    };
+  }
+
+  async function assertAgentAllowed(user: LinuxUser, agent: AgentId) {
+    const access = await loadAccess(user);
+    if (!access.agents.includes(agent)) throw new Error("invalid agent");
   }
 
   async function admin(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
@@ -186,32 +203,93 @@ export function createHub(options: HubOptions) {
       sendJson(res, 201, { ok: true });
       return;
     }
-    if (parts[2] === "users" && parts[4] === "repositories" && parts.length === 5) {
-      const username = assertUsername(decodeURIComponent(parts[3] || ""));
-      const target = lookup(username);
-      if (!userMayLogin(target)) {
-        sendJson(res, 404, { error: "not found" });
+    if (parts[2] === "catalog" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, { repositories: loadCatalog(catalogFile) });
+      return;
+    }
+    if (parts[2] === "catalog" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { name?: unknown; url?: unknown };
+      const entry = addCatalogEntry(catalogFile, typeof body.name === "string" ? body.name : "", typeof body.url === "string" ? body.url : "");
+      sendJson(res, 201, entry);
+      return;
+    }
+    if (parts[2] === "catalog" && parts.length === 4 && req.method === "DELETE") {
+      sendJson(res, 200, { repositories: removeCatalogEntry(catalogFile, decodeURIComponent(parts[3] || "")) });
+      return;
+    }
+    if (parts[2] === "users" && parts.length === 4 && req.method === "GET") {
+      const target = managedUser(parts[3] || "");
+      const access = (await call(target, { type: "get_access" })) as UserAccess;
+      sendJson(res, 200, { username: target.username, home: target.home, uid: target.uid, ...access });
+      return;
+    }
+    if (parts[2] === "users" && parts.length === 5) {
+      const target = managedUser(parts[3] || "");
+      const action = parts[4];
+      if (action === "policy" && req.method === "PUT") {
+        const policy = parseUserPolicy(await readJson(req));
+        const flags = loadAgentFlags(agentsFile);
+        if (policy.agents.some((agent) => !flags[agent])) throw new Error("invalid agent");
+        sendJson(res, 200, await call(target, { type: "put_policy", policy }));
         return;
       }
-      if (req.method === "GET") {
+      if (action === "settings" && req.method === "PUT") {
+        const body = (await readJson(req)) as SettingsPatch;
+        if (body.defaultAgent) await assertAgentAllowed(target, body.defaultAgent);
+        sendJson(res, 200, await call(target, { type: "put_settings", settings: body }));
+        return;
+      }
+      if (action === "repositories" && req.method === "GET") {
         sendJson(res, 200, await call(target, { type: "list_repositories" }));
         return;
       }
-      if (req.method === "PUT") {
-        const body = (await readJson(req)) as { enabled?: unknown };
-        if (!Array.isArray(body.enabled)) throw new Error("invalid repositories");
-        sendJson(res, 200, await call(target, { type: "set_repositories", enabled: body.enabled as string[] }));
+      if (action === "repositories" && req.method === "PUT") {
+        const body = (await readJson(req)) as { ids?: unknown };
+        if (!Array.isArray(body.ids)) throw new Error("invalid repositories");
+        const catalog = loadCatalog(catalogFile);
+        const repos: CatalogEntry[] = [];
+        const seen = new Set<string>();
+        for (const id of body.ids) {
+          if (typeof id !== "string" || seen.has(id)) throw new Error("invalid repositories");
+          seen.add(id);
+          const entry = catalog.find((item) => item.id === id);
+          if (!entry) throw new Error("invalid repository");
+          repos.push(entry);
+        }
+        sendJson(res, 200, await call(target, { type: "sync_repositories", repos }));
+        return;
+      }
+      if (action === "env" && req.method === "GET") {
+        sendJson(res, 200, await call(target, { type: "get_env" }));
+        return;
+      }
+      if (action === "env" && req.method === "PUT") {
+        const body = (await readJson(req)) as { entries?: unknown };
+        sendJson(res, 200, await call(target, { type: "put_env", entries: parseEnvEntries(body.entries) }));
+        return;
+      }
+      if (action === "password" && req.method === "POST") {
+        if (target.username === adminUser) throw new Error("must not change this account");
+        const body = (await readJson(req)) as { password?: unknown };
+        await runAdmin("passwd", target.username, cleanPassword(body.password));
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (action === "remove" && req.method === "POST") {
+        if (target.username === adminUser) throw new Error("must not change this account");
+        await runAdmin("remove", target.username);
+        sendJson(res, 200, { ok: true });
         return;
       }
     }
-    if (parts[2] === "users" && parts[4] === "revoke" && parts.length === 5 && req.method === "POST") {
-      const username = assertUsername(decodeURIComponent(parts[3] || ""));
-      if (username === adminUser) throw new Error("must not change this account");
-      await runAdmin("revoke", username);
-      sendJson(res, 200, { ok: true });
-      return;
-    }
     sendJson(res, 404, { error: "not found" });
+  }
+
+  function managedUser(name: string): LinuxUser {
+    const username = assertUsername(decodeURIComponent(name));
+    const target = lookup(username);
+    if (!userMayLogin(target)) throw new Error("not found");
+    return target;
   }
 
   async function proxy(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
@@ -223,7 +301,7 @@ export function createHub(options: HubOptions) {
     if (parts[1] === "settings" && parts.length === 2 && req.method === "PUT") {
       const body = (await readJson(req)) as { settings?: SettingsPatch };
       const patch = (body.settings ?? body) as SettingsPatch;
-      if (patch.defaultAgent) assertAgentEnabled(patch.defaultAgent);
+      if (patch.defaultAgent) await assertAgentAllowed(user, patch.defaultAgent);
       sendJson(res, 200, await call(user, { type: "put_settings", settings: patch }));
       return;
     }
@@ -244,10 +322,10 @@ export function createHub(options: HubOptions) {
       const body = (await readJson(req)) as Record<string, unknown>;
       if (body.agent == null || body.agent === "") {
         const settings = (await call(user, { type: "get_settings" })) as Settings;
-        assertAgentEnabled(settings.defaultAgent);
+        await assertAgentAllowed(user, settings.defaultAgent);
       } else {
         if (!isAgentId(body.agent)) throw new Error("invalid agent");
-        assertAgentEnabled(body.agent);
+        await assertAgentAllowed(user, body.agent);
       }
       sendJson(
         res,
@@ -274,7 +352,7 @@ export function createHub(options: HubOptions) {
       const body = (await readJson(req)) as { prompt?: unknown };
       if (typeof body.prompt !== "string") throw new Error("prompt is empty");
       const detail = (await call(user, { type: "get_chat", chatId: parts[2]! })) as { chat: { agent: AgentId } };
-      assertAgentEnabled(detail.chat.agent);
+      await assertAgentAllowed(user, detail.chat.agent);
       sendJson(res, 202, await call(user, { type: "send", chatId: parts[2]!, prompt: body.prompt }));
       return;
     }
@@ -340,14 +418,26 @@ export function createHub(options: HubOptions) {
       return;
     }
     const command = parseClientCommand(JSON.parse(Buffer.from(rawBytes(data)).toString("utf8")));
+    if (
+      command.type === "get_policy" ||
+      command.type === "put_policy" ||
+      command.type === "get_env" ||
+      command.type === "put_env" ||
+      command.type === "get_access" ||
+      command.type === "sync_repositories" ||
+      command.type === "set_repositories"
+    ) {
+      throw new Error("unknown request");
+    }
     if (command.type === "prompt" || command.type === "send" || command.type === "pty_open" || command.type === "set_mode" || command.type === "set_model") {
       const detail = (await channel.request({ id: randomUUID(), type: "get_chat", chatId: command.chatId })) as { chat: { agent: AgentId } };
-      assertAgentEnabled(detail.chat.agent);
+      await assertAgentAllowed(user, detail.chat.agent);
     }
+    if (command.type === "pty_open" && !(await loadAccess(user)).rawTerminal) throw new Error("terminal is not enabled");
     if ((command.type === "list_sessions" || command.type === "import_session") && command.agent) {
-      assertAgentEnabled(command.agent);
+      await assertAgentAllowed(user, command.agent);
     }
-    if (command.type === "import_session" && !command.agent) assertAgentEnabled("cursor");
+    if (command.type === "import_session" && !command.agent) await assertAgentAllowed(user, "cursor");
     const result = await channel.request({ ...command, id: randomUUID() });
     if (command.type === "pty_open") held.add(command.chatId);
     if (command.type === "pty_close" || command.type === "pty_detach") held.delete(command.chatId);
@@ -450,7 +540,7 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 
 function statusFor(message: string): number {
   if (message.includes("not enabled")) return 403;
-  if (message.includes("invalid") || message.includes("empty") || message.includes("must")) return 400;
+  if (message.includes("invalid") || message.includes("empty") || message.includes("must") || message.includes("taken")) return 400;
   if (message.includes("not found") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;
   return 500;

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Create a Linux account or remove it from engineroom-users.
-# The hub is the only caller, via sudo. Password for add is one line on stdin.
+# Create a Linux account, change its password, or delete the account and keep the home.
+# The hub is the only caller, via sudo. Password for add and passwd is one line on stdin.
 set -euo pipefail
 
 action="${1:-}"
@@ -52,6 +52,26 @@ case "$action" in
     fi
     printf '%s:%s\n' "$user" "$password" | chpasswd
     usermod -aG engineroom-users "$user"
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    case "$home" in
+      /*/*)
+        if [[ -d "$home" && "$home" != "/root" ]]; then
+          chown -R "${user}:" "$home"
+        fi
+        ;;
+    esac
+    ;;
+  passwd)
+    IFS= read -r password || true
+    if [[ -z "${password}" || "$password" == *$'\n'* ]]; then
+      echo "password is empty" >&2
+      exit 1
+    fi
+    if ! id "$user" >/dev/null 2>&1; then
+      echo "not found" >&2
+      exit 1
+    fi
+    printf '%s:%s\n' "$user" "$password" | chpasswd
     ;;
   revoke)
     if ! id "$user" >/dev/null 2>&1; then
@@ -60,8 +80,20 @@ case "$action" in
     fi
     gpasswd -d "$user" engineroom-users
     ;;
+  remove)
+    if ! id "$user" >/dev/null 2>&1; then
+      echo "not found" >&2
+      exit 1
+    fi
+    uid="$(id -u "$user")"
+    systemctl stop "engineroom-runner@${user}.service" "engineroom-runner@${user}.socket" || true
+    if [[ -n "$uid" ]]; then
+      pkill -KILL -u "$uid" || true
+    fi
+    userdel "$user"
+    ;;
   *)
-    echo "usage: engineroom-admin add|revoke USER" >&2
+    echo "usage: engineroom-admin add|passwd|revoke|remove USER" >&2
     exit 1
     ;;
 esac

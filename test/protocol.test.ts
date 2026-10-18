@@ -1,17 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   applySettings,
+  assertGitUrl,
   DEFAULT_SETTINGS,
   isInsidePath,
   loginAllowed,
+  parseCatalogEntries,
+  parseEnvEntries,
   parseClientCommand,
   parseRunnerRequest,
+  parseUserPolicy,
   socketPathForUser,
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
-import { claudeArgs, cursorArgs, piArgs } from "../apps/runner/src/cli.ts";
+import { childEnv, claudeArgs, cursorArgs, piArgs } from "../apps/runner/src/cli.ts";
+import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
 test("login is limited to real user accounts in the group", () => {
@@ -62,6 +70,41 @@ test("runner requests reject a chat id that is not a uuid", () => {
   assert.throws(() => parseRunnerRequest({ id: "7", type: "pty_open", chatId: "11111111-1111-1111-1111-111111111111", cols: 0, rows: 24 }));
   const command = parseClientCommand({ type: "prompt", chatId: "11111111-1111-1111-1111-111111111111", prompt: "hi" });
   assert.equal(command.type, "prompt");
+});
+
+test("catalog urls and names stay on a remote", () => {
+  assert.equal(assertGitUrl("https://github.com/org/repo.git"), "https://github.com/org/repo.git");
+  assert.equal(assertGitUrl("ssh://git@github.com/org/repo.git"), "ssh://git@github.com/org/repo.git");
+  assert.equal(assertGitUrl("git@github.com:org/repo.git"), "git@github.com:org/repo.git");
+  assert.throws(() => assertGitUrl("file:///tmp/repo.git"));
+  assert.throws(() => assertGitUrl("https://user:secret@github.com/org/repo.git"));
+  assert.throws(() => assertGitUrl("ext::sh -c evil"));
+  assert.throws(() => parseCatalogEntries([{ id: "11111111-1111-1111-1111-111111111111", name: ".hidden", url: "https://github.com/org/repo.git" }]));
+  const policy = parseUserPolicy({ agents: ["cursor"], rawTerminal: false, binaries: { cursor: "/usr/bin/agent" } });
+  assert.deepEqual(policy.agents, ["cursor"]);
+  assert.equal(policy.rawTerminal, false);
+  assert.throws(() => parseUserPolicy({ agents: [], rawTerminal: true }));
+  assert.throws(() => parseEnvEntries([{ key: "HOME", value: "ok\nno" }]));
+  const rewritten = applyEnvEntries("# keep\nOLD=1\nANTHROPIC_API_KEY=before\n", [{ key: "ANTHROPIC_API_KEY", value: "secret" }]);
+  assert.match(rewritten, /# keep/);
+  assert.equal(rewritten.includes("OLD="), false);
+  assert.match(rewritten, /ANTHROPIC_API_KEY=secret/);
+});
+
+test("child env takes ~/.env values except identity and loader variables", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-env-"));
+  try {
+    await writeFile(path.join(home, ".env"), "HOME=/tmp/elsewhere\nPATH=/tmp/bin\nLD_PRELOAD=/tmp/lib.so\nLISTEN_FDS=3\nANTHROPIC_API_KEY=secret\nCUSTOM=1\n");
+    const env = childEnv({ PATH: "/usr/bin" }, home);
+    assert.equal(env.HOME, home);
+    assert.equal(env.PATH?.startsWith("/tmp/bin"), false);
+    assert.equal(env.LD_PRELOAD, undefined);
+    assert.equal(env.LISTEN_FDS, undefined);
+    assert.equal(env.ANTHROPIC_API_KEY, "secret");
+    assert.equal(env.CUSTOM, "1");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

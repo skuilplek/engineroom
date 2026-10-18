@@ -68,21 +68,26 @@ export function SettingsView({ agents }: { agents: AgentId[] }) {
       </label>
       <details>
         <summary>CLI paths</summary>
-        {agents.map((agent) => (
-          <label key={agent}>
-            {agentLabel(agent)}
-            <input
-              value={settings.binaries[agent] || ""}
-              placeholder="Absolute path, or blank to use PATH"
-              onChange={(event) =>
-                setSettings({
-                  ...settings,
-                  binaries: { ...settings.binaries, [agent]: event.target.value },
-                })
-              }
-            />
-          </label>
-        ))}
+        {agents.map((agent) => {
+          const locked = settings.lockedBinaries?.includes(agent) ?? false;
+          return (
+            <label key={agent}>
+              {agentLabel(agent)}
+              <input
+                value={settings.binaries[agent] || ""}
+                placeholder="Absolute path, or blank to use PATH"
+                disabled={locked}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    binaries: { ...settings.binaries, [agent]: event.target.value },
+                  })
+                }
+              />
+              {locked && <span className="muted">Set by the administrator</span>}
+            </label>
+          );
+        })}
       </details>
       <p className="alert" role="alert">{error}</p>
       {saved && <p className="muted">{saved}</p>}

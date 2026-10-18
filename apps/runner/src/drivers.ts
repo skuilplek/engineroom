@@ -10,6 +10,7 @@ import {
   runCapture,
   runCli,
 } from "./cli.ts";
+import { binaryFor, loadPolicy } from "./policy.ts";
 
 export interface DriverContext {
   home: string;
@@ -38,7 +39,8 @@ export function defaultDrivers(): Record<AgentId, AgentDriver> {
 
 async function prepare(agent: AgentId, ctx: DriverContext) {
   const env = childEnv(ctx.env ?? process.env, ctx.home);
-  const binary = await resolveBinary(ctx.settings.binaries[agent], binaryNames(agent), env);
+  const policy = await loadPolicy(ctx.home);
+  const binary = await resolveBinary(binaryFor(policy, ctx.settings, agent), binaryNames(agent), env);
   return { env, binary };
 }
 
