@@ -1375,3 +1375,57 @@ test("the administrator can read another user's chats and transcripts", async ()
   }
 });
 
+test("an agent command in the person's home counts as installed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-home-agent-"));
+  const home = path.join(root, "home");
+  const bin = path.join(home, ".local", "bin");
+  const agentsFile = path.join(root, "agents.json");
+  const socketDir = path.join(root, "socks");
+  await mkdir(bin, { recursive: true });
+  await mkdir(socketDir);
+  await writeFile(path.join(bin, "agent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
+  const uid = process.getuid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const runner = await startRunner({ home, socketPath: socketPathForUser(socketDir, "alice"), peerCheck: () => undefined });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("home-agent-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    commandDirs: [path.join(root, "empty")],
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const login = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (login.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const listed = await fetch(`${base}/api/admin/agents`, { headers: { Cookie: cookie! } });
+    assert.equal(listed.status, 200);
+    const body = (await listed.json()) as { agents: { id: string; available: boolean; path: string | null }[] };
+    const cursor = body.agents.find((agent) => agent.id === "cursor");
+    assert.equal(cursor?.available, true);
+    assert.equal(cursor?.path, path.join(bin, "agent"));
+  } finally {
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

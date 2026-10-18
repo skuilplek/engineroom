@@ -309,6 +309,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return applyModel(request.chatId, request.modelId);
       case "probe_agent":
         return probeAgent(request.agent);
+      case "resolve_commands":
+        return resolveCommands(request.names);
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -362,6 +364,20 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     if (!options) return;
     const allowed = kind === "mode" ? options.modes : options.models;
     if (!allowed.includes(id)) throw new Error(kind === "mode" ? "invalid mode" : "invalid model");
+  }
+
+  async function resolveCommands(names: string[]) {
+    const env = childEnv(process.env, home);
+    const commands = [];
+    for (const name of names) {
+      try {
+        const found = await resolveBinary(path.isAbsolute(name) ? name : undefined, [name], env);
+        commands.push({ name, path: found });
+      } catch {
+        commands.push({ name, path: null });
+      }
+    }
+    return { commands };
   }
 
   async function probeAgent(agent: AgentId) {

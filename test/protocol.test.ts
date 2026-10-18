@@ -188,6 +188,9 @@ test("policy options stay optional and narrow the offered catalog", () => {
   assert.equal(probed.type, "probe_agent");
   assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "Nope" }));
   assert.equal(parseRunnerRequest({ id: "3", type: "probe_agent", agent: "codex" }).type, "probe_agent");
+  const resolved = parseRunnerRequest({ id: "4", type: "resolve_commands", names: ["agent", "agent", "/usr/local/bin/codex"] });
+  if (resolved.type === "resolve_commands") assert.deepEqual(resolved.names, ["agent", "/usr/local/bin/codex"]);
+  assert.throws(() => parseRunnerRequest({ id: "5", type: "resolve_commands", names: [] }));
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

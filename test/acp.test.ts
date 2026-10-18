@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -91,6 +91,51 @@ test("an ACP session streams chunks and can import a CLI session", async () => {
       afterTerm.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("out:term-out-✓:missing:1")),
       true,
     );
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve_commands finds a binary on the user path", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-which-"));
+  const sock = path.join(home, "runner.sock");
+  const bin = path.join(home, ".local", "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(path.join(bin, "agent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const runner = await startRunner({ home, socketPath: sock, peerCheck: () => undefined });
+  try {
+    const found = await once(sock, { id: "w", type: "resolve_commands", names: ["agent", "missing-agent"] });
+    const commands = (found.result as { commands: { name: string; path: string | null }[] }).commands;
+    assert.equal(commands.find((item) => item.name === "agent")?.path, path.join(bin, "agent"));
+    assert.equal(commands.find((item) => item.name === "missing-agent")?.path, null);
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a missing agent session starts a new one instead of failing the turn", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-acp-missing-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    await once(sock, { id: "im", type: "import_session", agent: "cursor", agentSessionId: "missing", workspace: home });
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p", type: "prompt", chatId, prompt: "continue" });
+    await live.next((message) => message.event?.type === "done");
+    const finished = await getChat(home, chatId, false);
+    assert.equal(finished.chat.agentSessionId, "fake-session");
+    assert.equal(finished.transcript.some((entry) => entry.kind === "error"), false);
+    assert.equal(finished.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("hello")), true);
   } finally {
     live.close();
     await runner.close();

@@ -27,6 +27,10 @@ async function handle(msg) {
     return reply(msg.id, sessionBody("fake-session"));
   }
   if (msg.method === "session/load") {
+    if (msg.params?.sessionId === "missing") {
+      process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params" } })}\n`);
+      return;
+    }
     notify("session/update", {
       sessionId: msg.params.sessionId,
       update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "earlier" } },

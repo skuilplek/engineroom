@@ -89,15 +89,26 @@ export class AcpSession {
     if (method) await rpcTimeout(this.rpc.request("authenticate", { methodId: method }));
     if (this.start.needsResync) this.suppress = false;
     else this.suppress = Boolean(this.start.sessionId);
-    const created = this.start.sessionId
-      ? ((await rpcTimeout(
+    const openNew = () =>
+      rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers: [] })) as Promise<Record<string, unknown>>;
+    let created: Record<string, unknown>;
+    if (this.start.sessionId) {
+      try {
+        created = (await rpcTimeout(
           this.rpc.request("session/load", {
             sessionId: this.start.sessionId,
             cwd: this.start.cwd,
             mcpServers: [],
           }),
-        )) as Record<string, unknown>)
-      : ((await rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers: [] }))) as Record<string, unknown>);
+        )) as Record<string, unknown>;
+      } catch {
+        // The saved agent session can disappear after an upgrade. Continue in a new one.
+        this.suppress = false;
+        created = await openNew();
+      }
+    } else {
+      created = await openNew();
+    }
     this.suppress = false;
     this.sessionId = typeof created.sessionId === "string" ? created.sessionId : this.start.sessionId;
     if (!this.sessionId) throw new Error(stderr.trim() || "agent did not open a session");

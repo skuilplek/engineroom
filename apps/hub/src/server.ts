@@ -61,6 +61,7 @@ interface RunnerCall {
   kind?: "file" | "dir";
   content?: string;
   visibility?: FileVisibility;
+  names?: string[];
 }
 
 export function createHub(options: HubOptions) {
@@ -215,7 +216,7 @@ export function createHub(options: HubOptions) {
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
-    const listed = await listAgents(agentsFile, commandDirs);
+    const listed = await visibleAgents(user);
     const offerable = new Set(offeredAgentIds(flags, listed));
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
@@ -295,7 +296,18 @@ export function createHub(options: HubOptions) {
     }
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[2] === "overview" && parts.length === 3 && req.method === "GET") {
-      sendJson(res, 200, await serverOverview({ configFile: checksFile, commandDirs }));
+      const overview = await serverOverview({ configFile: checksFile, commandDirs });
+      const resolved = await resolveCommands(
+        user,
+        overview.commands.filter((command) => !command.available).map((command) => command.name),
+      );
+      sendJson(res, 200, {
+        ...overview,
+        commands: overview.commands.map((command) => {
+          const found = resolved.get(command.name);
+          return found ? { ...command, available: true, path: found } : command;
+        }),
+      });
       return;
     }
     if (parts[2] === "branding" && parts.length === 3 && req.method === "PUT") {
@@ -305,13 +317,13 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "GET") {
-      sendJson(res, 200, await agentState());
+      sendJson(res, 200, await agentState(user));
       return;
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
       const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body), fileManagerFrom(body), fileEditorFrom(body));
-      const listed = await listAgents(agentsFile, commandDirs);
+      const listed = await visibleAgents(user);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
         rawTerminal: loadRawTerminal(agentsFile),
@@ -326,13 +338,13 @@ export function createHub(options: HubOptions) {
       const body = (await readJson(req)) as { label?: unknown; binary?: unknown };
       addCustomAgent(agentsFile, parseAgentLabel(body.label), parseAgentCommand(body.binary));
       await syncAgentCatalog(user).catch(() => undefined);
-      sendJson(res, 201, await agentState());
+      sendJson(res, 201, await agentState(user));
       return;
     }
     if (parts[2] === "agents" && parts[3] === "custom" && parts.length === 5 && req.method === "DELETE") {
       removeCustomAgent(agentsFile, decodeURIComponent(parts[4] || ""));
       await syncAgentCatalog(user).catch(() => undefined);
-      sendJson(res, 200, await agentState());
+      sendJson(res, 200, await agentState(user));
       return;
     }
     if (parts[2] === "agent-options" && parts.length === 3 && req.method === "GET") {
@@ -347,7 +359,7 @@ export function createHub(options: HubOptions) {
       const agent = decodeURIComponent(parts[3] || "");
       if (!isAgentId(agent) || !loadAgentFlags(agentsFile)[agent]) throw new Error("invalid agent");
       if (!isBuiltinAgent(agent)) {
-        const listed = await listAgents(agentsFile, commandDirs);
+        const listed = await visibleAgents(user);
         if (!listed.some((item) => item.id === agent && item.available)) throw new Error("invalid agent");
       }
       await syncAgentCatalog(user);
@@ -408,7 +420,7 @@ export function createHub(options: HubOptions) {
       if (action === "policy" && req.method === "PUT") {
         const policy = restrictPolicy(parseUserPolicy(await readJson(req)), loadAgentOptions(agentOptionsFile));
         const flags = loadAgentFlags(agentsFile);
-        const listed = await listAgents(agentsFile, commandDirs);
+        const listed = await visibleAgents(target);
         const offerable = new Set(offeredAgentIds(flags, listed));
         if (policy.agents.some((agent) => !offerable.has(agent))) throw new Error("invalid agent");
         await syncAgentCatalog(target);
@@ -793,8 +805,8 @@ export function createHub(options: HubOptions) {
     await assertModelChoice(user, agent, model);
   }
 
-  async function agentState() {
-    const listed = await listAgents(agentsFile, commandDirs);
+  async function agentState(user: LinuxUser) {
+    const listed = await visibleAgents(user);
     return {
       agents: listed,
       rawTerminal: loadRawTerminal(agentsFile),
@@ -802,6 +814,36 @@ export function createHub(options: HubOptions) {
       fileManager: loadFileManager(agentsFile),
       fileEditor: loadFileEditor(agentsFile),
     };
+  }
+
+  async function visibleAgents(user: LinuxUser) {
+    const listed = await listAgents(agentsFile, commandDirs);
+    const resolved = await resolveCommands(
+      user,
+      [...new Set(listed.filter((agent) => !agent.available).map((agent) => agent.binary))],
+    );
+    if (resolved.size === 0) return listed;
+    return listed.map((agent) => {
+      const found = resolved.get(agent.binary);
+      if (!found || agent.available) return agent;
+      return { ...agent, available: true, path: found };
+    });
+  }
+
+  async function resolveCommands(user: LinuxUser, names: string[]): Promise<Map<string, string>> {
+    if (names.length === 0) return new Map();
+    try {
+      const result = (await call(user, { type: "resolve_commands", names })) as {
+        commands?: { name?: string; path?: string | null }[];
+      };
+      const found = new Map<string, string>();
+      for (const item of result.commands ?? []) {
+        if (item.name && item.path) found.set(item.name, item.path);
+      }
+      return found;
+    } catch {
+      return new Map();
+    }
   }
 
   function syncAgentCatalog(user: LinuxUser) {

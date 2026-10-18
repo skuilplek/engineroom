@@ -336,6 +336,7 @@ export type RunnerRequest =
   | { id: string; type: "list_sessions"; agent?: AgentId }
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
   | { id: string; type: "probe_agent"; agent: AgentId }
+  | { id: string; type: "resolve_commands"; names: string[] }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
@@ -389,6 +390,17 @@ export function parseAgentCommand(value: unknown): string {
     return command;
   }
   throw new Error("invalid agent command. Use a command name or an absolute path");
+}
+
+function parseCommandNames(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 40) throw new Error("invalid command");
+  const names: string[] = [];
+  for (const item of value) {
+    const name = parseAgentCommand(item);
+    if (!names.includes(name)) names.push(name);
+  }
+  if (names.length === 0) throw new Error("invalid command");
+  return names;
 }
 
 export function parseAgentCatalog(value: unknown): AgentDefinition[] {
@@ -588,6 +600,8 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "probe_agent":
       if (!isAgentId(body.agent)) throw new Error("invalid agent");
       return { id: body.id, type: "probe_agent", agent: body.agent };
+    case "resolve_commands":
+      return { id: body.id, type: "resolve_commands", names: parseCommandNames(body.names) };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "set_model":
