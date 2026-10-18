@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import type { AgentId, ChatMeta } from "@engineroom/protocol";
+import { isTheme, type AgentId, type ChatMeta } from "@engineroom/protocol";
 import { listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { StartView } from "./chat/StartView.tsx";
@@ -22,7 +22,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (session?.theme === "light" || session?.theme === "dark") rememberTheme(session.theme);
+    if (session && isTheme(session.theme)) rememberTheme(session.theme);
   }, [session?.theme]);
 
   if (!ready) return <main className="login-screen"><p className="muted">Loading…</p></main>;
@@ -141,7 +141,7 @@ function Shell({
 
   useEffect(() => {
     if (view === "settings") return;
-    if (session.theme === "light" || session.theme === "dark") applyTheme(session.theme);
+    if (isTheme(session.theme)) applyTheme(session.theme);
   }, [view, session.theme]);
 
   useEffect(() => {

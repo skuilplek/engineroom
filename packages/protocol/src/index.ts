@@ -14,10 +14,12 @@ export const CHAT_ID_RE =
 
 export type PermissionPolicy = "ask" | "allow" | "edits";
 
-export type ThemePreference = "dark" | "light";
+export const THEMES = ["dark", "light", "haxor", "midnight", "engine"] as const;
+
+export type ThemePreference = (typeof THEMES)[number];
 
 export function isTheme(value: unknown): value is ThemePreference {
-  return value === "dark" || value === "light";
+  return typeof value === "string" && (THEMES as readonly string[]).includes(value);
 }
 
 export interface Settings {

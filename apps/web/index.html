@@ -8,7 +8,8 @@
     <script>
       try {
         var stored = localStorage.getItem("engineroom-theme");
-        if (stored === "light" || stored === "dark") document.documentElement.setAttribute("data-theme", stored);
+        var themes = ["dark", "light", "haxor", "midnight", "engine"];
+        if (stored && themes.indexOf(stored) !== -1) document.documentElement.setAttribute("data-theme", stored);
       } catch (e) {}
     </script>
   </head>

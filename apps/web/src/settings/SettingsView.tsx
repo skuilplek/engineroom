@@ -3,6 +3,7 @@ import type { AgentId, AgentOptionChoice, Settings, ThemePreference } from "@eng
 import { agentLabel } from "@engineroom/protocol";
 import { getSettings, saveSettings } from "../api.ts";
 import { message } from "../format.ts";
+import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
 export function SettingsView({
   agents,
@@ -30,7 +31,7 @@ export function SettingsView({
         defaultAgent: agent,
         defaultModel,
         permission: next.permission || "ask",
-        theme: next.theme === "light" ? "light" : "dark",
+        theme: normalizeTheme(next.theme),
       });
     }).catch((err) => setError(message(err)));
   }, [agents, options]);
@@ -43,8 +44,9 @@ export function SettingsView({
     setError("");
     try {
       const savedSettings = await saveSettings(settings);
-      setSettings(savedSettings);
-      onSaved(savedSettings.theme === "light" ? "light" : "dark");
+      const nextTheme = normalizeTheme(savedSettings.theme);
+      setSettings({ ...savedSettings, theme: nextTheme });
+      onSaved(nextTheme);
       setSaved("Saved");
     } catch (err) {
       setError(message(err));
@@ -60,26 +62,81 @@ export function SettingsView({
     setSettings({ ...settings, defaultAgent: agent, defaultModel });
   }
 
+  function selectTheme(theme: ThemePreference) {
+    if (!settings) return;
+    setSettings({ ...settings, theme });
+    onTheme(theme);
+  }
+
   if (!settings) return <p className="settings muted">Loading settings…</p>;
   const models = options[settings.defaultAgent]?.models ?? [];
+  const activeTheme = normalizeTheme(settings.theme);
+
   return (
     <form className="settings" onSubmit={submit}>
       <p className="eyebrow">Customize</p>
       <h2>Appearance</h2>
-      <label>
-        Theme
-        <select
-          value={settings.theme === "light" ? "light" : "dark"}
-          onChange={(event) => {
-            const theme: ThemePreference = event.target.value === "light" ? "light" : "dark";
-            setSettings({ ...settings, theme });
-            onTheme(theme);
-          }}
-        >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-      </label>
+      <p className="muted theme-lede">
+        Choose a prebuilt theme for your workspace. Select any simple or elaborate theme and save to make it your default.
+      </p>
+      <div className="theme-grid" role="radiogroup" aria-label="Theme">
+        {THEME_CATALOG.map((item) => {
+          const selected = activeTheme === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={selected ? `theme-card theme-card-${item.id} active` : `theme-card theme-card-${item.id}`}
+              onClick={() => selectTheme(item.id)}
+            >
+              <div
+                className="theme-preview"
+                style={{
+                  background: item.swatches.bg,
+                  borderColor: item.swatches.border,
+                }}
+                aria-hidden="true"
+              >
+                <div
+                  className="theme-preview-sidebar"
+                  style={{
+                    background: item.swatches.sidebar,
+                    borderRightColor: item.swatches.border,
+                  }}
+                >
+                  <span className="theme-preview-dot" style={{ background: item.swatches.accent }} />
+                  <span className="theme-preview-bar" style={{ background: item.swatches.ink, opacity: 0.7 }} />
+                  <span className="theme-preview-bar short" style={{ background: item.swatches.ink, opacity: 0.35 }} />
+                </div>
+                <div className="theme-preview-stage">
+                  <div
+                    className="theme-preview-hud"
+                    style={{
+                      background: item.swatches.panel,
+                      borderColor: item.swatches.border,
+                      boxShadow: item.tier === "elaborate" ? `0 0 10px -2px ${item.swatches.accent}` : "none",
+                    }}
+                  >
+                    <span className="theme-preview-title" style={{ background: item.swatches.ink }} />
+                    <span className="theme-preview-accent" style={{ background: item.swatches.accent }} />
+                  </div>
+                </div>
+              </div>
+              <div className="theme-meta">
+                <div className="theme-title-row">
+                  <strong>{item.name}</strong>
+                  <span className={item.tier === "elaborate" ? "theme-badge elaborate" : "theme-badge"}>
+                    {item.default ? "Default" : item.tier}
+                  </span>
+                </div>
+                <span className="theme-tagline">{item.tagline}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
       <h2>Defaults for new chats</h2>
       <label>
         Default agent

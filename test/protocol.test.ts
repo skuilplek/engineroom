@@ -8,6 +8,7 @@ import {
   assertGitUrl,
   DEFAULT_SETTINGS,
   isInsidePath,
+  isTheme,
   loginAllowed,
   parseCatalogEntries,
   parseEnvEntries,
@@ -17,6 +18,7 @@ import {
   parseSettingsPatch,
   parseUserPolicy,
   socketPathForUser,
+  THEMES,
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
@@ -165,10 +167,19 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(next.defaultModel, "sonnet");
   assert.equal(next.binaries.claude, undefined);
   assert.equal(next.theme, "dark");
-  const themed = applySettings(next, { theme: "light" });
-  assert.equal(themed.theme, "light");
-  assert.equal(applySettings(themed, { defaultModel: "opus" }).theme, "light");
+  assert.deepEqual(THEMES, ["dark", "light", "haxor", "midnight", "engine"]);
+  for (const theme of THEMES) {
+    assert.equal(isTheme(theme), true);
+    assert.equal(parseSettingsPatch({ theme }).theme, theme);
+    assert.equal(applySettings(next, { theme }).theme, theme);
+  }
+  const themed = applySettings(next, { theme: "engine" });
+  assert.equal(themed.theme, "engine");
+  assert.equal(applySettings(themed, { defaultModel: "opus" }).theme, "engine");
+  assert.equal(isTheme("sepia"), false);
+  assert.equal(isTheme(""), false);
   assert.throws(() => parseSettingsPatch({ theme: "sepia" }), /invalid theme/);
+  assert.throws(() => parseSettingsPatch({ theme: "custom" }), /invalid theme/);
 });
 
 test("session cookies are signed and expire", () => {
