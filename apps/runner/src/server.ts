@@ -398,9 +398,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         onEvent: (event) => {
           if (event.type === "done" && event.agentSessionId) sessionId = event.agentSessionId;
           if (event.type === "title" && event.text.trim()) {
-            void updateChat(home, chatId, { title: event.text.trim().slice(0, 120) });
+            void updateChat(home, chatId, { title: event.text.trim().slice(0, 120) }).catch(() => undefined);
           }
-          if (event.type === "mode") void updateChat(home, chatId, { mode: event.modeId });
+          if (event.type === "mode") void updateChat(home, chatId, { mode: event.modeId }).catch(() => undefined);
           publishEvent(event);
         },
       };

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   AGENTS,
@@ -156,7 +156,20 @@ export async function getChat(home: string, chatId: string, running: boolean): P
   return { chat, transcript };
 }
 
-export async function updateChat(home: string, chatId: string, patch: Partial<ChatMeta>): Promise<ChatMeta> {
+const chatWrites = new Map<string, Promise<void>>();
+
+export function updateChat(home: string, chatId: string, patch: Partial<ChatMeta>): Promise<ChatMeta> {
+  const key = `${home}\0${chatId}`;
+  const previous = chatWrites.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(() => writeChatPatch(home, chatId, patch));
+  const tracked = run.then(() => undefined, () => undefined);
+  chatWrites.set(key, tracked);
+  return run.finally(() => {
+    if (chatWrites.get(key) === tracked) chatWrites.delete(key);
+  });
+}
+
+async function writeChatPatch(home: string, chatId: string, patch: Partial<ChatMeta>): Promise<ChatMeta> {
   const chat = await readMeta(home, chatId);
   const next: ChatMeta = {
     ...chat,
@@ -259,9 +272,14 @@ function chatDir(home: string, chatId: string): string {
 }
 
 async function writeAtomic(file: string, contents: string): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`;
-  await writeFile(tmp, contents, { mode: 0o600 });
-  await rename(tmp, file);
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, contents, { mode: 0o600 });
+    await rename(tmp, file);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function newPiSessionId(): string {

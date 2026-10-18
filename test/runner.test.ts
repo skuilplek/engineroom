@@ -9,7 +9,7 @@ import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { syncGrantedRepositories } from "../apps/runner/src/repos.ts";
-import { createChat, listChats, listRepositories, setEnabledRepositories } from "../apps/runner/src/store.ts";
+import { createChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import "./peercred-helper.ts";
 
@@ -30,6 +30,24 @@ test("workspaces reject a symlink that leaves the home directory", async () => {
   assert.equal(listed.some((entry) => entry.name === "work"), true);
   await rm(home, { recursive: true, force: true });
   await rm(outside, { recursive: true, force: true });
+});
+
+test("overlapping chat saves keep both fields", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-chat-save-"));
+  try {
+    const chat = await createChat(home, { title: "New chat" });
+    await Promise.all([
+      updateChat(home, chat.id, { title: "Saved title" }),
+      updateChat(home, chat.id, { model: "custom-model" }),
+      updateChat(home, chat.id, { mode: "agent" }),
+    ]);
+    const saved = (await listChats(home, new Set())).find((item) => item.id === chat.id);
+    assert.equal(saved?.title, "Saved title");
+    assert.equal(saved?.model, "custom-model");
+    assert.equal(saved?.mode, "agent");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("an empty catalog grant keeps a local repository enabled", async () => {
