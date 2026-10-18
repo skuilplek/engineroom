@@ -4,6 +4,20 @@ Engineroom is a self-hosted web UI for running AI coding agents on a Linux serve
 
 This is a multi-user server, not a desktop app. A checkout of this repository may be named `agent-wrapper`; the product, systemd units, and binaries are Engineroom.
 
+## Screenshots
+
+Chat with an agent, with the repository file list open:
+
+![Chat transcript beside the repository file list](docs/chat.png)
+
+File editor for a file in that repository:
+
+![Syntax-highlighted file editor](docs/file_editor.png)
+
+Per-user settings for theme, default agent, model, and tool approval:
+
+![Settings for appearance and defaults for new chats](docs/dashboard.png)
+
 ## Features
 
 - Web chat with streaming replies, modes, and models reported by each agent
