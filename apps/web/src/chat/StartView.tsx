@@ -24,6 +24,7 @@ export function StartView({
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const [agent, setAgent] = useState<AgentId>(agents[0] || "cursor");
+  const [mode, setMode] = useState("");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
@@ -32,8 +33,10 @@ export function StartView({
   useEffect(() => {
     getSettings().then((next) => {
       const chosen = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent;
+      const modes = options[chosen]?.modes ?? [];
       const models = options[chosen]?.models ?? [];
       setAgent(chosen);
+      setMode(modes[0]?.id || "");
       setModel(models.some((item) => item.id === next.defaultModel) ? next.defaultModel : models[0]?.id || "");
     }).catch((err) => setError(message(err)));
   }, [agents, options]);
@@ -42,6 +45,7 @@ export function StartView({
     box.current?.focus();
   }, [workspace]);
 
+  const modes = options[agent]?.modes ?? [];
   const models = options[agent]?.models ?? [];
 
   async function submit(event: FormEvent) {
@@ -51,7 +55,12 @@ export function StartView({
     setBusy(true);
     setError("");
     try {
-      const chat = await createChat({ agent, model: models.length > 0 ? model : "", workspace });
+      const chat = await createChat({
+        agent,
+        mode: modes.length > 0 ? mode : "",
+        model: models.length > 0 ? model : "",
+        workspace,
+      });
       onStarted(chat, text);
     } catch (err) {
       setError(message(err));
@@ -60,8 +69,10 @@ export function StartView({
   }
 
   function chooseAgent(next: AgentId) {
+    const availableModes = options[next]?.modes ?? [];
     const available = options[next]?.models ?? [];
     setAgent(next);
+    setMode(availableModes.some((item) => item.id === mode) ? mode : availableModes[0]?.id || "");
     setModel(available.some((item) => item.id === model) ? model : available[0]?.id || "");
   }
 
@@ -102,6 +113,14 @@ export function StartView({
             <label className="chip">
               <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
                 {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
+              </select>
+            </label>
+          )}
+          {modes.length > 0 && (
+            <label className="chip">
+              Mode
+              <select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value)}>
+                {modes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </label>
           )}

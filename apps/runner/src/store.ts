@@ -105,7 +105,7 @@ export async function setEnabledRepositories(home: string, requested: string[], 
 
 export async function createChat(
   home: string,
-  input: { agent?: AgentId; model?: string; workspace?: string; title?: string },
+  input: { agent?: AgentId; mode?: string; model?: string; workspace?: string; title?: string },
 ): Promise<ChatMeta> {
   const settings = await loadSettings(home);
   const workspace = await resolveChatWorkspace(home, input.workspace);
@@ -115,6 +115,7 @@ export async function createChat(
     id: randomUUID(),
     title: input.title?.trim() || "New chat",
     agent,
+    ...(input.mode ? { mode: input.mode } : {}),
     model: input.model ?? settings.defaultModel,
     workspace,
     agentSessionId: agent === "pi" ? newPiSessionId() : null,

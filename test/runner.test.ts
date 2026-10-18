@@ -35,7 +35,10 @@ test("workspaces reject a symlink that leaves the home directory", async () => {
 test("overlapping chat saves keep both fields", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-chat-save-"));
   try {
-    const chat = await createChat(home, { title: "New chat" });
+    const chat = await createChat(home, { title: "New chat", mode: "plan" });
+    assert.equal(chat.mode, "plan");
+    const created = (await listChats(home, new Set())).find((item) => item.id === chat.id);
+    assert.equal(created?.mode, "plan");
     await Promise.all([
       updateChat(home, chat.id, { title: "Saved title" }),
       updateChat(home, chat.id, { model: "custom-model" }),

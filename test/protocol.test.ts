@@ -57,8 +57,13 @@ test("runner requests reject a chat id that is not a uuid", () => {
     type: "create_chat",
     agent: "cursor",
     model: "gpt",
+    mode: "plan",
   });
   assert.equal(request.type, "create_chat");
+  if (request.type === "create_chat") assert.equal(request.mode, "plan");
+  const blankMode = parseRunnerRequest({ id: "1b", type: "create_chat", mode: "" });
+  if (blankMode.type === "create_chat") assert.equal(blankMode.mode, "");
+  assert.throws(() => parseRunnerRequest({ id: "1c", type: "create_chat", mode: "bad mode" }));
   const listed = parseRunnerRequest({ id: "2", type: "list_repositories" });
   assert.equal(listed.type, "list_repositories");
   const enabled = parseRunnerRequest({ id: "3", type: "set_repositories", enabled: ["/home/alice/proj"] });

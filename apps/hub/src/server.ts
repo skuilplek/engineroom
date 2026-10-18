@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertRepoRelativePath, assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, saveAgentFlags, saveAppName } from "./agents.ts";
@@ -41,6 +41,7 @@ interface RunnerCall {
   type: RunnerRequest["type"];
   chatId?: string;
   agent?: AgentId;
+  mode?: string;
   model?: string;
   workspace?: string;
   title?: string;
@@ -215,6 +216,13 @@ export function createHub(options: HubOptions) {
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
       options: optionMap,
     };
+  }
+
+  async function assertCreateMode(user: LinuxUser, agent: AgentId, mode: string) {
+    if (!mode) return;
+    const access = await loadAccess(user);
+    const allowed = access.options[agent]?.modes ?? [];
+    if (!allowed.some((choice) => choice.id === mode)) throw new Error("invalid mode");
   }
 
   async function assertModelChoice(user: LinuxUser, agent: AgentId, model: string) {
@@ -469,12 +477,15 @@ export function createHub(options: HubOptions) {
       await assertAgentAllowed(user, agent);
       const model = body.model == null || body.model === "" ? "" : cleanModel(body.model);
       await assertModelChoice(user, agent, model);
+      const mode = body.mode == null || body.mode === "" ? "" : cleanMode(body.mode);
+      await assertCreateMode(user, agent, mode);
       sendJson(
         res,
         201,
         await call(user, {
           type: "create_chat",
           agent,
+          mode,
           model,
           workspace: body.workspace as string | undefined,
           title: body.title as string | undefined,

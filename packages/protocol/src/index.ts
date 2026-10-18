@@ -267,6 +267,7 @@ export type RunnerRequest =
       id: string;
       type: "create_chat";
       agent?: AgentId;
+      mode?: string;
       model?: string;
       workspace?: string;
       title?: string;
@@ -330,6 +331,11 @@ export function assertChatId(value: unknown): string {
     throw new Error("invalid chat id");
   }
   return value;
+}
+
+export function cleanMode(value: unknown): string {
+  if (value == null || value === "") return "";
+  return token(value, "mode");
 }
 
 export function cleanModel(value: unknown): string {
@@ -461,6 +467,7 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         id: body.id,
         type: "create_chat",
         agent,
+        mode: body.mode == null ? undefined : cleanMode(body.mode),
         model: body.model == null ? undefined : cleanModel(body.model),
         workspace: optionalString(body.workspace, "workspace", 4096),
         title: body.title == null ? undefined : cleanTitle(body.title),

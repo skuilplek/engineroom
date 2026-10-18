@@ -101,7 +101,7 @@ export function getChat(id: string) {
   return api<ChatDetail>(`/api/chats/${id}`);
 }
 
-export function createChat(input: { agent?: string; model?: string; workspace?: string; title?: string }) {
+export function createChat(input: { agent?: string; mode?: string; model?: string; workspace?: string; title?: string }) {
   return api<ChatMeta>("/api/chats", { method: "POST", body: JSON.stringify(input) });
 }
 
