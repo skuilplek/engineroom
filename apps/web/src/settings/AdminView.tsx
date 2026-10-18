@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   AGENTS,
   agentLabel,
@@ -29,6 +29,15 @@ import {
 } from "../api.ts";
 import { message } from "../format.ts";
 
+type AdminTab = "overview" | "agents" | "repositories" | "people";
+
+const TABS: { id: AdminTab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "agents", label: "Agents" },
+  { id: "repositories", label: "Repositories" },
+  { id: "people", label: "People" },
+];
+
 export function AdminView({
   session,
   onAgents,
@@ -50,6 +59,24 @@ export function AdminView({
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<AdminTab>("overview");
+
+  function openTab(next: AdminTab) {
+    setTab(next);
+    setError("");
+    setSaved("");
+  }
+
+  function onTabKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const index = TABS.findIndex((item) => item.id === tab);
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    const next = TABS[(index + step + TABS.length) % TABS.length]?.id;
+    if (!next) return;
+    openTab(next);
+    document.getElementById(`admin-tab-${next}`)?.focus();
+  }
 
   async function refreshUsers() {
     const next = await listAccounts();
@@ -139,103 +166,165 @@ export function AdminView({
     }
   }
 
+  const offered = AGENTS.filter((agent) => flags[agent]).map((agent) => agentLabel(agent));
+
   return (
-    <div className="settings">
-      <ServerPanel />
-      <form onSubmit={(event) => void saveAgentList(event)}>
-        <h2>Available agents</h2>
-        <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them.</p>
-        {AGENTS.map((agent) => (
-          <label className="check" key={agent}>
-            <input type="checkbox" checked={flags[agent]} onChange={() => toggle(agent)} />
-            {agentLabel(agent)}
-          </label>
-        ))}
-        <label className="check">
-          <input type="checkbox" checked={rawTerminal} onChange={() => setRawTerminal((value) => !value)} />
-          Raw terminal
-        </label>
-        <button className="primary" type="submit" disabled={busy}>Save agents</button>
-      </form>
-
-      <form onSubmit={(event) => void addRepo(event)}>
-        <h2>Repository catalog</h2>
-        <p className="muted">Add a git remote here, then grant it to a person. Granting clones it into their Sites directory. Removing it from the catalog leaves an existing checkout until you save that person again.</p>
-        <div className="repo-admin">
-          {catalog.map((entry) => (
-            <div className="account" key={entry.id}>
-              <div>
-                <strong>{entry.name}</strong>
-                <span>{entry.url}</span>
-              </div>
-              <button className="danger" type="button" disabled={busy} onClick={() => void dropRepo(entry.id)}>Remove</button>
-            </div>
+    <div className="settings admin-view">
+      <header className="admin-mast">
+        <div className="admin-tabs" role="tablist" aria-label="Admin" onKeyDown={onTabKey}>
+          {TABS.map((item) => (
+            <button
+              className={tab === item.id ? "admin-tab active" : "admin-tab"}
+              id={`admin-tab-${item.id}`}
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              aria-controls={`admin-panel-${item.id}`}
+              tabIndex={tab === item.id ? 0 : -1}
+              onClick={() => openTab(item.id)}
+            >
+              {item.label}
+            </button>
           ))}
-          {catalog.length === 0 && <p className="muted">No repositories in the catalog yet.</p>}
         </div>
-        <label>
-          Directory name
-          <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="widget" required />
-        </label>
-        <label>
-          Git URL
-          <input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://github.com/org/widget.git" required />
-        </label>
-        <button className="primary" type="submit" disabled={busy}>Add repository</button>
-      </form>
-
-      <section className="people">
-        <h2>People</h2>
-        <p className="muted">Choose a person to set their agents, terminal, repositories, environment, and password. Removing an account deletes the Linux user and keeps their home directory.</p>
-        <div className="accounts">
-          {accounts.map((account) => (
-            <div className={account.username === selected ? "account active" : "account"} key={account.username}>
-              <button className="account-pick" type="button" onClick={() => setSelected(account.username)} aria-pressed={account.username === selected}>
-                <strong>{account.username}</strong>
-                <span>{account.home}</span>
+        <p className="alert" role="alert">{error}</p>
+        {saved && <p className="admin-note" role="status">{saved}</p>}
+      </header>
+      <div className="admin-stage" role="tabpanel" id={`admin-panel-${tab}`} aria-labelledby={`admin-tab-${tab}`}>
+        {tab === "overview" && (
+          <div className="admin-overview">
+            <ServerPanel />
+            <div className="overview-links">
+              <button className="overview-link" type="button" onClick={() => openTab("agents")}>
+                <span>Agents</span>
+                <strong>{offered.length}</strong>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."}</span>
               </button>
-              {account.username === session.username && <span className="muted">Administrator</span>}
+              <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
+                <span>Repositories</span>
+                <strong>{catalog.length}</strong>
+                <span className="muted">{catalog.length === 0 ? "Nothing in the catalog yet." : "Ready to grant."}</span>
+              </button>
+              <button className="overview-link" type="button" onClick={() => openTab("people")}>
+                <span>People</span>
+                <strong>{accounts.length}</strong>
+                <span className="muted">{accounts.length === 0 ? "No accounts yet." : "Linux accounts on this machine."}</span>
+              </button>
             </div>
-          ))}
-          {accounts.length === 0 && <p className="muted">No accounts yet.</p>}
-        </div>
-        {selected && (
-          <PersonPanel
-            key={selected}
-            username={selected}
-            self={selected === session.username}
-            globalAgents={session.agents}
-            globalTerminal={session.rawTerminal}
-            catalog={catalog}
-            busy={busy}
-            onBusy={setBusy}
-            onError={setError}
-            onNote={setSaved}
-            onRemoved={async () => {
-              setSelected("");
-              await refreshUsers();
-            }}
-            onSaved={() => {
-              if (selected === session.username) onAccess();
-            }}
-          />
+          </div>
         )}
-        <form onSubmit={(event) => void addUser(event)}>
-          <h3>Add a person</h3>
-          <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
-          <label>
-            Username
-            <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
-          </label>
-          <label>
-            Password
-            <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-          </label>
-          <button className="primary" type="submit" disabled={busy}>Add user</button>
-        </form>
-      </section>
-      <p className="alert" role="alert">{error}</p>
-      {saved && <p className="muted">{saved}</p>}
+
+        {tab === "agents" && (
+          <form className="admin-pane" onSubmit={(event) => void saveAgentList(event)}>
+            <h2>Available agents</h2>
+            <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them.</p>
+            <div className="admin-checks">
+              {AGENTS.map((agent) => (
+                <label className="check" key={agent}>
+                  <input type="checkbox" checked={flags[agent]} onChange={() => toggle(agent)} />
+                  {agentLabel(agent)}
+                </label>
+              ))}
+              <label className="check">
+                <input type="checkbox" checked={rawTerminal} onChange={() => setRawTerminal((value) => !value)} />
+                Raw terminal
+              </label>
+            </div>
+            <button className="primary" type="submit" disabled={busy}>Save agents</button>
+          </form>
+        )}
+
+        {tab === "repositories" && (
+          <form className="admin-pane" onSubmit={(event) => void addRepo(event)}>
+            <h2>Repository catalog</h2>
+            <p className="muted">Add a git remote here, then grant it to a person. Granting clones it into their Sites directory. Removing it from the catalog leaves an existing checkout until you save that person again.</p>
+            <div className="repo-admin">
+              {catalog.map((entry) => (
+                <div className="account" key={entry.id}>
+                  <div>
+                    <strong>{entry.name}</strong>
+                    <span>{entry.url}</span>
+                  </div>
+                  <button className="danger" type="button" disabled={busy} onClick={() => void dropRepo(entry.id)}>Remove</button>
+                </div>
+              ))}
+              {catalog.length === 0 && <p className="muted">No repositories in the catalog yet.</p>}
+            </div>
+            <label>
+              Directory name
+              <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="widget" required />
+            </label>
+            <label>
+              Git URL
+              <input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://github.com/org/widget.git" required />
+            </label>
+            <button className="primary" type="submit" disabled={busy}>Add repository</button>
+          </form>
+        )}
+
+        {tab === "people" && (
+          <div className="admin-people-layout">
+            <section className="admin-pane" aria-label="People">
+              <h2>People</h2>
+              <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
+              <div className="accounts">
+                {accounts.map((account) => (
+                  <div className={account.username === selected ? "account active" : "account"} key={account.username}>
+                    <button className="account-pick" type="button" onClick={() => setSelected(account.username)} aria-pressed={account.username === selected}>
+                      <strong>{account.username}</strong>
+                      <span>{account.home}</span>
+                    </button>
+                    {account.username === session.username && <span className="muted">Administrator</span>}
+                  </div>
+                ))}
+                {accounts.length === 0 && <p className="muted">No accounts yet.</p>}
+              </div>
+              <form onSubmit={(event) => void addUser(event)}>
+                <h3>Add a person</h3>
+                <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
+                <label>
+                  Username
+                  <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
+                </label>
+                <label>
+                  Password
+                  <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+                </label>
+                <button className="primary" type="submit" disabled={busy}>Add user</button>
+              </form>
+            </section>
+            <section className="admin-pane admin-detail" aria-label="Person">
+              {selected ? (
+                <PersonPanel
+                  key={selected}
+                  username={selected}
+                  self={selected === session.username}
+                  globalAgents={session.agents}
+                  globalTerminal={session.rawTerminal}
+                  catalog={catalog}
+                  busy={busy}
+                  onBusy={setBusy}
+                  onError={setError}
+                  onNote={setSaved}
+                  onRemoved={async () => {
+                    setSelected("");
+                    await refreshUsers();
+                  }}
+                  onSaved={() => {
+                    if (selected === session.username) onAccess();
+                  }}
+                />
+              ) : (
+                <div className="admin-empty">
+                  <h2>No person selected</h2>
+                  <p className="muted">Choose a person to set their agents, terminal, repositories, environment, and password.</p>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -404,19 +493,31 @@ function PersonPanel({
     }
   }
 
-  if (!policy || !settings || !env) return <p className="muted">Loading {username}…</p>;
+  if (!policy || !settings || !env) {
+    return (
+      <div className="person-panel" aria-busy="true">
+        <h2>{username}</h2>
+        <p className="muted">Loading {username}…</p>
+        <div className="admin-skeleton wide" />
+        <div className="admin-skeleton" />
+        <div className="admin-skeleton short" />
+      </div>
+    );
+  }
   const allowed = policy.agents.filter((agent) => globalAgents.includes(agent));
   return (
     <div className="person-panel">
-      <h3>{username}</h3>
+      <h2>{username}</h2>
       <form onSubmit={(event) => void saveAccess(event)}>
         <p className="muted">Agents, the terminal, defaults, and repositories for this person.</p>
-        {globalAgents.map((agent) => (
-          <label className="check" key={agent}>
-            <input type="checkbox" checked={policy.agents.includes(agent)} onChange={() => toggleAgent(agent)} />
-            {agentLabel(agent)}
-          </label>
-        ))}
+        <div className="admin-checks">
+          {globalAgents.map((agent) => (
+            <label className="check" key={agent}>
+              <input type="checkbox" checked={policy.agents.includes(agent)} onChange={() => toggleAgent(agent)} />
+              {agentLabel(agent)}
+            </label>
+          ))}
+        </div>
         {globalAgents.length === 0 && <p className="muted">Turn on at least one agent above before assigning any.</p>}
         {allowed.map((agent) => (
           <label key={agent}>
@@ -563,43 +664,55 @@ function ServerPanel() {
   }, [load]);
 
   return (
-    <section className="server-panel">
-      <p className="eyebrow">Admin</p>
-      <h2>Server</h2>
-      <p className="muted">
-        {overview
-          ? `${overview.host.hostname} · ${overview.host.platform} ${overview.host.arch} · ${overview.host.node} · up ${formatUptime(overview.host.uptimeSeconds)}`
-          : "Checking this machine."}
-      </p>
-      {overview && (
-        <div className="accounts">
-          <div className="account">
-            <div>
-              <strong>Memory</strong>
-              <span>{formatBytes(overview.host.memoryFree)} free of {formatBytes(overview.host.memoryTotal)}</span>
-            </div>
+    <section className="server-strip" aria-label="This machine">
+      <div className="server-identity">
+        <h2>Server</h2>
+        <p className="muted">{overview ? overview.host.hostname : "Checking this machine."}</p>
+      </div>
+      {overview ? (
+        <div className="metric-row">
+          <div className="metric">
+            <span>System</span>
+              <strong title={`${overview.host.platform} ${overview.host.arch}`}>{overview.host.platform} {overview.host.arch}</strong>
+          </div>
+          <div className="metric">
+            <span>Node</span>
+            <strong>{overview.host.node}</strong>
+          </div>
+          <div className="metric">
+            <span>Uptime</span>
+            <strong>{formatUptime(overview.host.uptimeSeconds)}</strong>
+          </div>
+          <div className="metric">
+            <span>Memory free</span>
+            <strong>{formatBytes(overview.host.memoryFree)} of {formatBytes(overview.host.memoryTotal)}</strong>
           </div>
           {overview.disks.map((disk) => (
-            <div className="account" key={disk.path}>
-              <div>
-                <strong>{disk.path}</strong>
-                <span>{formatBytes(disk.free)} free of {formatBytes(disk.total)}</span>
-              </div>
+            <div className="metric" key={disk.path}>
+              <span title={disk.path}>{disk.path}</span>
+              <strong>{formatBytes(disk.free)} free of {formatBytes(disk.total)}</strong>
             </div>
           ))}
           {overview.commands.map((command) => (
-            <div className="account" key={command.name}>
-              <div>
-                <strong>{command.name}</strong>
-                <span className={command.available ? undefined : "missing"}>{command.path ?? "Missing"}</span>
-              </div>
+            <div className="metric" key={command.name}>
+              <span>{command.name}</span>
+              <strong className={command.available ? undefined : "missing"} title={command.path ?? "Missing"}>{command.path ?? "Missing"}</strong>
             </div>
           ))}
+          <div className="metric">
+            <span>Config</span>
+            <strong title={overview.configFile}>{overview.configFile}</strong>
+          </div>
+        </div>
+      ) : (
+        <div className="metric-row" aria-hidden="true">
+          <div className="admin-skeleton" />
+          <div className="admin-skeleton" />
+          <div className="admin-skeleton short" />
         </div>
       )}
-      {overview && <p className="muted">Commands are read from {overview.configFile}.</p>}
+      <button className="ghost server-refresh" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
       <p className="alert" role="alert">{error}</p>
-      <button className="ghost" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
     </section>
   );
 }
