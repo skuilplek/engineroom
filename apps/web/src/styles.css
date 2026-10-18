@@ -236,6 +236,22 @@ textarea { resize: vertical; }
   display: flex;
   flex-direction: column;
 }
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.chat .bubble,
+.chat .tool,
+.chat .thinking {
+  max-width: 100%;
+}
+.chat .bubble,
+.chat .tool {
+  width: 100%;
+}
 .start {
   flex: 1;
   overflow: auto;

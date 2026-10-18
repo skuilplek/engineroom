@@ -119,7 +119,7 @@ export function ChatView({
   }
 
   return (
-    <>
+    <div className="chat">
       <header className="topbar">
         <div>
           <h2>{live.title}</h2>
@@ -231,6 +231,6 @@ export function ChatView({
           </form>
         </>
       )}
-    </>
+    </div>
   );
 }
