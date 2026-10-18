@@ -276,6 +276,111 @@ test("the control wrapper refuses names outside the login group", async () => {
   await assert.rejects(execFileAsync(script, ["start", "serveradmin"]));
 });
 
+test("repository file listing and reading enforce visibility, gitignore, and symlink safety", async () => {
+  const { listRepositoryFiles, readRepositoryFile } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-files-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-files-out-"));
+  const repo = path.join(home, "Sites", "proj");
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await mkdir(path.join(repo, "dist"), { recursive: true });
+  await writeFile(path.join(outside, "secret.txt"), "top-secret");
+
+  try {
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.email", "alice@example.com"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "Alice"], { cwd: repo });
+    await writeFile(path.join(repo, ".gitignore"), "dist/\nignored.txt\n");
+    await writeFile(path.join(repo, ".env"), "SECRET=1\n");
+    await writeFile(path.join(repo, "ignored.txt"), "ignored\n");
+    await writeFile(path.join(repo, "dist", "bundle.js"), "console.log(1);\n");
+    await writeFile(path.join(repo, "src", "index.ts"), "export const x = 1;\n");
+    await symlink(path.join(outside, "secret.txt"), path.join(repo, "src", "escape.txt"));
+
+    await execFileAsync("git", ["add", "src/index.ts"], { cwd: repo });
+    await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+
+    // Modify tracked file and add untracked file
+    await writeFile(path.join(repo, "src", "index.ts"), "export const x = 2;\n");
+    await writeFile(path.join(repo, "src", "new.ts"), "export const y = 3;\n");
+
+    await setEnabledRepositories(home, [repo]);
+
+    // Default visibility: .git, .gitignore'd, and dotfiles hidden
+    const defaultResult = await listRepositoryFiles(home, repo, {
+      showHidden: false,
+      showGitignored: false,
+      showGitDir: false,
+    });
+    assert.equal(defaultResult.branch, "main");
+    assert.deepEqual(
+      defaultResult.files.map((item) => item.path),
+      ["src", "src/index.ts", "src/new.ts"],
+    );
+    assert.deepEqual(
+      defaultResult.changes.map((item) => ({ path: item.path, status: item.status })),
+      [
+        { path: "src/index.ts", status: "M" },
+        { path: "src/new.ts", status: "?" },
+      ],
+    );
+
+    // Reading hidden or gitignored file when disabled is rejected
+    await assert.rejects(
+      () =>
+        readRepositoryFile(home, repo, ".env", {
+          showHidden: false,
+          showGitignored: false,
+          showGitDir: false,
+        }),
+      /hidden by policy/,
+    );
+    await assert.rejects(
+      () =>
+        readRepositoryFile(home, repo, "ignored.txt", {
+          showHidden: false,
+          showGitignored: false,
+          showGitDir: false,
+        }),
+      /hidden by policy/,
+    );
+    await assert.rejects(
+      () =>
+        readRepositoryFile(home, repo, "src/escape.txt", {
+          showHidden: true,
+          showGitignored: true,
+          showGitDir: true,
+        }),
+      /invalid file path/,
+    );
+
+    // Reading modified file returns both current content and HEAD oldContent
+    const fileContent = await readRepositoryFile(home, repo, "src/index.ts", {
+      showHidden: false,
+      showGitignored: false,
+      showGitDir: false,
+    });
+    assert.equal(fileContent.content, "export const x = 2;\n");
+    assert.equal(fileContent.oldContent, "export const x = 1;\n");
+    assert.equal(fileContent.binary, false);
+
+    // Enabling hidden + gitignored + .git reveals them
+    const fullResult = await listRepositoryFiles(home, repo, {
+      showHidden: true,
+      showGitignored: true,
+      showGitDir: true,
+    });
+    const fullPaths = fullResult.files.map((item) => item.path);
+    assert.equal(fullPaths.includes(".env"), true);
+    assert.equal(fullPaths.includes(".gitignore"), true);
+    assert.equal(fullPaths.includes("ignored.txt"), true);
+    assert.equal(fullPaths.includes("dist/bundle.js"), true);
+    assert.equal(fullPaths.includes(".git"), true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 interface RpcResult {
   events: Array<{ type: string; text?: string }>;
   result?: unknown;

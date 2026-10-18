@@ -3,7 +3,7 @@ import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol"
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings } from "../api.ts";
 import { message } from "../format.ts";
-import { IconArrow } from "../icons.tsx";
+import { IconArrow, IconPanelRight } from "../icons.tsx";
 
 export function StartView({
   agents,
@@ -11,12 +11,16 @@ export function StartView({
   workspace,
   targetLabel,
   onStarted,
+  filesOpen,
+  onToggleFiles,
 }: {
   agents: AgentId[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   workspace: string;
   targetLabel: string;
   onStarted: (chat: ChatMeta, prompt: string) => void;
+  filesOpen?: boolean;
+  onToggleFiles?: () => void;
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const [agent, setAgent] = useState<AgentId>(agents[0] || "cursor");
@@ -63,6 +67,21 @@ export function StartView({
 
   return (
     <div className="start">
+      {onToggleFiles && (
+        <div className="start-topbar">
+          <button
+            className={filesOpen ? "ghost icon-toggle active" : "ghost icon-toggle"}
+            type="button"
+            aria-pressed={Boolean(filesOpen)}
+            aria-label={filesOpen ? "Hide repository files" : "Show repository files"}
+            title={filesOpen ? "Hide repository files" : "Show repository files"}
+            onClick={onToggleFiles}
+          >
+            <IconPanelRight />
+            <span>Files</span>
+          </button>
+        </div>
+      )}
       <h1>Let's Start Building!</h1>
       <form className="launch" onSubmit={(event) => void submit(event)}>
         <textarea

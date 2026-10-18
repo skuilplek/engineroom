@@ -3,12 +3,12 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertRepoRelativePath, assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
-import { loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
+import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
@@ -54,6 +54,8 @@ interface RunnerCall {
   directory?: string;
   modeId?: string;
   modelId?: string;
+  path?: string;
+  visibility?: FileVisibility;
 }
 
 export function createHub(options: HubOptions) {
@@ -183,6 +185,7 @@ export function createHub(options: HubOptions) {
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
+      fileVisibility: loadFileVisibility(reposFile),
     };
   }
 
@@ -295,13 +298,18 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "GET") {
-      sendJson(res, 200, { directory: loadRepoDirectory(reposFile) });
+      sendJson(res, 200, { directory: loadRepoDirectory(reposFile), visibility: loadFileVisibility(reposFile) });
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "PUT") {
-      const body = (await readJson(req)) as { directory?: unknown };
-      const directory = saveRepoDirectory(reposFile, typeof body.directory === "string" ? body.directory : "");
-      sendJson(res, 200, { directory });
+      const body = (await readJson(req)) as { directory?: unknown; visibility?: unknown };
+      const nextVisibility = body.visibility != null ? parseFileVisibility(body.visibility) : undefined;
+      const saved = saveRepoDirectory(
+        reposFile,
+        typeof body.directory === "string" ? body.directory : "",
+        nextVisibility,
+      );
+      sendJson(res, 200, saved);
       return;
     }
     if (parts[2] === "catalog" && parts.length === 3 && req.method === "GET") {
@@ -422,6 +430,21 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, listed.filter((entry) => entry.enabled));
       return;
     }
+    if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, { type: "list_repo_files", workspace, visibility }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "GET") {
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(url.searchParams.get("path") || "");
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, { type: "read_repo_file", workspace, path: filePath, visibility }));
+      return;
+    }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "list_chats" }));
       return;
@@ -539,7 +562,9 @@ export function createHub(options: HubOptions) {
       command.type === "get_access" ||
       command.type === "sync_repositories" ||
       command.type === "set_repositories" ||
-      command.type === "probe_agent"
+      command.type === "probe_agent" ||
+      command.type === "list_repo_files" ||
+      command.type === "read_repo_file"
     ) {
       throw new Error("unknown request");
     }
@@ -746,15 +771,16 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 }
 
 function statusFor(message: string): number {
-  if (message.includes("not enabled")) return 403;
+  if (message.includes("not enabled") || message.includes("hidden by policy")) return 403;
   if (
     message.includes("invalid") ||
     message.includes("empty") ||
     message.includes("must") ||
     message.includes("taken") ||
-    message.includes("does not report")
+    message.includes("does not report") ||
+    message.includes("not a regular file")
   ) return 400;
-  if (message.includes("not found") || message.includes("ENOENT")) return 404;
+  if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;
   return 500;
 }

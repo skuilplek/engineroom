@@ -928,3 +928,110 @@ test("offered modes and models are probed, then narrowed per person", async () =
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the administrator controls repository file visibility for the file manager", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-files-admin-"));
+  const home = path.join(root, "alice");
+  const socketDir = path.join(root, "socks");
+  const reposFile = path.join(root, "repos.json");
+  const repo = path.join(home, "Sites", "app");
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await mkdir(socketDir);
+
+  spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+  await writeFile(path.join(repo, ".gitignore"), "secret.log\n");
+  await writeFile(path.join(repo, ".env"), "TOKEN=abc\n");
+  await writeFile(path.join(repo, "secret.log"), "ignored log\n");
+  await writeFile(path.join(repo, "src", "main.ts"), "console.log('hi');\n");
+
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("files-admin-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    reposFile,
+    lookup: (username) => (username === "alice" ? alice : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+
+  try {
+    const loginRes = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loginRes.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+
+    // Default visibility hides .env, secret.log, and .git
+    const initialList = (await (
+      await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers })
+    ).json()) as { files: Array<{ path: string }> };
+    assert.deepEqual(
+      initialList.files.map((f) => f.path),
+      ["src", "src/main.ts"],
+    );
+
+    const blockedHidden = await fetch(
+      `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent(".env")}`,
+      { headers },
+    );
+    assert.equal(blockedHidden.status, 403);
+
+    // Admin enables showHidden and showGitignored
+    const savedConfig = await fetch(`${base}/api/admin/repository-folder`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        directory: "Sites",
+        visibility: { showHidden: true, showGitignored: true, showGitDir: false },
+      }),
+    });
+    assert.equal(savedConfig.status, 200);
+
+    const updatedList = (await (
+      await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers })
+    ).json()) as { files: Array<{ path: string }> };
+    const updatedPaths = updatedList.files.map((f) => f.path);
+    assert.equal(updatedPaths.includes(".env"), true);
+    assert.equal(updatedPaths.includes("secret.log"), true);
+    assert.equal(updatedPaths.includes(".git"), false);
+
+    const allowedHidden = await fetch(
+      `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent(".env")}`,
+      { headers },
+    );
+    assert.equal(allowedHidden.status, 200);
+    const envContent = (await allowedHidden.json()) as { content: string };
+    assert.equal(envContent.content, "TOKEN=abc\n");
+  } finally {
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

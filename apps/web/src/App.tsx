@@ -3,6 +3,7 @@ import type { AgentId, ChatMeta } from "@engineroom/protocol";
 import { listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { StartView } from "./chat/StartView.tsx";
+import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { message, strip } from "./format.ts";
 import { AdminView } from "./settings/AdminView.tsx";
 import { SettingsView } from "./settings/SettingsView.tsx";
@@ -90,8 +91,32 @@ function Shell({
   const [target, setTarget] = useState(session.home);
   const [view, setView] = useState<View>("start");
   const [error, setError] = useState("");
+  const [filesOpen, setFilesOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("engineroom.filesOpen") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const openingRef = useRef<{ id: string; prompt: string } | null>(null);
   const consumedRef = useRef<string | null>(null);
+
+  const toggleFiles = useCallback(() => {
+    setFilesOpen((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("engineroom.filesOpen", next ? "1" : "0");
+      } catch {
+        /* ignore storage failure */
+      }
+      return next;
+    });
+  }, []);
+
+  const bumpFilesRefresh = useCallback(() => {
+    setFilesRefreshKey((current) => current + 1);
+  }, []);
 
   const claimOpening = useCallback((id: string): string | null => {
     const pending = openingRef.current;
@@ -126,6 +151,7 @@ function Shell({
   }, [repos, session.home, target]);
 
   const selectedRepo = repos.find((repo) => strip(repo.path) === strip(target));
+  const showFileManager = (view === "chat" || view === "start") && Boolean(selectedRepo);
 
   function remember(chat: ChatMeta) {
     setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
@@ -149,8 +175,15 @@ function Shell({
     setChats((current) => current.map((chat) => (chat.id === activeId ? { ...chat, title } : chat)));
   }, [activeId]);
 
+  const onChatWorkspace = useCallback((workspace: string) => {
+    const key = strip(workspace);
+    if (key === strip(session.home) || repos.some((repo) => strip(repo.path) === key)) {
+      setTarget(workspace);
+    }
+  }, [repos, session.home]);
+
   return (
-    <div className="shell">
+    <div className={showFileManager && filesOpen ? "shell with-drawer" : "shell"}>
       <Sidebar
         session={session}
         chats={chats}
@@ -196,6 +229,8 @@ function Shell({
             options={session.options}
             workspace={target}
             targetLabel={selectedRepo.name}
+            filesOpen={filesOpen}
+            onToggleFiles={toggleFiles}
             onStarted={(chat, prompt) => {
               remember(chat);
               openingRef.current = { id: chat.id, prompt };
@@ -219,9 +254,22 @@ function Shell({
             rawTerminal={session.rawTerminal}
             claimOpening={claimOpening}
             onTitle={onTitle}
+            filesOpen={selectedRepo ? filesOpen : undefined}
+            onToggleFiles={selectedRepo ? toggleFiles : undefined}
+            onWorkspace={onChatWorkspace}
+            onFilesChanged={bumpFilesRefresh}
           />
         )}
       </section>
+      {showFileManager && selectedRepo && (
+        <FileManagerDrawer
+          workspace={selectedRepo.path}
+          repoName={selectedRepo.name}
+          open={filesOpen}
+          refreshKey={filesRefreshKey}
+          onClose={toggleFiles}
+        />
+      )}
     </div>
   );
 }

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } 
 import {
   AGENTS,
   agentLabel,
+  DEFAULT_FILE_VISIBILITY,
   type AgentId,
   type AgentOptionChoice,
   type CatalogEntry,
   type EnvEntry,
+  type FileVisibility,
   type Settings,
   type UserPolicy,
 } from "@engineroom/protocol";
@@ -69,6 +71,9 @@ export function AdminView({
   const [repoName, setRepoName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [repoFolder, setRepoFolder] = useState("Sites");
+  const [fileVisibility, setFileVisibility] = useState<FileVisibility>(() => ({
+    ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY),
+  }));
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
@@ -102,7 +107,10 @@ export function AdminView({
   useEffect(() => {
     refreshUsers().catch((err) => setError(message(err)));
     listCatalog().then((body) => setCatalog(body.repositories)).catch((err) => setError(message(err)));
-    getRepoDirectory().then((body) => setRepoFolder(body.directory)).catch((err) => setError(message(err)));
+    getRepoDirectory().then((body) => {
+      setRepoFolder(body.directory);
+      if (body.visibility) setFileVisibility(body.visibility);
+    }).catch((err) => setError(message(err)));
     getAgentOptions().then((options) => {
       setAgentOptions(options);
       const draft: Partial<Record<AgentId, { modes: string[]; models: string[] }>> = {};
@@ -191,8 +199,10 @@ export function AdminView({
     setError("");
     setSaved("");
     try {
-      const savedFolder = await saveRepoDirectory(repoFolder.trim());
+      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility);
       setRepoFolder(savedFolder.directory);
+      if (savedFolder.visibility) setFileVisibility(savedFolder.visibility);
+      onAccess();
       setSaved("Repository folder saved");
     } catch (err) {
       setError(message(err));
@@ -397,6 +407,34 @@ export function AdminView({
               Folder
               <input value={repoFolder} onChange={(event) => setRepoFolder(event.target.value)} placeholder="Sites" required />
             </label>
+            <h3>File manager visibility</h3>
+            <p className="muted">Choose which repository files are visible in the right-hand file manager. Hidden dotfiles, gitignored files, and .git/ are hidden by default.</p>
+            <div className="admin-checks">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={fileVisibility.showHidden}
+                  onChange={() => setFileVisibility((current) => ({ ...current, showHidden: !current.showHidden }))}
+                />
+                Show hidden files (dotfiles)
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={fileVisibility.showGitignored}
+                  onChange={() => setFileVisibility((current) => ({ ...current, showGitignored: !current.showGitignored }))}
+                />
+                Show gitignored files
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={fileVisibility.showGitDir}
+                  onChange={() => setFileVisibility((current) => ({ ...current, showGitDir: !current.showGitDir }))}
+                />
+                Show .git directory
+              </label>
+            </div>
             <button className="primary" type="submit" disabled={busy}>Save folder</button>
           </form>
           <form className="admin-pane" onSubmit={(event) => void addRepo(event)}>

@@ -240,6 +240,20 @@ async function readTranscript(home: string, chatId: string): Promise<TranscriptE
   return entries;
 }
 
+export async function resolveRepoWorkspace(home: string, requested: string): Promise<string> {
+  const homeReal = await realpath(home);
+  const workspace = await resolveWorkspace(home, requested);
+  if (workspace === homeReal) {
+    if (!(await isGitRepository(workspace))) throw new Error("repository is not enabled");
+    return workspace;
+  }
+  const state = await loadRepoState(home);
+  if (!repositoryPathAllowed(homeReal, workspace, state.directory) || !(await isGitRepository(workspace))) {
+    throw new Error("repository is not enabled");
+  }
+  return workspace;
+}
+
 async function resolveChatWorkspace(home: string, requested?: string): Promise<string> {
   const homeReal = await realpath(home);
   const workspace = await resolveWorkspace(home, requested);

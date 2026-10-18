@@ -27,6 +27,7 @@ import { TranscriptWriter } from "./persist.ts";
 import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
 import { loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
+import { listRepositoryFiles, readRepositoryFile } from "./files.ts";
 import {
   clearTranscript,
   createChat,
@@ -296,6 +297,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listSessions(request.agent);
       case "import_session":
         return importSession(request.agent, request.agentSessionId, request.workspace);
+      case "list_repo_files":
+        return listRepositoryFiles(home, request.workspace, request.visibility);
+      case "read_repo_file":
+        return readRepositoryFile(home, request.workspace, request.path, request.visibility);
       default:
         throw new Error("unsupported request");
     }

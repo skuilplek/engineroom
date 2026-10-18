@@ -5,6 +5,9 @@ import type {
   ChatDetail,
   ChatMeta,
   EnvEntry,
+  FileVisibility,
+  RepoFileContent,
+  RepoFilesResult,
   RepositoryEntry,
   Settings,
   SettingsPatch,
@@ -29,6 +32,7 @@ export interface Session {
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;
+  fileVisibility?: FileVisibility;
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
 
@@ -113,18 +117,28 @@ export function listRepositories() {
   return api<RepositoryEntry[]>("/api/repositories");
 }
 
+export function listRepoFiles(workspace: string) {
+  return api<RepoFilesResult>(`/api/repositories/files?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function readRepoFile(workspace: string, filePath: string) {
+  return api<RepoFileContent>(
+    `/api/repositories/file?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
+  );
+}
+
 export function listCatalog() {
   return api<{ repositories: CatalogEntry[] }>("/api/admin/catalog");
 }
 
 export function getRepoDirectory() {
-  return api<{ directory: string }>("/api/admin/repository-folder");
+  return api<{ directory: string; visibility: FileVisibility }>("/api/admin/repository-folder");
 }
 
-export function saveRepoDirectory(directory: string) {
-  return api<{ directory: string }>("/api/admin/repository-folder", {
+export function saveRepoDirectory(directory: string, visibility?: FileVisibility) {
+  return api<{ directory: string; visibility: FileVisibility }>("/api/admin/repository-folder", {
     method: "PUT",
-    body: JSON.stringify({ directory }),
+    body: JSON.stringify({ directory, ...(visibility ? { visibility } : {}) }),
   });
 }
 

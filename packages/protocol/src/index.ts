@@ -119,6 +119,50 @@ export interface RepositoryEntry {
   enabled: boolean;
 }
 
+export interface FileVisibility {
+  showHidden: boolean;
+  showGitignored: boolean;
+  showGitDir: boolean;
+}
+
+export const DEFAULT_FILE_VISIBILITY: FileVisibility = {
+  showHidden: false,
+  showGitignored: false,
+  showGitDir: false,
+};
+
+export interface RepoFileEntry {
+  path: string;
+  name: string;
+  kind: "file" | "dir";
+  size?: number;
+}
+
+export type RepoChangeStatus = "M" | "A" | "D" | "R" | "U" | "?";
+
+export interface RepoChangeEntry {
+  path: string;
+  status: RepoChangeStatus;
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface RepoFilesResult {
+  workspace: string;
+  branch: string;
+  files: RepoFileEntry[];
+  changes: RepoChangeEntry[];
+}
+
+export interface RepoFileContent {
+  path: string;
+  content: string;
+  oldContent?: string;
+  binary: boolean;
+  truncated: boolean;
+  size: number;
+}
+
 export interface CatalogEntry {
   id: string;
   name: string;
@@ -253,7 +297,9 @@ export type RunnerRequest =
   | { id: string; type: "pty_detach"; chatId: string }
   | { id: string; type: "list_sessions"; agent?: AgentId }
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
-  | { id: string; type: "probe_agent"; agent: AgentId };
+  | { id: string; type: "probe_agent"; agent: AgentId }
+  | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
+  | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -468,9 +514,58 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         workspace: optionalString(body.workspace, "workspace", 4096),
       };
     }
+    case "list_repo_files": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return {
+        id: body.id,
+        type: "list_repo_files",
+        workspace: workspace.trim(),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "read_repo_file": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return {
+        id: body.id,
+        type: "read_repo_file",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
     default:
       throw new Error("unknown request");
   }
+}
+
+export function parseFileVisibility(value: unknown): FileVisibility {
+  if (value == null) return { ...DEFAULT_FILE_VISIBILITY };
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid file visibility");
+  const record = value as Record<string, unknown>;
+  if (record.showHidden != null && typeof record.showHidden !== "boolean") throw new Error("invalid file visibility");
+  if (record.showGitignored != null && typeof record.showGitignored !== "boolean") throw new Error("invalid file visibility");
+  if (record.showGitDir != null && typeof record.showGitDir !== "boolean") throw new Error("invalid file visibility");
+  return {
+    showHidden: Boolean(record.showHidden),
+    showGitignored: Boolean(record.showGitignored),
+    showGitDir: Boolean(record.showGitDir),
+  };
+}
+
+export function assertRepoRelativePath(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid file path");
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 4096 || trimmed.startsWith("/") || trimmed.includes("\\") || trimmed.includes("\0")) {
+    throw new Error("invalid file path");
+  }
+  const parts = trimmed.split("/").filter((part) => part.length > 0);
+  if (parts.length === 0 || parts.length > 64) throw new Error("invalid file path");
+  for (const part of parts) {
+    if (part === "." || part === "..") throw new Error("invalid file path");
+  }
+  return parts.join("/");
 }
 
 function parseSeq(value: unknown): number {

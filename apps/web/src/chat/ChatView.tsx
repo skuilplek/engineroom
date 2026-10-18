@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { workspaceLabel } from "../format.ts";
+import { IconPanelRight } from "../icons.tsx";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { DiffView } from "./Diff.tsx";
@@ -16,6 +17,10 @@ export function ChatView({
   rawTerminal,
   claimOpening,
   onTitle,
+  filesOpen,
+  onToggleFiles,
+  onWorkspace,
+  onFilesChanged,
 }: {
   chatId: string;
   home: string;
@@ -23,6 +28,10 @@ export function ChatView({
   rawTerminal: boolean;
   claimOpening: (id: string) => string | null;
   onTitle: (title: string) => void;
+  filesOpen?: boolean;
+  onToggleFiles?: () => void;
+  onWorkspace?: (workspace: string) => void;
+  onFilesChanged?: () => void;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
   const [prompt, setPrompt] = useState("");
@@ -36,6 +45,10 @@ export function ChatView({
   const queued = useRef<Array<{ event: StreamEvent; seq: number }>>([]);
   const titleRef = useRef(onTitle);
   titleRef.current = onTitle;
+  const workspaceRef = useRef(onWorkspace);
+  workspaceRef.current = onWorkspace;
+  const filesChangedRef = useRef(onFilesChanged);
+  filesChangedRef.current = onFilesChanged;
 
   useEffect(() => {
     setLive(emptyLive());
@@ -64,6 +77,7 @@ export function ChatView({
         });
         noteSeq(chatId, message.seq);
         titleRef.current(message.chat.title);
+        if (message.chat.workspace) workspaceRef.current?.(message.chat.workspace);
         for (const item of pending) {
           noteSeq(chatId, item.seq);
           if (item.event.type === "title") titleRef.current(item.event.text);
@@ -79,6 +93,13 @@ export function ChatView({
         setLive((current) => applyEvent(current, message.event, message.seq));
         noteSeq(chatId, message.seq);
         if (message.event.type === "title") titleRef.current(message.event.text);
+        if (
+          message.event.type === "turn_end" ||
+          message.event.type === "done" ||
+          (message.event.type === "tool" && message.event.phase === "done")
+        ) {
+          filesChangedRef.current?.();
+        }
       }
     });
     return () => {
@@ -132,6 +153,19 @@ export function ChatView({
           {rawTerminal && (
             <button className="ghost" type="button" disabled={live.running} onClick={() => setRaw((value) => !value)}>
               {raw ? "Chat" : "Terminal"}
+            </button>
+          )}
+          {onToggleFiles && (
+            <button
+              className={filesOpen ? "ghost icon-toggle active" : "ghost icon-toggle"}
+              type="button"
+              aria-pressed={Boolean(filesOpen)}
+              aria-label={filesOpen ? "Hide repository files" : "Show repository files"}
+              title={filesOpen ? "Hide repository files" : "Show repository files"}
+              onClick={onToggleFiles}
+            >
+              <IconPanelRight />
+              <span>Files</span>
             </button>
           )}
         </div>

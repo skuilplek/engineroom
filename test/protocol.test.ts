@@ -263,3 +263,51 @@ test("socket identity accepts the user and a systemd listener, and rejects a swa
   assert.equal(socketIdentityOk(1001, 1001, 1000), false);
   assert.equal(socketIdentityOk(1000, 1001, 1000), false);
 });
+
+test("repository file requests validate relative paths and visibility flags", async () => {
+  const { assertRepoRelativePath, parseFileVisibility } = await import("@engineroom/protocol");
+  assert.equal(assertRepoRelativePath("src/index.ts"), "src/index.ts");
+  assert.equal(assertRepoRelativePath(" .env "), ".env");
+  assert.throws(() => assertRepoRelativePath(""));
+  assert.throws(() => assertRepoRelativePath("/etc/passwd"));
+  assert.throws(() => assertRepoRelativePath("../secret.txt"));
+  assert.throws(() => assertRepoRelativePath("a/../b"));
+  assert.throws(() => assertRepoRelativePath("a\\b"));
+
+  assert.deepEqual(parseFileVisibility(undefined), {
+    showHidden: false,
+    showGitignored: false,
+    showGitDir: false,
+  });
+  assert.deepEqual(parseFileVisibility({ showHidden: true }), {
+    showHidden: true,
+    showGitignored: false,
+    showGitDir: false,
+  });
+  assert.throws(() => parseFileVisibility({ showHidden: "yes" }));
+
+  const listReq = parseRunnerRequest({
+    id: "10",
+    type: "list_repo_files",
+    workspace: "/home/alice/Sites/proj",
+    visibility: { showHidden: true, showGitignored: false, showGitDir: false },
+  });
+  assert.equal(listReq.type, "list_repo_files");
+
+  const readReq = parseRunnerRequest({
+    id: "11",
+    type: "read_repo_file",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+  });
+  assert.equal(readReq.type, "read_repo_file");
+  assert.throws(() =>
+    parseRunnerRequest({
+      id: "12",
+      type: "read_repo_file",
+      workspace: "/home/alice/Sites/proj",
+      path: "../outside.ts",
+    }),
+  );
+});
+
