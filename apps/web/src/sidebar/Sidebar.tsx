@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AgentId, ChatMeta, ListedSession, RepositoryEntry } from "@engineroom/protocol";
 import { buildGroups, strip, type RepoGroup } from "../format.ts";
-import { IconGear, IconPlus, IconSliders } from "../icons.tsx";
+import { IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
 type View = "chat" | "settings" | "start" | "admin";
@@ -15,6 +15,8 @@ export function Sidebar({
   activeId,
   target,
   error,
+  collapsed,
+  onToggleCollapsed,
   onNew,
   onOpen,
   onSettings,
@@ -30,6 +32,8 @@ export function Sidebar({
   activeId: string | null;
   target: string;
   error: string;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
   onSettings: () => void;
@@ -54,28 +58,55 @@ export function Sidebar({
   }
 
   return (
-    <aside className="sidebar">
-      <p className="app-brand" title={appName}>{appName}</p>
-      <label className="search">
-        <span className="sr">Search chats</span>
-        <input value={query} placeholder="Search chats" onChange={(event) => setQuery(event.target.value)} />
-      </label>
+    <aside id="sidebar-region" className={collapsed ? "sidebar collapsed" : "sidebar"}>
+      <div className="sidebar-head">
+        {!collapsed && <p className="app-brand" title={appName}>{appName}</p>}
+        <button
+          className="sidebar-toggle"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls="sidebar-region"
+          aria-label={collapsed ? "Expand menu" : "Collapse menu"}
+          title={collapsed ? "Expand menu" : "Collapse menu"}
+          onClick={onToggleCollapsed}
+        >
+          <IconPanelLeft />
+        </button>
+      </div>
+      {!collapsed && (
+        <label className="search">
+          <span className="sr">Search chats</span>
+          <input value={query} placeholder="Search chats" onChange={(event) => setQuery(event.target.value)} />
+        </label>
+      )}
       <div className="side-nav">
-        <button className={view === "settings" ? "nav-item active" : "nav-item"} type="button" onClick={onSettings}>
+        <button
+          className={view === "settings" ? "nav-item active" : "nav-item"}
+          type="button"
+          aria-label="Customize"
+          title="Customize"
+          onClick={onSettings}
+        >
           <IconGear />
-          Customize
+          {!collapsed && "Customize"}
         </button>
         {session.admin && (
-          <button className={view === "admin" ? "nav-item active" : "nav-item"} type="button" onClick={onAdmin}>
+          <button
+            className={view === "admin" ? "nav-item active" : "nav-item"}
+            type="button"
+            aria-label="Admin"
+            title="Admin"
+            onClick={onAdmin}
+          >
             <IconSliders />
-            Admin
+            {!collapsed && "Admin"}
           </button>
         )}
-        {session.cliImport && (
+        {!collapsed && session.cliImport && (
           <button className="nav-item" type="button" onClick={importList}>Import CLI sessions</button>
         )}
       </div>
-      {session.cliImport && sessions && (
+      {!collapsed && session.cliImport && sessions && (
         <ImportList
           agent={agent}
           sessions={sessions}
@@ -90,19 +121,27 @@ export function Sidebar({
           }}
         />
       )}
-      <p className="section-label">Conversations</p>
-      <div className="tree">
-        {groups.map((group) => (
-          <Group key={group.key} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
-        ))}
-      </div>
-      {error && <p className="alert" role="alert">{error}</p>}
+      {!collapsed && (
+        <>
+          <p className="section-label">Conversations</p>
+          <div className="tree">
+            {groups.map((group) => (
+              <Group key={group.key} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
+            ))}
+          </div>
+          {error && <p className="alert" role="alert">{error}</p>}
+        </>
+      )}
       <div className="sidebar-foot">
-        <div className="presence">
-          <span className="dot" />
-          <span>{session.username}</span>
-        </div>
-        <button className="sign-out" type="button" onClick={onLogout}>Sign out</button>
+        {!collapsed && (
+          <div className="presence">
+            <span className="dot" />
+            <span>{session.username}</span>
+          </div>
+        )}
+        <button className="sign-out" type="button" aria-label="Sign out" title="Sign out" onClick={onLogout}>
+          {collapsed ? <IconSignOut /> : "Sign out"}
+        </button>
       </div>
     </aside>
   );

@@ -98,6 +98,13 @@ function Shell({
       return false;
     }
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("engineroom.sidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const openingRef = useRef<{ id: string; prompt: string } | null>(null);
   const consumedRef = useRef<string | null>(null);
@@ -107,6 +114,18 @@ function Shell({
       const next = !current;
       try {
         localStorage.setItem("engineroom.filesOpen", next ? "1" : "0");
+      } catch {
+        /* ignore storage failure */
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("engineroom.sidebarCollapsed", next ? "1" : "0");
       } catch {
         /* ignore storage failure */
       }
@@ -182,8 +201,14 @@ function Shell({
     }
   }, [repos, session.home]);
 
+  const shellClass = [
+    "shell",
+    showFileManager && filesOpen ? "with-drawer" : "",
+    sidebarCollapsed ? "sidebar-collapsed" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={showFileManager && filesOpen ? "shell with-drawer" : "shell"}>
+    <div className={shellClass}>
       <Sidebar
         session={session}
         chats={chats}
@@ -193,6 +218,8 @@ function Shell({
         activeId={activeId}
         target={target}
         error={error}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebar}
         onNew={choose}
         onOpen={openChat}
         onSettings={() => setView("settings")}
