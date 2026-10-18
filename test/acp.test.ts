@@ -53,6 +53,37 @@ test("an ACP session streams chunks and can import a CLI session", async () => {
   }
 });
 
+test("probe reads the session catalog and a personal list rejects other models", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-probe-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  try {
+    const found = await acp.probe("cursor", home, process.env, home);
+    assert.deepEqual(found.modes.map((mode) => mode.id), ["agent", "plan"]);
+    assert.deepEqual(found.models, [{ id: "fake", name: "Fake" }]);
+    await assert.rejects(() => acp.probe("pi", home, process.env, home), /does not report modes or models/);
+    await once(sock, {
+      id: "pol",
+      type: "put_policy",
+      policy: { agents: ["cursor"], rawTerminal: true, options: { cursor: { modes: ["agent"], models: ["fake"] } } },
+    });
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    await assert.rejects(() => once(sock, { id: "bad", type: "set_model", chatId, modelId: "other" }), /invalid model/);
+    await assert.rejects(() => once(sock, { id: "bad-mode", type: "set_mode", chatId, modeId: "plan" }), /invalid mode/);
+    const allowed = await once(sock, { id: "ok", type: "set_model", chatId, modelId: "fake" });
+    assert.equal(allowed.type, "ok");
+    const chat = await getChat(home, chatId, false);
+    assert.equal(chat.chat.model, "fake");
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("a follow-up prompt waits until the running turn finishes", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-queue-"));
   const sock = path.join(home, "runner.sock");

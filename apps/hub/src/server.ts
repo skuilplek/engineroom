@@ -3,8 +3,9 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertUsername, decodePtyFrame, encodePtyFrame, isAgentId, isInsidePath, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
+import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { serverOverview } from "./overview.ts";
@@ -21,6 +22,7 @@ export interface HubOptions {
   cookieSecure: boolean;
   adminUser?: string;
   agentsFile?: string;
+  agentOptionsFile?: string;
   catalogFile?: string;
   checksFile?: string;
   commandDirs?: string[];
@@ -46,6 +48,8 @@ interface RunnerCall {
   policy?: UserPolicy;
   entries?: EnvEntry[];
   repos?: CatalogEntry[];
+  modeId?: string;
+  modelId?: string;
 }
 
 export function createHub(options: HubOptions) {
@@ -55,6 +59,7 @@ export function createHub(options: HubOptions) {
     ((username: string, password: string) => pamAuthenticate(username, password, options.pamHelper));
   const adminUser = (options.adminUser || "").trim();
   const agentsFile = options.agentsFile || "";
+  const agentOptionsFile = options.agentOptionsFile || (agentsFile ? path.join(path.dirname(agentsFile), "agent-options.json") : "");
   const catalogFile = options.catalogFile || "";
   const checksFile = options.checksFile || "";
   const commandDirs = options.commandDirs;
@@ -167,16 +172,58 @@ export function createHub(options: HubOptions) {
       admin: adminUser !== "" && user.username === adminUser,
       agents: access.agents,
       rawTerminal: access.rawTerminal,
+      options: access.options,
     };
   }
 
-  async function loadAccess(user: LinuxUser): Promise<{ agents: AgentId[]; rawTerminal: boolean }> {
+  async function loadAccess(user: LinuxUser): Promise<{
+    agents: AgentId[];
+    rawTerminal: boolean;
+    options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
+  }> {
     const flags = loadAgentFlags(agentsFile);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    const stored = loadAgentOptions(agentOptionsFile);
+    const agents = policy.agents.filter((agent) => flags[agent]);
+    const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
+    for (const agent of agents) {
+      const config = stored[agent];
+      optionMap[agent] = effectiveAgentOptions(config?.discovered, config?.offered, policy.options?.[agent]);
+    }
     return {
-      agents: policy.agents.filter((agent) => flags[agent]),
+      agents,
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
+      options: optionMap,
     };
+  }
+
+  async function assertModelChoice(user: LinuxUser, agent: AgentId, model: string) {
+    const access = await loadAccess(user);
+    const allowed = access.options[agent]?.models ?? [];
+    if (allowed.length === 0) {
+      if (model) throw new Error("invalid model");
+      return;
+    }
+    if (!allowed.some((choice) => choice.id === model)) throw new Error("invalid model");
+  }
+
+  function assertModeChoice(options: { modes: AgentOptionChoice[] }, modeId: string) {
+    if (!options.modes.some((choice) => choice.id === modeId)) throw new Error("invalid mode");
+  }
+
+  async function alignStored(user: LinuxUser, chat: ChatMeta, send: (request: RunnerCall) => Promise<unknown>) {
+    const access = await loadAccess(user);
+    const options = access.options[chat.agent] ?? { modes: [], models: [] };
+    const mode = fitChoice(chat.mode || "", options.modes);
+    const model = fitChoice(chat.model || "", options.models);
+    if ((chat.mode || "") !== mode) {
+      await send({ type: "set_mode", chatId: chat.id, modeId: mode });
+      chat.mode = mode;
+    }
+    if ((chat.model || "") !== model) {
+      await send({ type: "set_model", chatId: chat.id, modelId: model });
+      chat.model = model;
+    }
   }
 
   async function assertAgentAllowed(user: LinuxUser, agent: AgentId) {
@@ -198,6 +245,21 @@ export function createHub(options: HubOptions) {
       const body = await readJson(req);
       const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body));
       sendJson(res, 200, { agents: enabledAgentIds(flags), rawTerminal: loadRawTerminal(agentsFile) });
+      return;
+    }
+    if (parts[2] === "agent-options" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, loadAgentOptions(agentOptionsFile));
+      return;
+    }
+    if (parts[2] === "agent-options" && parts.length === 3 && req.method === "PUT") {
+      sendJson(res, 200, saveOfferedOptions(agentOptionsFile, await readJson(req)));
+      return;
+    }
+    if (parts[2] === "agent-options" && parts.length === 5 && parts[4] === "probe" && req.method === "POST") {
+      const agent = decodeURIComponent(parts[3] || "");
+      if (!isAgentId(agent) || !loadAgentFlags(agentsFile)[agent]) throw new Error("invalid agent");
+      const found = (await call(user, { type: "probe_agent", agent })) as { modes: AgentOptionChoice[]; models: AgentOptionChoice[] };
+      sendJson(res, 200, recordProbe(agentOptionsFile, agent, found));
       return;
     }
     if (parts[2] === "users" && parts.length === 3 && req.method === "GET") {
@@ -236,7 +298,7 @@ export function createHub(options: HubOptions) {
       const target = managedUser(parts[3] || "");
       const action = parts[4];
       if (action === "policy" && req.method === "PUT") {
-        const policy = parseUserPolicy(await readJson(req));
+        const policy = restrictPolicy(parseUserPolicy(await readJson(req)), loadAgentOptions(agentOptionsFile));
         const flags = loadAgentFlags(agentsFile);
         if (policy.agents.some((agent) => !flags[agent])) throw new Error("invalid agent");
         sendJson(res, 200, await call(target, { type: "put_policy", policy }));
@@ -245,6 +307,7 @@ export function createHub(options: HubOptions) {
       if (action === "settings" && req.method === "PUT") {
         const body = (await readJson(req)) as SettingsPatch;
         if (body.defaultAgent) await assertAgentAllowed(target, body.defaultAgent);
+        await assertSettingsModel(target, body);
         sendJson(res, 200, await call(target, { type: "put_settings", settings: body }));
         return;
       }
@@ -311,6 +374,7 @@ export function createHub(options: HubOptions) {
       const body = (await readJson(req)) as { settings?: SettingsPatch };
       const patch = (body.settings ?? body) as SettingsPatch;
       if (patch.defaultAgent) await assertAgentAllowed(user, patch.defaultAgent);
+      await assertSettingsModel(user, patch);
       sendJson(res, 200, await call(user, { type: "put_settings", settings: patch }));
       return;
     }
@@ -329,20 +393,24 @@ export function createHub(options: HubOptions) {
     }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "POST") {
       const body = (await readJson(req)) as Record<string, unknown>;
+      let agent: AgentId;
       if (body.agent == null || body.agent === "") {
         const settings = (await call(user, { type: "get_settings" })) as Settings;
-        await assertAgentAllowed(user, settings.defaultAgent);
+        agent = settings.defaultAgent;
       } else {
         if (!isAgentId(body.agent)) throw new Error("invalid agent");
-        await assertAgentAllowed(user, body.agent);
+        agent = body.agent;
       }
+      await assertAgentAllowed(user, agent);
+      const model = body.model == null || body.model === "" ? "" : cleanModel(body.model);
+      await assertModelChoice(user, agent, model);
       sendJson(
         res,
         201,
         await call(user, {
           type: "create_chat",
-          agent: isAgentId(body.agent) ? body.agent : undefined,
-          model: body.model as string | undefined,
+          agent,
+          model,
           workspace: body.workspace as string | undefined,
           title: body.title as string | undefined,
         }),
@@ -360,8 +428,9 @@ export function createHub(options: HubOptions) {
     if (parts[1] === "chats" && parts[3] === "messages" && req.method === "POST") {
       const body = (await readJson(req)) as { prompt?: unknown };
       if (typeof body.prompt !== "string") throw new Error("prompt is empty");
-      const detail = (await call(user, { type: "get_chat", chatId: parts[2]! })) as { chat: { agent: AgentId } };
+      const detail = (await call(user, { type: "get_chat", chatId: parts[2]! })) as { chat: ChatMeta };
       await assertAgentAllowed(user, detail.chat.agent);
+      await alignStored(user, detail.chat, (request) => call(user, request));
       sendJson(res, 202, await call(user, { type: "send", chatId: parts[2]!, prompt: body.prompt }));
       return;
     }
@@ -434,13 +503,23 @@ export function createHub(options: HubOptions) {
       command.type === "put_env" ||
       command.type === "get_access" ||
       command.type === "sync_repositories" ||
-      command.type === "set_repositories"
+      command.type === "set_repositories" ||
+      command.type === "probe_agent"
     ) {
       throw new Error("unknown request");
     }
     if (command.type === "prompt" || command.type === "send" || command.type === "pty_open" || command.type === "set_mode" || command.type === "set_model") {
-      const detail = (await channel.request({ id: randomUUID(), type: "get_chat", chatId: command.chatId })) as { chat: { agent: AgentId } };
+      const detail = (await channel.request({ id: randomUUID(), type: "get_chat", chatId: command.chatId })) as { chat: ChatMeta };
       await assertAgentAllowed(user, detail.chat.agent);
+      const access = await loadAccess(user);
+      const choices = access.options[detail.chat.agent] ?? { modes: [], models: [] };
+      if (command.type === "set_mode") assertModeChoice(choices, command.modeId);
+      if (command.type === "set_model") {
+        if (!choices.models.some((choice) => choice.id === command.modelId)) throw new Error("invalid model");
+      }
+      if (command.type === "prompt" || command.type === "send") {
+        await alignStored(user, detail.chat, (request) => channel.request({ ...request, id: randomUUID() } as RunnerRequest));
+      }
     }
     if (command.type === "pty_open" && !(await loadAccess(user)).rawTerminal) throw new Error("terminal is not enabled");
     if ((command.type === "list_sessions" || command.type === "import_session") && command.agent) {
@@ -452,7 +531,17 @@ export function createHub(options: HubOptions) {
     if (command.type === "pty_close" || command.type === "pty_detach") held.delete(command.chatId);
     if (ws.readyState !== ws.OPEN) return;
     if (command.type === "watch") {
-      ws.send(JSON.stringify({ type: "snapshot", chatId: command.chatId, ...(result as object) }));
+      const snapshot = result as {
+        chat: ChatMeta;
+        modes?: { currentModeId: string; availableModes: Array<{ id: string; name: string; description?: string }> } | null;
+        models?: { currentModelId: string; availableModels: Array<{ modelId: string; name: string }> } | null;
+      };
+      await alignStored(user, snapshot.chat, (request) => channel.request({ ...request, id: randomUUID() } as RunnerRequest));
+      const access = await loadAccess(user);
+      const choices = access.options[snapshot.chat.agent] ?? { modes: [], models: [] };
+      snapshot.modes = filterModes(snapshot.modes, choices.modes, snapshot.chat.mode || "");
+      snapshot.models = filterModels(snapshot.models, choices.models, snapshot.chat.model || "");
+      ws.send(JSON.stringify({ type: "snapshot", chatId: command.chatId, ...snapshot }));
       return;
     }
     if (command.type === "prompt" || command.type === "send") {
@@ -470,6 +559,14 @@ export function createHub(options: HubOptions) {
     if (command.type === "pty_open") {
       ws.send(JSON.stringify({ type: "pty_open", chatId: command.chatId, ...(result as object) }));
     }
+  }
+
+  async function assertSettingsModel(user: LinuxUser, patch: SettingsPatch) {
+    if (patch.defaultModel == null && !patch.defaultAgent) return;
+    const current = (await call(user, { type: "get_settings" })) as Settings;
+    const agent = patch.defaultAgent ?? current.defaultAgent;
+    const model = patch.defaultModel != null ? patch.defaultModel : current.defaultModel;
+    await assertModelChoice(user, agent, model);
   }
 
   function call(user: LinuxUser, request: RunnerCall) {
@@ -535,6 +632,36 @@ function originAllowed(req: IncomingMessage): boolean {
   }
 }
 
+function fitChoice(current: string, choices: AgentOptionChoice[]): string {
+  if (choices.length === 0) return "";
+  if (choices.some((choice) => choice.id === current)) return current;
+  return choices[0]!.id;
+}
+
+function filterModes(
+  raw: { currentModeId: string; availableModes: Array<{ id: string; name: string; description?: string }> } | null | undefined,
+  allowed: AgentOptionChoice[],
+  selected: string,
+) {
+  if (!raw) return raw ?? null;
+  const ids = new Set(allowed.map((choice) => choice.id));
+  const availableModes = raw.availableModes.filter((mode) => ids.has(mode.id));
+  const currentModeId = availableModes.some((mode) => mode.id === selected) ? selected : availableModes[0]?.id || "";
+  return { currentModeId, availableModes };
+}
+
+function filterModels(
+  raw: { currentModelId: string; availableModels: Array<{ modelId: string; name: string }> } | null | undefined,
+  allowed: AgentOptionChoice[],
+  selected: string,
+) {
+  if (!raw) return raw ?? null;
+  const ids = new Set(allowed.map((choice) => choice.id));
+  const availableModels = raw.availableModels.filter((model) => ids.has(model.modelId));
+  const currentModelId = availableModels.some((model) => model.modelId === selected) ? selected : availableModels[0]?.modelId || "";
+  return { currentModelId, availableModels };
+}
+
 function rawTerminalFrom(body: unknown): boolean | undefined {
   if (!body || typeof body !== "object") return undefined;
   const value = (body as { rawTerminal?: unknown }).rawTerminal;
@@ -549,7 +676,13 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 
 function statusFor(message: string): number {
   if (message.includes("not enabled")) return 403;
-  if (message.includes("invalid") || message.includes("empty") || message.includes("must") || message.includes("taken")) return 400;
+  if (
+    message.includes("invalid") ||
+    message.includes("empty") ||
+    message.includes("must") ||
+    message.includes("taken") ||
+    message.includes("does not report")
+  ) return 400;
   if (message.includes("not found") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;
   return 500;

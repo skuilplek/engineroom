@@ -136,7 +136,7 @@ test("the hub only opens the signed-in user's runner", async () => {
     const saved = await fetch(`${base}/api/settings`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ defaultAgent: "pi", defaultModel: "small" }),
+      body: JSON.stringify({ defaultAgent: "pi" }),
     });
     assert.equal(saved.status, 200);
     const settings = (await (await fetch(`${base}/api/settings`, { headers })).json()) as { defaultAgent: string };

@@ -162,7 +162,7 @@ function Shell({
         }}
       />
       <section className="main">
-        {view === "settings" && <SettingsView agents={session.agents} />}
+        {view === "settings" && <SettingsView agents={session.agents} options={session.options} />}
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
@@ -176,6 +176,7 @@ function Shell({
         {view === "start" && (
           <StartView
             agents={session.agents}
+            options={session.options}
             workspace={target}
             targetLabel={targetLabel}
             onStarted={(chat, prompt) => {

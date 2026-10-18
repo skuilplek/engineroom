@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { isInsidePath, type PermissionOption, type PermissionPolicy, type StreamEvent } from "@engineroom/protocol";
+import { isInsidePath, type AgentOptionChoice, type PermissionOption, type PermissionPolicy, type StreamEvent } from "@engineroom/protocol";
 import { mapUpdate } from "./map.ts";
 import { JsonRpc } from "./rpc.ts";
 
@@ -301,6 +301,20 @@ function idOf(params: unknown): string {
   if (!params || typeof params !== "object") return "";
   const value = (params as { terminalId?: unknown }).terminalId;
   return typeof value === "string" ? value : "";
+}
+
+export function catalogFromSession(created: unknown): { modes: AgentOptionChoice[]; models: AgentOptionChoice[] } {
+  const body = created && typeof created === "object" ? (created as { modes?: unknown; models?: unknown }) : {};
+  const modes = readModes(body.modes);
+  const models = readModels(body.models);
+  return {
+    modes: (modes?.availableModes ?? []).map((mode) => ({
+      id: mode.id,
+      name: mode.name,
+      ...(mode.description ? { description: mode.description } : {}),
+    })),
+    models: (models?.availableModels ?? []).map((model) => ({ id: model.modelId, name: model.name })),
+  };
 }
 
 function readModes(value: unknown): AcpSession["modes"] {

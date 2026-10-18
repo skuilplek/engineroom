@@ -1,10 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AgentId, Settings } from "@engineroom/protocol";
+import type { AgentId, AgentOptionChoice, Settings } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { getSettings, saveSettings } from "../api.ts";
 import { message } from "../format.ts";
 
-export function SettingsView({ agents }: { agents: AgentId[] }) {
+export function SettingsView({
+  agents,
+  options,
+}: {
+  agents: AgentId[];
+  options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
+}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
@@ -13,9 +19,11 @@ export function SettingsView({ agents }: { agents: AgentId[] }) {
   useEffect(() => {
     getSettings().then((next) => {
       const agent = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent;
-      setSettings({ ...next, defaultAgent: agent, permission: next.permission || "ask" });
+      const models = options[agent]?.models ?? [];
+      const defaultModel = models.some((model) => model.id === next.defaultModel) ? next.defaultModel : models[0]?.id || "";
+      setSettings({ ...next, defaultAgent: agent, defaultModel, permission: next.permission || "ask" });
     }).catch((err) => setError(message(err)));
-  }, [agents]);
+  }, [agents, options]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -33,7 +41,15 @@ export function SettingsView({ agents }: { agents: AgentId[] }) {
     }
   }
 
+  function chooseAgent(agent: Settings["defaultAgent"]) {
+    if (!settings) return;
+    const models = options[agent]?.models ?? [];
+    const defaultModel = models.some((model) => model.id === settings.defaultModel) ? settings.defaultModel : models[0]?.id || "";
+    setSettings({ ...settings, defaultAgent: agent, defaultModel });
+  }
+
   if (!settings) return <p className="settings muted">Loading settings…</p>;
+  const models = options[settings.defaultAgent]?.models ?? [];
   return (
     <form className="settings" onSubmit={submit}>
       <p className="eyebrow">Customize</p>
@@ -42,19 +58,22 @@ export function SettingsView({ agents }: { agents: AgentId[] }) {
         Default agent
         <select
           value={settings.defaultAgent}
-          onChange={(event) => setSettings({ ...settings, defaultAgent: event.target.value as Settings["defaultAgent"] })}
+          onChange={(event) => chooseAgent(event.target.value as Settings["defaultAgent"])}
         >
           {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
         </select>
       </label>
-      <label>
-        Default model
-        <input
-          value={settings.defaultModel}
-          placeholder="Leave blank for the CLI default"
-          onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
-        />
-      </label>
+      {models.length > 0 && (
+        <label>
+          Default model
+          <select
+            value={settings.defaultModel}
+            onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
+          >
+            {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+          </select>
+        </label>
+      )}
       <label>
         Tool approval
         <select

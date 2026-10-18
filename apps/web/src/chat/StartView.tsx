@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { AgentId, ChatMeta } from "@engineroom/protocol";
+import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings } from "../api.ts";
 import { message } from "../format.ts";
@@ -7,11 +7,13 @@ import { IconArrow } from "../icons.tsx";
 
 export function StartView({
   agents,
+  options,
   workspace,
   targetLabel,
   onStarted,
 }: {
   agents: AgentId[];
+  options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   workspace: string;
   targetLabel: string;
   onStarted: (chat: ChatMeta, prompt: string) => void;
@@ -25,14 +27,18 @@ export function StartView({
 
   useEffect(() => {
     getSettings().then((next) => {
-      setAgent(agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent);
-      setModel(next.defaultModel);
+      const chosen = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent;
+      const models = options[chosen]?.models ?? [];
+      setAgent(chosen);
+      setModel(models.some((item) => item.id === next.defaultModel) ? next.defaultModel : models[0]?.id || "");
     }).catch((err) => setError(message(err)));
-  }, [agents]);
+  }, [agents, options]);
 
   useEffect(() => {
     box.current?.focus();
   }, [workspace]);
+
+  const models = options[agent]?.models ?? [];
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -41,12 +47,18 @@ export function StartView({
     setBusy(true);
     setError("");
     try {
-      const chat = await createChat({ agent, model, workspace });
+      const chat = await createChat({ agent, model: models.length > 0 ? model : "", workspace });
       onStarted(chat, text);
     } catch (err) {
       setError(message(err));
       setBusy(false);
     }
+  }
+
+  function chooseAgent(next: AgentId) {
+    const available = options[next]?.models ?? [];
+    setAgent(next);
+    setModel(available.some((item) => item.id === model) ? model : available[0]?.id || "");
   }
 
   return (
@@ -69,15 +81,19 @@ export function StartView({
         <div className="launch-bar">
           {agents.length > 1 && (
             <label className="chip">
-              <select aria-label="Agent" value={agent} onChange={(event) => setAgent(event.target.value as AgentId)}>
+              <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
                 {agents.map((item) => <option key={item} value={item}>{agentLabel(item)}</option>)}
               </select>
             </label>
           )}
-          <label className="chip">
-            Model
-            <input aria-label="Model" value={model} placeholder="default" onChange={(event) => setModel(event.target.value)} />
-          </label>
+          {models.length > 0 && (
+            <label className="chip">
+              Model
+              <select aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)}>
+                {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+          )}
           <button className="send" type="submit" disabled={busy || !prompt.trim()} aria-label="Send">
             <IconArrow />
           </button>

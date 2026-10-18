@@ -3,6 +3,7 @@ import {
   AGENTS,
   agentLabel,
   type AgentId,
+  type AgentOptionChoice,
   type CatalogEntry,
   type EnvEntry,
   type Settings,
@@ -12,11 +13,14 @@ import {
   addAccount,
   addCatalog,
   changePassword,
+  getAgentOptions,
   getUserAccess,
   listAccounts,
   listCatalog,
+  probeAgentOptions,
   removeAccount,
   removeCatalog,
+  saveAgentOptions,
   saveAgents,
   saveUserEnv,
   saveUserGrants,
@@ -24,6 +28,7 @@ import {
   saveUserSettings,
   serverOverview,
   type Account,
+  type AgentOptionsState,
   type ServerOverview,
   type Session,
 } from "../api.ts";
@@ -60,6 +65,8 @@ export function AdminView({
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<AdminTab>("overview");
+  const [agentOptions, setAgentOptions] = useState<AgentOptionsState>({});
+  const [offeredDraft, setOfferedDraft] = useState<Partial<Record<AgentId, { modes: string[]; models: string[] }>>>({});
 
   function openTab(next: AdminTab) {
     setTab(next);
@@ -87,6 +94,14 @@ export function AdminView({
   useEffect(() => {
     refreshUsers().catch((err) => setError(message(err)));
     listCatalog().then((body) => setCatalog(body.repositories)).catch((err) => setError(message(err)));
+    getAgentOptions().then((options) => {
+      setAgentOptions(options);
+      const draft: Partial<Record<AgentId, { modes: string[]; models: string[] }>> = {};
+      for (const agent of AGENTS) {
+        if (options[agent]) draft[agent] = options[agent].offered;
+      }
+      setOfferedDraft(draft);
+    }).catch((err) => setError(message(err)));
   }, []);
 
   function toggle(agent: AgentId) {
@@ -107,7 +122,36 @@ export function AdminView({
     try {
       const savedAgents = await saveAgents(flags, rawTerminal);
       onAgents(savedAgents.agents, savedAgents.rawTerminal ?? rawTerminal);
+      if (Object.keys(offeredDraft).length > 0) {
+        const savedOptions = await saveAgentOptions(offeredDraft);
+        setAgentOptions(savedOptions);
+      }
+      onAccess();
       setSaved("Agents saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleOffered(agent: AgentId, kind: "modes" | "models", id: string) {
+    setOfferedDraft((current) => {
+      const list = current[agent] ?? { modes: [], models: [] };
+      const next = list[kind].includes(id) ? list[kind].filter((item) => item !== id) : [...list[kind], id];
+      return { ...current, [agent]: { ...list, [kind]: next } };
+    });
+  }
+
+  async function loadOptions(agent: AgentId) {
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const record = await probeAgentOptions(agent);
+      setAgentOptions((current) => ({ ...current, [agent]: record }));
+      setOfferedDraft((current) => ({ ...current, [agent]: record.offered }));
+      setSaved(`Loaded ${agentLabel(agent)} modes and models`);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -218,7 +262,7 @@ export function AdminView({
         {tab === "agents" && (
           <form className="admin-pane" onSubmit={(event) => void saveAgentList(event)}>
             <h2>Available agents</h2>
-            <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them.</p>
+            <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Load an agent, then choose the modes and models people can use. Nothing is offered until you save a selection.</p>
             <div className="admin-checks">
               {AGENTS.map((agent) => (
                 <label className="check" key={agent}>
@@ -231,6 +275,57 @@ export function AdminView({
                 Raw terminal
               </label>
             </div>
+            {AGENTS.filter((agent) => flags[agent] && agent !== "pi").map((agent) => {
+              const config = agentOptions[agent];
+              const draft = offeredDraft[agent] ?? { modes: [], models: [] };
+              const enabled = session.agents.includes(agent);
+              return (
+                <div className="option-block" key={agent}>
+                  <h3>{agentLabel(agent)}</h3>
+                  {enabled ? (
+                    <button className="ghost" type="button" disabled={busy} onClick={() => void loadOptions(agent)}>
+                      Load modes and models
+                    </button>
+                  ) : (
+                    <p className="muted">Save this agent before loading its modes and models.</p>
+                  )}
+                  {config && config.discovered.modes.length === 0 && config.discovered.models.length === 0 && (
+                    <p className="muted">This agent did not report any modes or models.</p>
+                  )}
+                  {config && config.discovered.modes.length > 0 && (
+                    <div className="admin-checks">
+                      <span className="muted">Modes</span>
+                      {config.discovered.modes.map((mode) => (
+                        <label className="check" key={mode.id}>
+                          <input
+                            type="checkbox"
+                            checked={draft.modes.includes(mode.id)}
+                            onChange={() => toggleOffered(agent, "modes", mode.id)}
+                          />
+                          {mode.name}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {config && config.discovered.models.length > 0 && (
+                    <div className="admin-checks">
+                      <span className="muted">Models</span>
+                      {config.discovered.models.map((model) => (
+                        <label className="check" key={model.id}>
+                          <input
+                            type="checkbox"
+                            checked={draft.models.includes(model.id)}
+                            onChange={() => toggleOffered(agent, "models", model.id)}
+                          />
+                          {model.name}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {flags.pi && <p className="muted">Pi does not report modes or models.</p>}
             <button className="primary" type="submit" disabled={busy}>Save agents</button>
           </form>
         )}
@@ -302,6 +397,7 @@ export function AdminView({
                   self={selected === session.username}
                   globalAgents={session.agents}
                   globalTerminal={session.rawTerminal}
+                  agentOptions={agentOptions}
                   catalog={catalog}
                   busy={busy}
                   onBusy={setBusy}
@@ -318,7 +414,7 @@ export function AdminView({
               ) : (
                 <div className="admin-empty">
                   <h2>No person selected</h2>
-                  <p className="muted">Choose a person to set their agents, terminal, repositories, environment, and password.</p>
+                  <p className="muted">Choose a person to set their agents, modes, models, terminal, repositories, environment, and password.</p>
                 </div>
               )}
             </section>
@@ -334,6 +430,7 @@ function PersonPanel({
   self,
   globalAgents,
   globalTerminal,
+  agentOptions,
   catalog,
   busy,
   onBusy,
@@ -346,6 +443,7 @@ function PersonPanel({
   self: boolean;
   globalAgents: AgentId[];
   globalTerminal: boolean;
+  agentOptions: AgentOptionsState;
   catalog: CatalogEntry[];
   busy: boolean;
   onBusy: (value: boolean) => void;
@@ -399,6 +497,38 @@ function PersonPanel({
     if (settings && !next.includes(settings.defaultAgent)) setSettings({ ...settings, defaultAgent: next[0]! });
   }
 
+  function optionChecked(agent: AgentId, kind: "modes" | "models", id: string): boolean {
+    if (!policy) return false;
+    const personal = policy.options?.[agent];
+    if (personal) return personal[kind].includes(id);
+    return agentOptions[agent]?.offered[kind].includes(id) ?? false;
+  }
+
+  function toggleOption(agent: AgentId, kind: "modes" | "models", id: string) {
+    if (!policy) return;
+    const current = policy.options?.[agent] ?? {
+      modes: [...(agentOptions[agent]?.offered.modes ?? [])],
+      models: [...(agentOptions[agent]?.offered.models ?? [])],
+    };
+    const nextList = current[kind].includes(id) ? current[kind].filter((item) => item !== id) : [...current[kind], id];
+    const next = { ...current, [kind]: nextList };
+    setPolicy({ ...policy, options: { ...policy.options, [agent]: next } });
+    if (settings && kind === "models" && settings.defaultAgent === agent && !next.models.includes(settings.defaultModel)) {
+      setSettings({ ...settings, defaultModel: next.models[0] || "" });
+    }
+  }
+
+  function chooseDefaultAgent(agent: AgentId) {
+    if (!settings || !policy) return;
+    const personal = policy.options?.[agent];
+    const models = personal?.models ?? agentOptions[agent]?.offered.models ?? [];
+    setSettings({
+      ...settings,
+      defaultAgent: agent,
+      defaultModel: models.includes(settings.defaultModel) ? settings.defaultModel : models[0] || "",
+    });
+  }
+
   function toggleGrant(id: string) {
     setGrants((current) => {
       const next = new Set(current);
@@ -420,11 +550,20 @@ function PersonPanel({
         const value = (policy.binaries[agent] || "").trim();
         if (value) binaries[agent] = value;
       }
-      const savedPolicy = await saveUserPolicy(username, { ...policy, binaries });
+      const options: NonNullable<UserPolicy["options"]> = {};
+      for (const agent of policy.agents) {
+        options[agent] = policy.options?.[agent] ?? {
+          modes: [...(agentOptions[agent]?.offered.modes ?? [])],
+          models: [...(agentOptions[agent]?.offered.models ?? [])],
+        };
+      }
+      const modelIds = options[settings.defaultAgent]?.models ?? [];
+      const defaultModel = modelIds.includes(settings.defaultModel) ? settings.defaultModel : modelIds[0] || "";
+      const savedPolicy = await saveUserPolicy(username, { ...policy, binaries, options });
       setPolicy(savedPolicy);
       const savedSettings = await saveUserSettings(username, {
         defaultAgent: settings.defaultAgent,
-        defaultModel: settings.defaultModel,
+        defaultModel,
         permission: settings.permission,
       });
       setSettings(savedSettings);
@@ -509,7 +648,7 @@ function PersonPanel({
     <div className="person-panel">
       <h2>{username}</h2>
       <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, the terminal, defaults, and repositories for this person.</p>
+        <p className="muted">Agents, modes, models, the terminal, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
           {globalAgents.map((agent) => (
             <label className="check" key={agent}>
@@ -538,23 +677,59 @@ function PersonPanel({
           Terminal
         </label>
         {!globalTerminal && <p className="muted">The terminal is off for everyone, so this stays off until that is turned on.</p>}
+        {allowed.map((agent) => {
+          const config = agentOptions[agent];
+          const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));
+          const models = (config?.discovered.models ?? []).filter((model) => config?.offered.models.includes(model.id));
+          if (agent === "pi") {
+            return <p className="muted" key={`${agent}-options`}>Pi does not report modes or models.</p>;
+          }
+          if (modes.length === 0 && models.length === 0) {
+            return <p className="muted" key={`${agent}-options`}>Load modes and models for {agentLabel(agent)} on the Agents tab before choosing any for this person.</p>;
+          }
+          return (
+            <div className="option-block" key={`${agent}-options`}>
+              <h3>{agentLabel(agent)}</h3>
+              {modes.length > 0 && (
+                <div className="admin-checks">
+                  <span className="muted">Modes</span>
+                  {modes.map((mode) => (
+                    <label className="check" key={mode.id}>
+                      <input type="checkbox" checked={optionChecked(agent, "modes", mode.id)} onChange={() => toggleOption(agent, "modes", mode.id)} />
+                      {mode.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {models.length > 0 && (
+                <div className="admin-checks">
+                  <span className="muted">Models</span>
+                  {models.map((model) => (
+                    <label className="check" key={model.id}>
+                      <input type="checkbox" checked={optionChecked(agent, "models", model.id)} onChange={() => toggleOption(agent, "models", model.id)} />
+                      {model.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
         <label>
           Default agent
           <select
             value={settings.defaultAgent}
-            onChange={(event) => setSettings({ ...settings, defaultAgent: event.target.value as AgentId })}
+            onChange={(event) => chooseDefaultAgent(event.target.value as AgentId)}
           >
             {allowed.map((agent) => <option key={agent} value={agent}>{agentLabel(agent)}</option>)}
           </select>
         </label>
-        <label>
-          Default model
-          <input
-            value={settings.defaultModel}
-            placeholder="Leave blank for the CLI default"
-            onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
-          />
-        </label>
+        <DefaultModelField
+          agent={settings.defaultAgent}
+          model={settings.defaultModel}
+          choices={defaultModelChoices(settings.defaultAgent, policy, agentOptions)}
+          onChange={(defaultModel) => setSettings({ ...settings, defaultModel })}
+        />
         <label>
           Tool approval
           <select
@@ -736,6 +911,37 @@ function formatUptime(seconds: number): string {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+function defaultModelChoices(agent: AgentId, policy: UserPolicy, agentOptions: AgentOptionsState): AgentOptionChoice[] {
+  const config = agentOptions[agent];
+  if (!config) return [];
+  const personal = policy.options?.[agent]?.models;
+  const allowed = new Set(personal ?? config.offered.models);
+  return config.discovered.models.filter((model) => config.offered.models.includes(model.id) && allowed.has(model.id));
+}
+
+function DefaultModelField({
+  agent,
+  model,
+  choices,
+  onChange,
+}: {
+  agent: AgentId;
+  model: string;
+  choices: AgentOptionChoice[];
+  onChange: (model: string) => void;
+}) {
+  if (choices.length === 0) return <p className="muted">No models are enabled for {agentLabel(agent)}.</p>;
+  const value = choices.some((choice) => choice.id === model) ? model : choices[0]!.id;
+  return (
+    <label>
+      Default model
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+      </select>
+    </label>
+  );
 }
 
 function agentFlags(agents: AgentId[]): Record<AgentId, boolean> {

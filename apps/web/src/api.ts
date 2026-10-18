@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  AgentOptionChoice,
   CatalogEntry,
   ChatDetail,
   ChatMeta,
@@ -11,12 +12,20 @@ import type {
   UserPolicy,
 } from "@engineroom/protocol";
 
+export interface AgentOptionConfig {
+  discovered: { modes: AgentOptionChoice[]; models: AgentOptionChoice[]; probedAt: string };
+  offered: { modes: string[]; models: string[] };
+}
+
+export type AgentOptionsState = Partial<Record<AgentId, AgentOptionConfig>>;
+
 export interface Session {
   username: string;
   home: string;
   admin: boolean;
   agents: AgentId[];
   rawTerminal: boolean;
+  options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
 
 export interface Account {
@@ -186,6 +195,21 @@ export interface ServerOverview {
 
 export function serverOverview() {
   return api<ServerOverview>("/api/admin/overview");
+}
+
+export function getAgentOptions() {
+  return api<AgentOptionsState>("/api/admin/agent-options");
+}
+
+export function saveAgentOptions(offered: Partial<Record<AgentId, { modes: string[]; models: string[] }>>) {
+  return api<AgentOptionsState>("/api/admin/agent-options", {
+    method: "PUT",
+    body: JSON.stringify(offered),
+  });
+}
+
+export function probeAgentOptions(agent: AgentId) {
+  return api<AgentOptionConfig>(`/api/admin/agent-options/${agent}/probe`, { method: "POST" });
 }
 
 export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean) {

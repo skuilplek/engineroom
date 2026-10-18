@@ -117,10 +117,23 @@ export interface CatalogEntry {
   url: string;
 }
 
+export interface AgentOptionChoice {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface AgentOptionList {
+  modes: string[];
+  models: string[];
+}
+
 export interface UserPolicy {
   agents: AgentId[];
   binaries: Partial<Record<AgentId, string>>;
   rawTerminal: boolean;
+  /** Omitted means the person inherits the machine offer. */
+  options?: Partial<Record<AgentId, AgentOptionList>>;
 }
 
 export interface EnvEntry {
@@ -230,7 +243,8 @@ export type RunnerRequest =
   | { id: string; type: "pty_close"; chatId: string }
   | { id: string; type: "pty_detach"; chatId: string }
   | { id: string; type: "list_sessions"; agent?: AgentId }
-  | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string };
+  | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
+  | { id: string; type: "probe_agent"; agent: AgentId };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -380,7 +394,10 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         optionId: token(body.optionId, "option"),
       };
     case "set_mode":
-      return { id: body.id, type: "set_mode", chatId: assertChatId(body.chatId), modeId: token(body.modeId, "mode") };
+      return { id: body.id, type: "set_mode", chatId: assertChatId(body.chatId), modeId: body.modeId === "" ? "" : token(body.modeId, "mode") };
+    case "probe_agent":
+      if (!isAgentId(body.agent)) throw new Error("invalid agent");
+      return { id: body.id, type: "probe_agent", agent: body.agent };
     case "set_model":
       return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
     case "pty_open":
@@ -547,7 +564,63 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     agents.push(agent);
   }
   if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
-  return { agents, binaries: parsePolicyBinaries(body.binaries), rawTerminal: body.rawTerminal };
+  const options = parsePolicyOptions(body.options);
+  return { agents, binaries: parsePolicyBinaries(body.binaries), rawTerminal: body.rawTerminal, ...(options ? { options } : {}) };
+}
+
+export function parseOptionIds(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error(`invalid ${label}`);
+  const ids: string[] = [];
+  for (const item of value) {
+    const id = cleanModel(item);
+    if (!id) throw new Error(`invalid ${label}`);
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function parsePolicyOptions(value: unknown): UserPolicy["options"] {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid options");
+  const options: NonNullable<UserPolicy["options"]> = {};
+  let seen = false;
+  for (const agent of AGENTS) {
+    const raw = (value as Record<string, unknown>)[agent];
+    if (raw == null) continue;
+    if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid options");
+    const record = raw as Record<string, unknown>;
+    options[agent] = {
+      modes: parseOptionIds(record.modes, "mode"),
+      models: parseOptionIds(record.models, "model"),
+    };
+    seen = true;
+  }
+  return seen ? options : undefined;
+}
+
+export function effectiveAgentOptions(
+  discovered: { modes: AgentOptionChoice[]; models: AgentOptionChoice[] } | undefined,
+  offered: AgentOptionList | undefined,
+  personal: AgentOptionList | undefined,
+): { modes: AgentOptionChoice[]; models: AgentOptionChoice[] } {
+  return {
+    modes: offeredChoices(discovered?.modes ?? [], offered?.modes ?? [], personal?.modes),
+    models: offeredChoices(discovered?.models ?? [], offered?.models ?? [], personal?.models),
+  };
+}
+
+function offeredChoices(available: AgentOptionChoice[], offeredIds: string[], personalIds: string[] | undefined): AgentOptionChoice[] {
+  const offered = new Set(offeredIds);
+  const personal = personalIds ? new Set(personalIds) : null;
+  const seen = new Set<string>();
+  const choices: AgentOptionChoice[] = [];
+  for (const choice of available) {
+    if (!offered.has(choice.id) || seen.has(choice.id)) continue;
+    if (personal && !personal.has(choice.id)) continue;
+    seen.add(choice.id);
+    choices.push(choice);
+  }
+  return choices;
 }
 
 export function defaultPolicy(): UserPolicy {

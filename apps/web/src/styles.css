@@ -527,7 +527,10 @@ details summary { cursor: pointer; color: var(--soft); }
   justify-self: start;
   width: auto;
 }
-.admin-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.admin-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.admin-checks > .muted { flex-basis: 100%; }
+.option-block { display: grid; gap: 8px; }
+.option-block h3 { margin: 4px 0 0; font-size: 14px; }
 .admin-empty {
   min-height: 100%;
   display: grid;

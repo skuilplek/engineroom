@@ -11,6 +11,7 @@ import {
   loginAllowed,
   parseCatalogEntries,
   parseEnvEntries,
+  effectiveAgentOptions,
   parseClientCommand,
   parseRunnerRequest,
   parseUserPolicy,
@@ -105,6 +106,41 @@ test("child env takes ~/.env values except identity and loader variables", async
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("policy options stay optional and narrow the offered catalog", () => {
+  const inherited = parseUserPolicy({ agents: ["cursor"], rawTerminal: true });
+  assert.equal(inherited.options, undefined);
+  const narrowed = parseUserPolicy({
+    agents: ["cursor"],
+    rawTerminal: false,
+    options: { cursor: { modes: ["agent", "plan"], models: ["gpt-5"] } },
+  });
+  assert.deepEqual(narrowed.options?.cursor, { modes: ["agent", "plan"], models: ["gpt-5"] });
+  assert.throws(() => parseUserPolicy({
+    agents: ["cursor"],
+    rawTerminal: true,
+    options: { cursor: { modes: ["bad\nmode"], models: [] } },
+  }));
+  const effective = effectiveAgentOptions(
+    {
+      modes: [{ id: "agent", name: "Agent" }, { id: "plan", name: "Plan" }],
+      models: [{ id: "gpt-5", name: "GPT" }, { id: "opus", name: "Opus" }],
+    },
+    { modes: ["agent", "plan"], models: ["gpt-5"] },
+    { modes: ["plan", "ask"], models: ["opus", "gpt-5"] },
+  );
+  assert.deepEqual(effective.modes.map((mode) => mode.id), ["plan"]);
+  assert.deepEqual(effective.models.map((model) => model.id), ["gpt-5"]);
+  const open = effectiveAgentOptions(
+    { modes: [{ id: "agent", name: "Agent" }], models: [] },
+    { modes: ["agent"], models: [] },
+    undefined,
+  );
+  assert.deepEqual(open.modes.map((mode) => mode.id), ["agent"]);
+  const probed = parseRunnerRequest({ id: "1", type: "probe_agent", agent: "cursor" });
+  assert.equal(probed.type, "probe_agent");
+  assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "nope" }));
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

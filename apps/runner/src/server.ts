@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, chmod, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { chmod, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { peerCredentials } from "@engineroom/peercred";
 import {
   assertChatId,
@@ -211,13 +213,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         if (!acp?.respond(request.chatId, request.requestId, request.optionId)) throw new Error("no pending permission");
         return { ok: true };
       case "set_mode":
-        await updateChat(home, request.chatId, { mode: request.modeId });
-        await acp?.setMode(request.chatId, request.modeId);
-        return { ok: true };
+        return applyMode(request.chatId, request.modeId);
       case "set_model":
-        await updateChat(home, request.chatId, { model: request.modelId });
-        await acp?.setModel(request.chatId, request.modelId);
-        return { ok: true };
+        return applyModel(request.chatId, request.modelId);
       case "pty_open":
         return openPty(request.chatId, request.cols, request.rows, held);
       case "pty_input":
@@ -282,6 +280,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         if (!policy.agents.includes(agent)) throw new Error("invalid agent");
         return createChat(home, request);
       }
+      case "set_mode":
+        return applyMode(request.chatId, request.modeId);
+      case "set_model":
+        return applyModel(request.chatId, request.modelId);
+      case "probe_agent":
+        return probeAgent(request.agent);
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -291,6 +295,40 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return importSession(request.agent, request.agentSessionId, request.workspace);
       default:
         throw new Error("unsupported request");
+    }
+  }
+
+  async function applyMode(chatId: string, modeId: string) {
+    await assertPersonalOption(chatId, "mode", modeId);
+    await updateChat(home, chatId, { mode: modeId });
+    if (modeId) await acp?.setMode(chatId, modeId);
+    return { ok: true };
+  }
+
+  async function applyModel(chatId: string, modelId: string) {
+    await assertPersonalOption(chatId, "model", modelId);
+    await updateChat(home, chatId, { model: modelId });
+    if (modelId) await acp?.setModel(chatId, modelId);
+    return { ok: true };
+  }
+
+  async function assertPersonalOption(chatId: string, kind: "mode" | "model", id: string) {
+    if (!id) return;
+    const detail = await getChat(home, chatId, runs.has(chatId));
+    const policy = await loadPolicy(home);
+    const options = policy.options?.[detail.chat.agent];
+    if (!options) return;
+    const allowed = kind === "mode" ? options.modes : options.models;
+    if (!allowed.includes(id)) throw new Error(kind === "mode" ? "invalid mode" : "invalid model");
+  }
+
+  async function probeAgent(agent: AgentId) {
+    if (!acp?.supports(agent)) throw new Error("this agent does not report modes or models");
+    const cwd = await mkdtemp(path.join(tmpdir(), "er-probe-"));
+    try {
+      return await acp.probe(agent, cwd, process.env, home);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
     }
   }
 
