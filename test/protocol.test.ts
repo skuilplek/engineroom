@@ -5,6 +5,7 @@ import {
   DEFAULT_SETTINGS,
   isInsidePath,
   loginAllowed,
+  parseClientCommand,
   parseRunnerRequest,
   socketPathForUser,
 } from "@engineroom/protocol";
@@ -15,6 +16,8 @@ import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
 test("login is limited to real user accounts in the group", () => {
   assert.equal(loginAllowed({ uid: 1000, shell: "/bin/bash", groups: ["engineroom-users"] }), true);
+  assert.equal(loginAllowed({ uid: 501, shell: "/bin/bash", groups: ["engineroom-users"] }), true);
+  assert.equal(loginAllowed({ uid: 499, shell: "/bin/bash", groups: ["engineroom-users"] }), false);
   assert.equal(loginAllowed({ uid: 0, shell: "/bin/bash", groups: ["engineroom-users"] }), false);
   assert.equal(loginAllowed({ uid: 1000, shell: "/usr/sbin/nologin", groups: ["engineroom-users"] }), false);
   assert.equal(loginAllowed({ uid: 1000, shell: "/bin/bash", groups: ["users"] }), false);
@@ -49,6 +52,16 @@ test("runner requests reject a chat id that is not a uuid", () => {
   if (enabled.type === "set_repositories") assert.deepEqual(enabled.enabled, ["/home/alice/proj"]);
   assert.throws(() => parseRunnerRequest({ id: "4", type: "set_repositories", enabled: "proj" }));
   assert.throws(() => parseRunnerRequest({ id: "5", type: "set_repositories", enabled: [""] }));
+  const watched = parseRunnerRequest({
+    id: "6",
+    type: "watch",
+    chatId: "11111111-1111-1111-1111-111111111111",
+    lastSeq: 3,
+  });
+  assert.equal(watched.type, "watch");
+  assert.throws(() => parseRunnerRequest({ id: "7", type: "pty_open", chatId: "11111111-1111-1111-1111-111111111111", cols: 0, rows: 24 }));
+  const command = parseClientCommand({ type: "prompt", chatId: "11111111-1111-1111-1111-111111111111", prompt: "hi" });
+  assert.equal(command.type, "prompt");
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

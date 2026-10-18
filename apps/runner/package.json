@@ -2,5 +2,8 @@
   "name": "@engineroom/runner",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "node-pty": "1.0.0"
+  }
 }

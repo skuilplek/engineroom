@@ -41,6 +41,9 @@ export async function loadSettings(home: string): Promise<Settings> {
         patch.defaultModel = "";
       }
     }
+    if (parsed.permission === "ask" || parsed.permission === "allow" || parsed.permission === "edits") {
+      patch.permission = parsed.permission;
+    }
     if (parsed.binaries && typeof parsed.binaries === "object") patch.binaries = parsed.binaries;
     return applySettings(DEFAULT_SETTINGS, patch);
   } catch (error) {
@@ -146,6 +149,10 @@ export async function updateChat(home: string, chatId: string, patch: Partial<Ch
   delete next.running;
   await writeAtomic(path.join(chatDir(home, chatId), "meta.json"), `${JSON.stringify(next, null, 2)}\n`);
   return next;
+}
+
+export async function clearTranscript(home: string, chatId: string): Promise<void> {
+  await writeFile(path.join(chatDir(home, chatId), "transcript.jsonl"), "", { mode: 0o600 });
 }
 
 export async function appendTranscript(home: string, chatId: string, entry: TranscriptEntry): Promise<void> {

@@ -1,10 +1,11 @@
-import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
+import type { AgentId, ChatDetail, ChatMeta, RepositoryEntry, Settings } from "@engineroom/protocol";
 
 export interface Session {
   username: string;
   home: string;
   admin: boolean;
   agents: AgentId[];
+  rawTerminal: boolean;
 }
 
 export interface Account {
@@ -108,82 +109,13 @@ export function revokeAccount(username: string) {
   return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/revoke`, { method: "POST" });
 }
 
-export function saveAgents(flags: Record<AgentId, boolean>) {
-  return api<{ agents: AgentId[] }>("/api/admin/agents", {
+export function saveAgents(flags: Record<AgentId, boolean>, rawTerminal?: boolean) {
+  return api<{ agents: AgentId[]; rawTerminal?: boolean }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify(flags),
+    body: JSON.stringify({ ...flags, rawTerminal }),
   });
 }
 
 export function cancelChat(id: string) {
   return api<{ ok: boolean }>(`/api/chats/${id}/cancel`, { method: "POST" });
-}
-
-export async function followChat(
-  chatId: string,
-  from: number,
-  onEntry: (entry: TranscriptEntry) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const response = await fetch(`/api/chats/${chatId}/live?from=${from}`, {
-    cache: "no-store",
-    signal,
-    headers: { Accept: "text/event-stream" },
-  });
-  if (!response.ok || !response.body) {
-    throw new ApiError(response.status, response.statusText || "live follow failed");
-  }
-  await readSse(response, (data) => {
-    const body = JSON.parse(data) as { entry?: TranscriptEntry; error?: string };
-    if (body.error) throw new Error(body.error);
-    if (body.entry) onEntry(body.entry);
-  });
-}
-
-export async function sendMessage(
-  chatId: string,
-  prompt: string,
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch(`/api/chats/${chatId}/messages`, {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-    signal,
-  });
-  if (!response.ok || !response.body) {
-    let message = response.statusText || "send failed";
-    try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(response.status, message);
-  }
-  await readSse(response, (data) => onEvent(JSON.parse(data) as StreamEvent));
-}
-
-async function readSse(response: Response, onData: (data: string) => void): Promise<void> {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() || "";
-    for (const chunk of chunks) {
-      const data = chunk
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
-        .join("\n");
-      if (!data) continue;
-      onData(data);
-    }
-  }
 }

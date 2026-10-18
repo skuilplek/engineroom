@@ -17,7 +17,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y build-essential libpam0g-dev ca-certificates curl xz-utils caddy
+apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl xz-utils caddy
 
 install_node() {
   local current=""

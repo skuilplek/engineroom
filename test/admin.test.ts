@@ -10,6 +10,7 @@ import { createHub } from "../apps/hub/src/server.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
+import "./peercred-helper.ts";
 
 test("the administrator sets agents and accounts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-admin-"));

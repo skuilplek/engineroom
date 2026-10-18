@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { assertUsername, isAgentId, isInsidePath, type AgentId, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { WebSocketServer, type WebSocket } from "ws";
+import { assertUsername, decodePtyFrame, encodePtyFrame, isAgentId, isInsidePath, parseClientCommand, type AgentId, type ChatMeta, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
-import { enabledAgentIds, flagsFromBody, loadAgentFlags, saveAgentFlags } from "./agents.ts";
+import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
+import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
 import { clearCookie, cookieValue, readSession, sessionCookie, signSession } from "./session.ts";
 
@@ -51,12 +53,33 @@ export function createHub(options: HubOptions) {
     ((action: "add" | "revoke", username: string, password?: string) =>
       runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password));
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
       const message = error instanceof Error ? error.message : "request failed";
       sendJson(res, statusFor(message), { error: message });
     });
   });
+  const sockets = new WebSocketServer({ noServer: true, maxPayload: 1_000_000 });
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url || "/", "http://hub.local");
+    if (url.pathname !== "/api/ws") {
+      socket.destroy();
+      return;
+    }
+    if (!originAllowed(req)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    sockets.handleUpgrade(req, socket, head, (ws) => {
+      void handleWebSocket(req, ws).catch((error) => {
+        const message = error instanceof Error ? error.message : "socket failed";
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "error", error: message }));
+        ws.close();
+      });
+    });
+  });
+  return server;
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -131,6 +154,7 @@ export function createHub(options: HubOptions) {
       home: user.home,
       admin: adminUser !== "" && user.username === adminUser,
       agents: enabledAgentIds(loadAgentFlags(agentsFile)),
+      rawTerminal: loadRawTerminal(agentsFile),
     };
   }
 
@@ -145,8 +169,9 @@ export function createHub(options: HubOptions) {
     }
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
-      const flags = saveAgentFlags(agentsFile, flagsFromBody(await readJson(req)));
-      sendJson(res, 200, { agents: enabledAgentIds(flags) });
+      const body = await readJson(req);
+      const flags = saveAgentFlags(agentsFile, flagsFromBody(body), rawTerminalFrom(body));
+      sendJson(res, 200, { agents: enabledAgentIds(flags), rawTerminal: loadRawTerminal(agentsFile) });
       return;
     }
     if (parts[2] === "users" && parts.length === 3 && req.method === "GET") {
@@ -245,97 +270,111 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "cancel", chatId: parts[2]! }));
       return;
     }
-    if (parts[1] === "chats" && parts[3] === "live" && parts.length === 4 && req.method === "GET") {
-      const from = Number(url.searchParams.get("from") || "0");
-      await followChat(req, res, user, parts[2]!, Number.isInteger(from) && from > 0 ? from : 0);
-      return;
-    }
     if (parts[1] === "chats" && parts[3] === "messages" && req.method === "POST") {
       const body = (await readJson(req)) as { prompt?: unknown };
       if (typeof body.prompt !== "string") throw new Error("prompt is empty");
-      await streamMessage(res, user, parts[2]!, body.prompt);
+      const detail = (await call(user, { type: "get_chat", chatId: parts[2]! })) as { chat: { agent: AgentId } };
+      assertAgentEnabled(detail.chat.agent);
+      sendJson(res, 202, await call(user, { type: "send", chatId: parts[2]!, prompt: body.prompt }));
       return;
     }
     sendJson(res, 404, { error: "not found" });
   }
 
-  async function followChat(req: IncomingMessage, res: ServerResponse, user: LinuxUser, chatId: string, from: number) {
-    let closed = false;
-    const markClosed = () => {
-      closed = true;
+  async function handleWebSocket(req: IncomingMessage, ws: WebSocket) {
+    const username = readSession(cookieValue(req.headers.cookie), options.sessionSecret);
+    const user = username ? lookup(username) : null;
+    if (!user || !userMayLogin(user)) {
+      ws.close(4401, "sign in required");
+      return;
+    }
+    const held = new Set<string>();
+    const queued: Array<{ data: Buffer | ArrayBuffer | Buffer[]; isBinary: boolean }> = [];
+    let channel: RunnerChannel | null = null;
+    const deliver = (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (!channel) {
+        queued.push({ data, isBinary });
+        return;
+      }
+      void onClientMessage(user, channel, ws, data, isBinary, held).catch((error) => {
+        const message = error instanceof Error ? error.message : "request failed";
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "error", error: message }));
+      });
     };
-    res.on("close", markClosed);
-    beginSse(res);
-    let cursor = from;
-    let sawRunning = false;
-    let quiet = 0;
-    try {
-      while (!closed) {
-        const detail = (await call(user, { type: "get_chat", chatId })) as {
-          chat: { running?: boolean };
-          transcript: TranscriptEntry[];
-        };
-        if (detail.chat.running) sawRunning = true;
-        const fresh = detail.transcript.slice(cursor);
-        for (const entry of fresh) writeSse(res, { entry });
-        cursor += fresh.length;
-        if (sawRunning && !detail.chat.running && fresh.length === 0) {
-          quiet += 1;
-          if (quiet >= 3) break;
-        } else {
-          quiet = 0;
-        }
-        if (closed) break;
-        await new Promise((resolve) => setTimeout(resolve, 200));
+    let closed = false;
+    ws.on("message", (data, isBinary) => deliver(data, isBinary));
+    ws.on("close", () => {
+      closed = true;
+      if (!channel) return;
+      for (const chatId of held) {
+        void channel.request({ id: randomUUID(), type: "pty_detach", chatId }).catch(() => undefined);
       }
-    } catch (error) {
-      if (!res.headersSent) throw error;
-      const message = error instanceof Error ? error.message : "live follow failed";
-      if (!res.writableEnded) writeSse(res, { error: message });
-    } finally {
-      if (!res.writableEnded) res.end();
-    }
-  }
-
-  async function streamMessage(res: ServerResponse, user: LinuxUser, chatId: string, prompt: string) {
-    beginSse(res);
-    let finished = false;
-    let sawFailure = false;
-    res.on("close", () => {
-      if (!finished) {
-        finished = true;
-        void call(user, { type: "cancel", chatId }).catch(() => undefined);
-      }
+      channel.close();
     });
-    try {
-      await call(
-        user,
-        { type: "send", chatId, prompt },
-        (event) => {
-          if (event.type === "error") sawFailure = true;
-          if (!res.writableEnded) writeSse(res, event);
-        },
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "send failed";
-      if (!sawFailure && !res.writableEnded) {
-        const event: StreamEvent = { type: "error", text: message };
-        writeSse(res, event);
-      }
-    } finally {
-      finished = true;
-      if (!res.writableEnded) res.end();
+    channel = await RunnerChannel.open(options.link, user.username, user.uid, (message) => forward(ws, message));
+    if (closed || ws.readyState !== ws.OPEN) {
+      channel.close();
+      return;
+    }
+    const early = queued.splice(0);
+    for (const item of early) deliver(item.data, item.isBinary);
+  }
+
+  async function onClientMessage(
+    user: LinuxUser,
+    channel: RunnerChannel,
+    ws: WebSocket,
+    data: Buffer | ArrayBuffer | Buffer[],
+    isBinary: boolean,
+    held: Set<string>,
+  ) {
+    if (isBinary) {
+      const frame = decodePtyFrame(rawBytes(data));
+      if (!frame) return;
+      await channel.request({
+        id: randomUUID(),
+        type: "pty_input",
+        chatId: frame.chatId,
+        data: Buffer.from(frame.data).toString("base64"),
+      });
+      return;
+    }
+    const command = parseClientCommand(JSON.parse(Buffer.from(rawBytes(data)).toString("utf8")));
+    if (command.type === "prompt" || command.type === "send" || command.type === "pty_open" || command.type === "set_mode" || command.type === "set_model") {
+      const detail = (await channel.request({ id: randomUUID(), type: "get_chat", chatId: command.chatId })) as { chat: { agent: AgentId } };
+      assertAgentEnabled(detail.chat.agent);
+    }
+    if ((command.type === "list_sessions" || command.type === "import_session") && command.agent) {
+      assertAgentEnabled(command.agent);
+    }
+    if (command.type === "import_session" && !command.agent) assertAgentEnabled("cursor");
+    const result = await channel.request({ ...command, id: randomUUID() });
+    if (command.type === "pty_open") held.add(command.chatId);
+    if (command.type === "pty_close" || command.type === "pty_detach") held.delete(command.chatId);
+    if (ws.readyState !== ws.OPEN) return;
+    if (command.type === "watch") {
+      ws.send(JSON.stringify({ type: "snapshot", chatId: command.chatId, ...(result as object) }));
+      return;
+    }
+    if (command.type === "prompt" || command.type === "send") {
+      const accepted = (result ?? {}) as { queued?: boolean };
+      ws.send(JSON.stringify({ type: "accepted", chatId: command.chatId, queued: Boolean(accepted.queued) }));
+      return;
+    }
+    if (command.type === "list_sessions") {
+      ws.send(JSON.stringify({ type: "sessions", ...(result as object) }));
+      return;
+    }
+    if (command.type === "import_session") {
+      ws.send(JSON.stringify({ type: "imported", chat: result as ChatMeta }));
+    }
+    if (command.type === "pty_open") {
+      ws.send(JSON.stringify({ type: "pty_open", chatId: command.chatId, ...(result as object) }));
     }
   }
 
-  function call(user: LinuxUser, request: RunnerCall, onEvent?: (event: StreamEvent) => void) {
-    return callRunner(
-      options.link,
-      user.username,
-      user.uid,
-      { ...request, id: randomUUID() } as RunnerRequest,
-      onEvent,
-    );
+  function call(user: LinuxUser, request: RunnerCall) {
+    return callRunner(options.link, user.username, user.uid, { ...request, id: randomUUID() } as RunnerRequest);
   }
 
   function serveStatic(req: IncomingMessage, res: ServerResponse, pathname: string) {
@@ -373,22 +412,40 @@ function streamFile(res: ServerResponse, file: string) {
   createReadStream(file).pipe(res);
 }
 
-function beginSse(res: ServerResponse) {
-  res.socket?.setNoDelay(true);
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache, no-store, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.write(`: ${" ".repeat(2048)}\n\n`);
+function forward(ws: WebSocket, message: PushMessage) {
+  if (ws.readyState !== ws.OPEN) return;
+  if (message.type === "pty") {
+    ws.send(encodePtyFrame(message.chatId, Buffer.from(message.data, "base64")));
+    return;
+  }
+  if (message.type === "chats_changed") {
+    ws.send(JSON.stringify({ type: "chats_changed" }));
+    return;
+  }
+  ws.send(JSON.stringify({ type: "event", chatId: message.chatId, seq: message.seq, at: message.at, event: message.event }));
 }
 
-function writeSse(res: ServerResponse, body: unknown) {
-  if (res.writableEnded) return;
-  res.write(`data: ${JSON.stringify(body)}\n\n`);
-  const flushable = res as ServerResponse & { flush?: () => void };
-  flushable.flush?.();
+function originAllowed(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function rawTerminalFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { rawTerminal?: unknown }).rawTerminal;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
+  if (Buffer.isBuffer(data)) return new Uint8Array(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  return new Uint8Array(Buffer.concat(data));
 }
 
 function statusFor(message: string): number {

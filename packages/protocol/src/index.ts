@@ -12,16 +12,20 @@ export const USERNAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
 export const CHAT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export type PermissionPolicy = "ask" | "allow" | "edits";
+
 export interface Settings {
   defaultAgent: AgentId;
   defaultModel: string;
   binaries: Partial<Record<AgentId, string>>;
+  permission: PermissionPolicy;
 }
 
 export interface SettingsPatch {
   defaultAgent?: AgentId;
   defaultModel?: string;
   binaries?: Partial<Record<AgentId, string | null>>;
+  permission?: PermissionPolicy;
 }
 
 export interface ChatMeta {
@@ -34,9 +38,42 @@ export interface ChatMeta {
   createdAt: string;
   updatedAt: string;
   running?: boolean;
+  mode?: string;
+  needsResync?: boolean;
 }
 
-export type TranscriptEntry =
+export interface ToolContentText {
+  type: "text";
+  text: string;
+}
+
+export interface ToolContentDiff {
+  type: "diff";
+  path: string;
+  oldText?: string;
+  newText?: string;
+}
+
+export interface ToolContentTerminal {
+  type: "terminal";
+  terminalId: string;
+}
+
+export type ToolContent = ToolContentText | ToolContentDiff | ToolContentTerminal;
+
+export interface PlanEntry {
+  content: string;
+  status: string;
+  priority?: string;
+}
+
+export interface PermissionOption {
+  optionId: string;
+  name: string;
+  kind: string;
+}
+
+export type TranscriptEntry = (
   | { kind: "user"; text: string; at: string }
   | { kind: "text"; text: string; at: string }
   | {
@@ -46,11 +83,16 @@ export type TranscriptEntry =
       phase: "start" | "done" | "error";
       input?: string;
       output?: string;
+      toolKind?: string;
+      title?: string;
+      content?: ToolContent[];
       at: string;
     }
   | { kind: "error"; text: string; at: string }
   | { kind: "status"; text: string; at: string }
-  | { kind: "thinking"; text: string; at: string };
+  | { kind: "thinking"; text: string; at: string }
+  | { kind: "plan"; entries: PlanEntry[]; at: string }
+) & { seq?: number };
 
 export interface ChatDetail {
   chat: ChatMeta;
@@ -69,7 +111,8 @@ export interface RepositoryEntry {
 }
 
 export type StreamEvent =
-  | { type: "text_delta"; text: string }
+  | { type: "user_message"; text: string }
+  | { type: "text_delta"; text: string; messageId?: string }
   | {
       type: "tool";
       id: string;
@@ -77,11 +120,50 @@ export type StreamEvent =
       phase: "start" | "done" | "error";
       input?: string;
       output?: string;
+      toolKind?: string;
+      title?: string;
+      status?: string;
+      locations?: string[];
+      content?: ToolContent[];
     }
+  | { type: "terminal_output"; terminalId: string; data: string }
+  | { type: "plan"; entries: PlanEntry[] }
+  | { type: "permission_request"; requestId: string; toolCallId?: string; title?: string; options: PermissionOption[] }
+  | { type: "permission_resolved"; requestId: string; optionId: string }
+  | { type: "turn_start" }
+  | { type: "turn_end"; stopReason?: string }
+  | { type: "queued"; text: string }
+  | { type: "mode"; modeId: string }
+  | { type: "title"; text: string }
   | { type: "status"; text: string }
   | { type: "thinking"; text: string }
   | { type: "error"; text: string }
   | { type: "done"; agentSessionId?: string | null };
+
+export interface ChatEvent {
+  chatId: string;
+  seq: number;
+  at: string;
+  event: StreamEvent;
+}
+
+export interface AgentMode {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface AgentModel {
+  modelId: string;
+  name: string;
+}
+
+export interface ListedSession {
+  sessionId: string;
+  cwd?: string;
+  updatedAt?: string;
+  title?: string;
+}
 
 export type RunnerRequest =
   | { id: string; type: "list_chats" }
@@ -100,7 +182,21 @@ export type RunnerRequest =
   | { id: string; type: "list_repositories" }
   | { id: string; type: "set_repositories"; enabled: string[] }
   | { id: string; type: "send"; chatId: string; prompt: string }
-  | { id: string; type: "cancel"; chatId: string };
+  | { id: string; type: "prompt"; chatId: string; prompt: string }
+  | { id: string; type: "cancel"; chatId: string }
+  | { id: string; type: "subscribe" }
+  | { id: string; type: "watch"; chatId: string; lastSeq: number }
+  | { id: string; type: "unwatch"; chatId: string }
+  | { id: string; type: "permission_response"; chatId: string; requestId: string; optionId: string }
+  | { id: string; type: "set_mode"; chatId: string; modeId: string }
+  | { id: string; type: "set_model"; chatId: string; modelId: string }
+  | { id: string; type: "pty_open"; chatId: string; cols: number; rows: number }
+  | { id: string; type: "pty_input"; chatId: string; data: string }
+  | { id: string; type: "pty_resize"; chatId: string; cols: number; rows: number }
+  | { id: string; type: "pty_close"; chatId: string }
+  | { id: string; type: "pty_detach"; chatId: string }
+  | { id: string; type: "list_sessions"; agent?: AgentId }
+  | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -111,6 +207,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultAgent: "cursor",
   defaultModel: "",
   binaries: {},
+  permission: "ask",
 };
 
 export function isAgentId(value: unknown): value is AgentId {
@@ -154,7 +251,8 @@ export function loginAllowed(
   user: { uid: number; shell: string; groups: string[] },
   group = "engineroom-users",
 ): boolean {
-  if (!Number.isInteger(user.uid) || user.uid < 1000) return false;
+  // 500 covers macOS accounts (501+) and older Linux login.defs. The group is the real gate.
+  if (!Number.isInteger(user.uid) || user.uid < 500) return false;
   const base = user.shell.split("/").pop() || "";
   if (base === "nologin" || base === "false" || base === "sync") return false;
   return user.groups.includes(group);
@@ -215,14 +313,113 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     }
     case "put_settings":
       return { id: body.id, type: "put_settings", settings: parseSettingsPatch(body.settings) };
-    case "send": {
+    case "send":
+    case "prompt": {
       const prompt = optionalString(body.prompt, "prompt", 100_000);
       if (!prompt?.trim()) throw new Error("prompt is empty");
-      return { id: body.id, type: "send", chatId: assertChatId(body.chatId), prompt };
+      return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), prompt };
+    }
+    case "subscribe":
+      return { id: body.id, type: "subscribe" };
+    case "watch":
+      return { id: body.id, type: "watch", chatId: assertChatId(body.chatId), lastSeq: parseSeq(body.lastSeq) };
+    case "unwatch":
+    case "pty_close":
+    case "pty_detach":
+      return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
+    case "permission_response":
+      return {
+        id: body.id,
+        type: "permission_response",
+        chatId: assertChatId(body.chatId),
+        requestId: token(body.requestId, "request"),
+        optionId: token(body.optionId, "option"),
+      };
+    case "set_mode":
+      return { id: body.id, type: "set_mode", chatId: assertChatId(body.chatId), modeId: token(body.modeId, "mode") };
+    case "set_model":
+      return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
+    case "pty_open":
+    case "pty_resize":
+      return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), cols: parseDim(body.cols), rows: parseDim(body.rows) };
+    case "pty_input":
+      return { id: body.id, type: "pty_input", chatId: assertChatId(body.chatId), data: parseBase64(body.data) };
+    case "list_sessions": {
+      const agent = body.agent == null || body.agent === "" ? undefined : body.agent;
+      if (agent != null && !isAgentId(agent)) throw new Error("invalid agent");
+      return { id: body.id, type: "list_sessions", agent };
+    }
+    case "import_session": {
+      const agent = body.agent == null || body.agent === "" ? undefined : body.agent;
+      if (agent != null && !isAgentId(agent)) throw new Error("invalid agent");
+      return {
+        id: body.id,
+        type: "import_session",
+        agent,
+        agentSessionId: token(body.agentSessionId, "session"),
+        workspace: optionalString(body.workspace, "workspace", 4096),
+      };
     }
     default:
       throw new Error("unknown request");
   }
+}
+
+function parseSeq(value: unknown): number {
+  const seq = typeof value === "number" ? value : 0;
+  if (!Number.isInteger(seq) || seq < 0 || seq > 1_000_000_000_000) throw new Error("invalid sequence");
+  return seq;
+}
+
+function parseDim(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 500) {
+    throw new Error("invalid terminal size");
+  }
+  return value;
+}
+
+function token(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(value)) throw new Error(`invalid ${label}`);
+  return value;
+}
+
+function parseBase64(value: unknown): string {
+  if (typeof value !== "string" || value.length > 200_000 || !/^[A-Za-z0-9+/=\r\n]*$/.test(value)) {
+    throw new Error("invalid terminal input");
+  }
+  return value;
+}
+
+export function parseClientCommand(value: unknown): Exclude<RunnerRequest, { type: "subscribe" }> {
+  const request = parseRunnerRequest({ ...(value as Record<string, unknown>), id: "1" });
+  if (request.type === "subscribe") throw new Error("unknown request");
+  return request;
+}
+
+export function maxSeq(entries: Array<{ seq?: number }>): number {
+  let max = 0;
+  for (const entry of entries) {
+    if (typeof entry.seq === "number" && entry.seq > max) max = entry.seq;
+  }
+  return max;
+}
+
+const PTY_ID_BYTES = 36;
+
+export function encodePtyFrame(chatId: string, data: Uint8Array): Uint8Array {
+  assertChatId(chatId);
+  const frame = new Uint8Array(1 + PTY_ID_BYTES + data.length);
+  frame[0] = 1;
+  frame.set(new TextEncoder().encode(chatId), 1);
+  frame.set(data, 1 + PTY_ID_BYTES);
+  return frame;
+}
+
+export function decodePtyFrame(frame: Uint8Array): { chatId: string; data: Uint8Array } | null {
+  if (frame.length < 1 + PTY_ID_BYTES || frame[0] !== 1) return null;
+  const chatId = new TextDecoder().decode(frame.subarray(1, 1 + PTY_ID_BYTES));
+  if (!CHAT_ID_RE.test(chatId)) return null;
+  return { chatId, data: frame.subarray(1 + PTY_ID_BYTES) };
 }
 
 function parseEnabledPaths(value: unknown): string[] {
@@ -253,6 +450,12 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     patch.defaultAgent = body.defaultAgent;
   }
   if (body.defaultModel != null) patch.defaultModel = cleanModel(body.defaultModel);
+  if (body.permission != null) {
+    if (body.permission !== "ask" && body.permission !== "allow" && body.permission !== "edits") {
+      throw new Error("invalid permission");
+    }
+    patch.permission = body.permission;
+  }
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
     const binaries: SettingsPatch["binaries"] = {};
@@ -278,6 +481,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     defaultAgent: patch.defaultAgent ?? current.defaultAgent,
     defaultModel: patch.defaultModel ?? current.defaultModel,
     binaries: { ...current.binaries },
+    permission: patch.permission ?? current.permission ?? "ask",
   };
   if (patch.binaries) {
     for (const agent of AGENTS) {
@@ -295,4 +499,4 @@ export function clip(text: string, max = 4000): string {
   return `${text.slice(0, max)}\n…`;
 }
 
-export { createCliParser, type CliParser } from "./normalize.ts";
+export { createCliParser, summarizeInput, type CliParser } from "./normalize.ts";

@@ -42,11 +42,23 @@ export function flagsFromBody(body: unknown): AgentFlags {
   return flags;
 }
 
-export function saveAgentFlags(file: string, flags: AgentFlags): AgentFlags {
+export function loadRawTerminal(file: string): boolean {
+  if (!file) return true;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { rawTerminal?: unknown };
+    if (typeof parsed.rawTerminal === "boolean") return parsed.rawTerminal;
+  } catch {
+    /* default on */
+  }
+  return true;
+}
+
+export function saveAgentFlags(file: string, flags: AgentFlags, rawTerminal?: boolean): AgentFlags {
   const next = flagsFromBody(flags);
   if (!AGENTS.some((agent) => next[agent])) throw new Error("at least one agent must stay on");
+  const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const tmp = `${file}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(next)}\n`, { mode: 0o644 });
+  writeFileSync(tmp, `${JSON.stringify({ ...next, rawTerminal: terminal })}\n`, { mode: 0o644 });
   renameSync(tmp, file);
   return next;
 }

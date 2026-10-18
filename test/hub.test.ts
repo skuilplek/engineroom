@@ -5,11 +5,13 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import WebSocket from "ws";
 import type { LinuxUser } from "../apps/hub/src/auth.ts";
 import { createHub } from "../apps/hub/src/server.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
+import "./peercred-helper.ts";
 
 test("the hub only opens the signed-in user's runner", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-hub-"));
@@ -117,11 +119,18 @@ test("the hub only opens the signed-in user's runner", async () => {
       headers,
       body: JSON.stringify({ prompt: "hello" }),
     });
-    assert.match(await sent.text(), /from-alice/);
-    const detail = await fetch(`${base}/api/chats/${chat.id}`, { headers });
-    const body = (await detail.json()) as { chat: { agentSessionId: string }; transcript: Array<{ kind: string }> };
-    assert.equal(body.chat.agentSessionId, "sess");
-    assert.equal(body.transcript.some((entry) => entry.kind === "user"), true);
+    assert.equal(sent.status, 202);
+    assert.equal(((await sent.json()) as { accepted?: boolean }).accepted, true);
+    let body: { chat: { agentSessionId: string }; transcript: Array<{ kind: string; text?: string }> } | undefined;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const detail = await fetch(`${base}/api/chats/${chat.id}`, { headers });
+      body = (await detail.json()) as typeof body;
+      if (body?.transcript.some((entry) => entry.text === "from-alice")) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(body?.chat.agentSessionId, "sess");
+    assert.equal(body?.transcript.some((entry) => entry.kind === "user"), true);
+    assert.equal(body?.transcript.some((entry) => entry.text === "from-alice"), true);
     assert.equal(bobHits, 0);
 
     const saved = await fetch(`${base}/api/settings`, {
@@ -151,7 +160,7 @@ test("the hub only opens the signed-in user's runner", async () => {
   }
 });
 
-test("live follow emits a line before the agent finishes", async () => {
+test("a websocket emits a line before the agent finishes and rejects a foreign origin", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-live-"));
   const home = path.join(root, "home");
   const socketDir = path.join(root, "socks");
@@ -199,8 +208,7 @@ test("live follow emits a line before the agent finishes", async () => {
   });
   await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
   const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
-  let sent: Promise<Response> | undefined;
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let ws: WebSocket | undefined;
   try {
     const loggedIn = await fetch(`${base}/api/login`, {
       method: "POST",
@@ -216,27 +224,43 @@ test("live follow emits a line before the agent finishes", async () => {
       body: JSON.stringify({ agent: "cursor", workspace: home }),
     });
     const chat = (await created.json()) as { id: string };
-    sent = fetch(`${base}/api/chats/${chat.id}/messages`, {
+    const blocked = await new Promise<number>((resolve) => {
+      const bad = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+        headers: { Cookie: cookie!, Origin: "https://evil.example" },
+      });
+      bad.on("unexpected-response", (_req, res) => resolve(res.statusCode || 0));
+      bad.on("error", () => resolve(0));
+    });
+    assert.equal(blocked, 403);
+    ws = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+      headers: { Cookie: cookie!, Origin: base },
+    });
+    const messages: string[] = [];
+    ws.on("message", (data) => messages.push(data.toString()));
+    await new Promise<void>((resolve, reject) => {
+      ws?.once("open", () => resolve());
+      ws?.once("error", reject);
+    });
+    ws.send(JSON.stringify({ type: "watch", chatId: chat.id, lastSeq: 0 }));
+    const ready = Date.now() + 3000;
+    while (!messages.some((line) => line.includes('"snapshot"'))) {
+      if (Date.now() > ready) throw new Error(`watch never settled: ${messages.join("\n").slice(0, 300)}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const sent = await fetch(`${base}/api/chats/${chat.id}/messages`, {
       method: "POST",
       headers,
       body: JSON.stringify({ prompt: "hello" }),
     });
-    const live = await fetch(`${base}/api/chats/${chat.id}/live?from=0`, { headers });
-    assert.equal(live.status, 200);
-    reader = live.body!.getReader();
+    assert.equal(sent.status, 202);
     const deadline = Date.now() + 3000;
-    let text = "";
-    while (!text.includes("partial-line")) {
-      if (Date.now() > deadline) throw new Error(`live stream stayed quiet: ${text.slice(0, 200)}`);
-      const next = await reader.read();
-      if (next.done) break;
-      text += Buffer.from(next.value).toString("utf8");
+    while (!messages.some((line) => line.includes("partial-line"))) {
+      if (Date.now() > deadline) throw new Error(`socket stayed quiet: ${messages.join("\n").slice(0, 300)}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    assert.match(text, /partial-line/);
   } finally {
     release();
-    await reader?.cancel().catch(() => undefined);
-    await sent?.catch(() => undefined);
+    ws?.close();
     hub.close();
     await runner.close();
     await rm(root, { recursive: true, force: true });

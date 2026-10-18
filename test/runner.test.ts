@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -10,14 +10,9 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { createChat, listChats, listRepositories, setEnabledRepositories } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
+import "./peercred-helper.ts";
 
 const execFileAsync = promisify(execFile);
-const helper = path.resolve("deploy/pam/engineroom-peercred");
-
-test.before(async () => {
-  spawnSync("gcc", ["-O2", "-Wall", "-o", helper, "deploy/pam/engineroom-peercred.c"], { stdio: "inherit" });
-  process.env.ENGINEROOM_PEERCRED = helper;
-});
 
 test("workspaces reject a symlink that leaves the home directory", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-home-"));
@@ -156,13 +151,18 @@ test("a runner turn stays in that home and can be cancelled", async () => {
     const created = await rpc(sock, { id: "c1", type: "create_chat", agent: "cursor", workspace: home });
     const chatId = (created.result as { id: string }).id;
     const sent = await rpc(sock, { id: "s1", type: "send", chatId, prompt: "build the door" });
-    assert.equal(sent.events.some((event) => event.type === "text_delta" && event.text === "echo:build the door"), true);
-    const detail = await rpc(sock, { id: "g1", type: "get_chat", chatId });
-    const transcript = (detail.result as { transcript: Array<{ kind: string; text?: string }>; chat: { agentSessionId: string; title: string } });
-    assert.equal(transcript.chat.agentSessionId, "cursor-session");
-    assert.equal(transcript.chat.title, "build the door");
-    assert.equal(transcript.transcript.some((entry) => entry.kind === "user"), true);
-    assert.equal(transcript.transcript.some((entry) => entry.text === "echo:build the door"), true);
+    assert.equal((sent.result as { accepted?: boolean }).accepted, true);
+    let transcript: { transcript: Array<{ kind: string; text?: string }>; chat: { agentSessionId: string; title: string } } | undefined;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const detail = await rpc(sock, { id: `g${attempt}`, type: "get_chat", chatId });
+      transcript = detail.result as typeof transcript;
+      if (transcript?.chat.agentSessionId === "cursor-session" && transcript.transcript.some((entry) => entry.text === "echo:build the door")) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(transcript?.chat.agentSessionId, "cursor-session");
+    assert.equal(transcript?.chat.title, "build the door");
+    assert.equal(transcript?.transcript.some((entry) => entry.kind === "user"), true);
+    assert.equal(transcript?.transcript.some((entry) => entry.text === "echo:build the door"), true);
 
     const outside = rpc(sock, {
       id: "bad",
@@ -173,16 +173,25 @@ test("a runner turn stays in that home and can be cancelled", async () => {
 
     const hanging = await rpc(sock, { id: "c2", type: "create_chat", agent: "claude" });
     const hangingId = (hanging.result as { id: string }).id;
-    const pending = rpc(sock, { id: "s2", type: "send", chatId: hangingId, prompt: "wait" });
+    await rpc(sock, { id: "s2", type: "send", chatId: hangingId, prompt: "wait" });
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const live = await rpc(sock, { id: `p${attempt}`, type: "get_chat", chatId: hangingId });
       if ((live.result as { chat: { running?: boolean } }).chat.running) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     await rpc(sock, { id: "x", type: "cancel", chatId: hangingId });
-    const stopped = await pending;
+    for (let attempt = 0; attempt < 50 && !sawAbort; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     assert.equal(sawAbort, true);
-    assert.equal(stopped.events.some((event) => event.type === "status" && event.text === "Stopped"), true);
+    let stopped = false;
+    for (let attempt = 0; attempt < 50 && !stopped; attempt += 1) {
+      const live = await rpc(sock, { id: `z${attempt}`, type: "get_chat", chatId: hangingId });
+      const entries = (live.result as { transcript: Array<{ text?: string }> }).transcript;
+      stopped = entries.some((entry) => entry.text === "Stopped");
+      if (!stopped) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(stopped, true);
   } finally {
     await runner.close();
     await rm(home, { recursive: true, force: true });
