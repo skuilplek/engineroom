@@ -59,7 +59,7 @@ export function AdminView({
   onAccess,
 }: {
   session: Session;
-  onAgents: (agents: AgentId[], rawTerminal: boolean, cliImport: boolean, agentCatalog?: { id: string; label: string }[]) => void;
+  onAgents: (agents: AgentId[], rawTerminal: boolean, cliImport: boolean, fileManagerOffered: boolean, agentCatalog?: { id: string; label: string }[]) => void;
   onBranding: (appName: string) => void;
   onAccess: () => void;
 }) {
@@ -71,6 +71,7 @@ export function AdminView({
   const [customCommand, setCustomCommand] = useState("");
   const [rawTerminal, setRawTerminal] = useState(session.rawTerminal);
   const [cliImport, setCliImport] = useState(session.cliImport);
+  const [fileManager, setFileManager] = useState(session.fileManagerOffered ?? false);
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
@@ -127,6 +128,7 @@ export function AdminView({
       setSavedFlags(nextFlags);
       setRawTerminal(body.rawTerminal);
       setCliImport(body.cliImport);
+      setFileManager(body.fileManager);
       const first = body.agents.find((agent) => agent.available);
       setAgentTab(first?.id ?? "+");
     }).catch((err) => setError(message(err)));
@@ -150,13 +152,14 @@ export function AdminView({
     setFlags(next);
   }
 
-  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean }, select?: string) {
+  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
     setFlags(nextFlags);
     setSavedFlags(nextFlags);
     setRawTerminal(body.rawTerminal);
     setCliImport(body.cliImport);
+    if (typeof body.fileManager === "boolean") setFileManager(body.fileManager);
     if (select) setAgentTab(select);
   }
 
@@ -183,8 +186,8 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
-      const savedAgents = await saveAgents(flags, rawTerminal, cliImport);
-      onAgents(savedAgents.agents, savedAgents.rawTerminal ?? rawTerminal, savedAgents.cliImport ?? cliImport, savedAgents.agentCatalog);
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager);
+      onAgents(savedAgents.agents, savedAgents.rawTerminal ?? rawTerminal, savedAgents.cliImport ?? cliImport, savedAgents.fileManager ?? fileManager, savedAgents.agentCatalog);
       if (Object.keys(offeredDraft).length > 0) {
         const savedOptions = await saveAgentOptions(offeredDraft);
         setAgentOptions(savedOptions);
@@ -389,7 +392,7 @@ export function AdminView({
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>
                 <span>Agents</span>
                 <strong>{offered.length}</strong>
-                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {cliImport ? "CLI import on." : "CLI import off."} {fileManager ? "File manager on." : "File manager off."}</span>
               </button>
               <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
                 <span>Repositories</span>
@@ -418,6 +421,10 @@ export function AdminView({
                 <label className="check">
                   <input type="checkbox" checked={cliImport} onChange={() => setCliImport((value) => !value)} />
                   Import CLI sessions
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={fileManager} onChange={() => setFileManager((value) => !value)} />
+                  Repository file manager
                 </label>
               </div>
               <div className="agent-tabs" role="tablist" aria-label="Installed agents" onKeyDown={onAgentTabKey}>
@@ -612,6 +619,7 @@ export function AdminView({
                   self={selected === session.username}
                   globalAgents={session.agents}
                   globalTerminal={session.rawTerminal}
+                  globalFileManager={session.fileManagerOffered ?? false}
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
@@ -646,6 +654,7 @@ function PersonPanel({
   self,
   globalAgents,
   globalTerminal,
+  globalFileManager,
   agentOptions,
   agentNames,
   catalog,
@@ -660,6 +669,7 @@ function PersonPanel({
   self: boolean;
   globalAgents: AgentId[];
   globalTerminal: boolean;
+  globalFileManager: boolean;
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
@@ -866,7 +876,7 @@ function PersonPanel({
     <div className="person-panel">
       <h2>{username}</h2>
       <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, modes, models, the terminal, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+        <p className="muted">Agents, modes, models, the terminal, the file manager, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
           {globalAgents.map((agent) => (
             <label className="check" key={agent}>
@@ -895,6 +905,15 @@ function PersonPanel({
           Terminal
         </label>
         {!globalTerminal && <p className="muted">The terminal is off for everyone, so this stays off until that is turned on.</p>}
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={policy.fileManager}
+            onChange={() => setPolicy({ ...policy, fileManager: !policy.fileManager })}
+          />
+          File manager
+        </label>
+        {!globalFileManager && <p className="muted">The file manager is off for everyone, so this stays off until that is turned on.</p>}
         {allowed.map((agent) => {
           const config = agentOptions[agent];
           const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));

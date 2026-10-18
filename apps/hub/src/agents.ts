@@ -119,6 +119,17 @@ export function loadCliImport(file: string): boolean {
   return false;
 }
 
+export function loadFileManager(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { fileManager?: unknown };
+    if (typeof parsed.fileManager === "boolean") return parsed.fileManager;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
 export function loadAppName(file: string): string {
   if (!file) return DEFAULT_APP_NAME;
   try {
@@ -136,7 +147,13 @@ export function saveAppName(file: string, name: string): string {
   return appName;
 }
 
-export function saveAgentFlags(file: string, body: unknown, rawTerminal?: boolean, cliImport?: boolean): AgentFlags {
+export function saveAgentFlags(
+  file: string,
+  body: unknown,
+  rawTerminal?: boolean,
+  cliImport?: boolean,
+  fileManager?: boolean,
+): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
   const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
@@ -149,6 +166,7 @@ export function saveAgentFlags(file: string, body: unknown, rawTerminal?: boolea
   if (!Object.values(next).some(Boolean)) throw new Error("at least one agent must stay on");
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
+  const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
   const current = readAgentFile(file);
   writeAgentFile(file, {
     ...current,
@@ -157,6 +175,7 @@ export function saveAgentFlags(file: string, body: unknown, rawTerminal?: boolea
     pi: Boolean(next.pi),
     rawTerminal: terminal,
     cliImport: imports,
+    fileManager: files,
     appName: loadAppName(file),
     customAgents: custom.map((agent) => ({ ...agent, enabled: Boolean(next[agent.id]) })),
   });

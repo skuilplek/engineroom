@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings } from "../api.ts";
+import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message } from "../format.ts";
-import { IconArrow, IconPanelRight } from "../icons.tsx";
+import { IconArrow } from "../icons.tsx";
 
 export function StartView({
   agents,
@@ -80,19 +81,9 @@ export function StartView({
 
   return (
     <div className="start">
-      {onToggleFiles && (
+      {onToggleFiles && !filesOpen && (
         <div className="start-topbar">
-          <button
-            className={filesOpen ? "ghost icon-toggle active" : "ghost icon-toggle"}
-            type="button"
-            aria-pressed={Boolean(filesOpen)}
-            aria-label={filesOpen ? "Hide repository files" : "Show repository files"}
-            title={filesOpen ? "Hide repository files" : "Show repository files"}
-            onClick={onToggleFiles}
-          >
-            <IconPanelRight />
-            <span>Files</span>
-          </button>
+          <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
         </div>
       )}
       <h1>Let's Start Building!</h1>

@@ -170,7 +170,18 @@ function Shell({
   }, [repos, session.home, target]);
 
   const selectedRepo = repos.find((repo) => strip(repo.path) === strip(target));
-  const showFileManager = (view === "chat" || view === "start") && Boolean(selectedRepo);
+  const filesEnabled = session.fileManager;
+  const showFileManager = filesEnabled && (view === "chat" || view === "start") && Boolean(selectedRepo);
+
+  useEffect(() => {
+    if (filesEnabled) return;
+    setFilesOpen(false);
+    try {
+      localStorage.removeItem("engineroom.filesOpen");
+    } catch {
+      /* ignore storage failure */
+    }
+  }, [filesEnabled]);
 
   function remember(chat: ChatMeta) {
     setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
@@ -243,11 +254,12 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport, agentCatalog) => onSession({
+            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, agentCatalog) => onSession({
               ...session,
               agents,
               rawTerminal,
               cliImport,
+              fileManagerOffered,
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}
@@ -264,8 +276,8 @@ function Shell({
             options={session.options}
             workspace={target}
             targetLabel={selectedRepo.name}
-            filesOpen={filesOpen}
-            onToggleFiles={toggleFiles}
+            filesOpen={filesEnabled ? filesOpen : undefined}
+            onToggleFiles={filesEnabled ? toggleFiles : undefined}
             onStarted={(chat, prompt) => {
               remember(chat);
               openingRef.current = { id: chat.id, prompt };
@@ -290,8 +302,8 @@ function Shell({
             rawTerminal={session.rawTerminal}
             claimOpening={claimOpening}
             onTitle={onTitle}
-            filesOpen={selectedRepo ? filesOpen : undefined}
-            onToggleFiles={selectedRepo ? toggleFiles : undefined}
+            filesOpen={filesEnabled && selectedRepo ? filesOpen : undefined}
+            onToggleFiles={filesEnabled && selectedRepo ? toggleFiles : undefined}
             onWorkspace={onChatWorkspace}
             onFilesChanged={bumpFilesRefresh}
           />

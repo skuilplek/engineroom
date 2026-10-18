@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
+import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { workspaceLabel } from "../format.ts";
-import { IconPanelRight } from "../icons.tsx";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { DiffView } from "./Diff.tsx";
@@ -157,19 +157,7 @@ export function ChatView({
               {raw ? "Chat" : "Terminal"}
             </button>
           )}
-          {onToggleFiles && (
-            <button
-              className={filesOpen ? "ghost icon-toggle active" : "ghost icon-toggle"}
-              type="button"
-              aria-pressed={Boolean(filesOpen)}
-              aria-label={filesOpen ? "Hide repository files" : "Show repository files"}
-              title={filesOpen ? "Hide repository files" : "Show repository files"}
-              onClick={onToggleFiles}
-            >
-              <IconPanelRight />
-              <span>Files</span>
-            </button>
-          )}
+          <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
         </div>
       </header>
       {raw ? (

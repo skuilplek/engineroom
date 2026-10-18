@@ -217,6 +217,7 @@ export interface UserPolicy {
   agents: AgentId[];
   binaries: Partial<Record<AgentId, string>>;
   rawTerminal: boolean;
+  fileManager: boolean;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -831,8 +832,15 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     agents.push(agent);
   }
   if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
+  const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : false;
   const options = parsePolicyOptions(body.options);
-  return { agents, binaries: parsePolicyBinaries(body.binaries), rawTerminal: body.rawTerminal, ...(options ? { options } : {}) };
+  return {
+    agents,
+    binaries: parsePolicyBinaries(body.binaries),
+    rawTerminal: body.rawTerminal,
+    fileManager,
+    ...(options ? { options } : {}),
+  };
 }
 
 export function parseOptionIds(value: unknown, label: string): string[] {
@@ -891,7 +899,7 @@ function offeredChoices(available: AgentOptionChoice[], offeredIds: string[], pe
 }
 
 export function defaultPolicy(): UserPolicy {
-  return { agents: [...AGENTS], binaries: {}, rawTerminal: true };
+  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: false };
 }
 
 export function parseEnvEntries(value: unknown): EnvEntry[] {

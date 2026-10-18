@@ -1038,9 +1038,11 @@ test("the administrator controls repository file visibility for the file manager
   const home = path.join(root, "alice");
   const socketDir = path.join(root, "socks");
   const reposFile = path.join(root, "repos.json");
+  const agentsFile = path.join(root, "agents.json");
   const repo = path.join(home, "Sites", "app");
   await mkdir(path.join(repo, "src"), { recursive: true });
   await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
 
   spawnSync("git", ["init", "-b", "main"], { cwd: repo });
   await writeFile(path.join(repo, ".gitignore"), "secret.log\n");
@@ -1074,6 +1076,7 @@ test("the administrator controls repository file visibility for the file manager
     pamHelper: "/bin/false",
     cookieSecure: false,
     adminUser: "alice",
+    agentsFile,
     reposFile,
     lookup: (username) => (username === "alice" ? alice : null),
     authenticate: async () => true,
@@ -1090,6 +1093,37 @@ test("the administrator controls repository file visibility for the file manager
     const cookie = (loginRes.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     assert.ok(cookie);
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+
+    const blockedFiles = await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers });
+    assert.equal(blockedFiles.status, 403);
+    const blockedFile = await fetch(
+      `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/main.ts")}`,
+      { headers },
+    );
+    assert.equal(blockedFile.status, 403);
+
+    const enabledAgents = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true }),
+    });
+    assert.equal(enabledAgents.status, 200);
+    assert.equal(((await enabledAgents.json()) as { fileManager: boolean }).fileManager, true);
+
+    const offered = (await (await fetch(`${base}/api/me`, { headers })).json()) as { fileManager: boolean; fileManagerOffered: boolean };
+    assert.equal(offered.fileManagerOffered, true);
+    assert.equal(offered.fileManager, false);
+    const stillBlocked = await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers });
+    assert.equal(stillBlocked.status, 403);
+
+    const policy = await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: true }),
+    });
+    assert.equal(policy.status, 200);
+    const allowed = (await (await fetch(`${base}/api/me`, { headers })).json()) as { fileManager: boolean };
+    assert.equal(allowed.fileManager, true);
 
     // Default visibility hides .env, secret.log, and .git
     const initialList = (await (

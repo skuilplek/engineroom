@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
+import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileManager, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -191,6 +191,8 @@ export function createHub(options: HubOptions) {
       admin: adminUser !== "" && user.username === adminUser,
       agents: access.agents,
       rawTerminal: access.rawTerminal,
+      fileManager: access.fileManager,
+      fileManagerOffered: loadFileManager(agentsFile),
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),
@@ -203,6 +205,7 @@ export function createHub(options: HubOptions) {
   async function loadAccess(user: LinuxUser): Promise<{
     agents: AgentId[];
     rawTerminal: boolean;
+    fileManager: boolean;
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
@@ -219,6 +222,7 @@ export function createHub(options: HubOptions) {
     return {
       agents,
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
+      fileManager: loadFileManager(agentsFile) && policy.fileManager,
       options: optionMap,
     };
   }
@@ -264,6 +268,11 @@ export function createHub(options: HubOptions) {
     if (!access.agents.includes(agent)) throw new Error("invalid agent");
   }
 
+  async function assertFileManager(user: LinuxUser) {
+    const access = await loadAccess(user);
+    if (!access.fileManager) throw new Error("file manager is not enabled");
+  }
+
   async function admin(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
     if (user.username !== adminUser || adminUser === "") {
       sendJson(res, 403, { error: "admin only" });
@@ -286,12 +295,13 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body));
+      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body), fileManagerFrom(body));
       const listed = await listAgents(agentsFile, commandDirs);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
         rawTerminal: loadRawTerminal(agentsFile),
         cliImport: loadCliImport(agentsFile),
+        fileManager: loadFileManager(agentsFile),
         agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
       });
       return;
@@ -478,6 +488,7 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
+      await assertFileManager(user);
       const workspace = (url.searchParams.get("workspace") || "").trim();
       if (!workspace) throw new Error("invalid workspace");
       const visibility = loadFileVisibility(reposFile);
@@ -485,6 +496,7 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "GET") {
+      await assertFileManager(user);
       const workspace = (url.searchParams.get("workspace") || "").trim();
       if (!workspace) throw new Error("invalid workspace");
       const filePath = assertRepoRelativePath(url.searchParams.get("path") || "");
@@ -690,6 +702,7 @@ export function createHub(options: HubOptions) {
       agents: listed,
       rawTerminal: loadRawTerminal(agentsFile),
       cliImport: loadCliImport(agentsFile),
+      fileManager: loadFileManager(agentsFile),
     };
   }
 
@@ -844,6 +857,12 @@ function rawTerminalFrom(body: unknown): boolean | undefined {
 function cliImportFrom(body: unknown): boolean | undefined {
   if (!body || typeof body !== "object") return undefined;
   const value = (body as { cliImport?: unknown }).cliImport;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function fileManagerFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { fileManager?: unknown }).fileManager;
   return typeof value === "boolean" ? value : undefined;
 }
 

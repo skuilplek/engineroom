@@ -29,6 +29,8 @@ export interface Session {
   admin: boolean;
   agents: AgentId[];
   rawTerminal: boolean;
+  fileManager: boolean;
+  fileManagerOffered?: boolean;
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;
@@ -51,6 +53,7 @@ export interface AgentInventory {
   agents: AdminAgent[];
   rawTerminal: boolean;
   cliImport: boolean;
+  fileManager: boolean;
 }
 
 export interface Account {
@@ -280,10 +283,10 @@ export function deleteCustomAgent(id: string) {
   return api<AgentInventory>(`/api/admin/agents/custom/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function saveAgents(flags: Record<string, boolean>, rawTerminal?: boolean, cliImport?: boolean) {
-  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean; agentCatalog?: { id: string; label: string }[] }>("/api/admin/agents", {
+export function saveAgents(flags: Record<string, boolean>, rawTerminal?: boolean, cliImport?: boolean, fileManager?: boolean) {
+  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean; fileManager?: boolean; agentCatalog?: { id: string; label: string }[] }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager }),
   });
 }
 

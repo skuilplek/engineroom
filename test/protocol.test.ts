@@ -19,6 +19,7 @@ import {
   parseAgentCatalog,
   parseRunnerRequest,
   parseSettingsPatch,
+  defaultPolicy,
   parseUserPolicy,
   socketPathForUser,
   THEMES,
@@ -122,6 +123,9 @@ test("catalog urls and names stay on a remote", async () => {
   const policy = parseUserPolicy({ agents: ["cursor"], rawTerminal: false, binaries: { cursor: "/usr/bin/agent" } });
   assert.deepEqual(policy.agents, ["cursor"]);
   assert.equal(policy.rawTerminal, false);
+  assert.equal(policy.fileManager, false);
+  assert.equal(defaultPolicy().fileManager, false);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileManager: true }).fileManager, true);
   assert.throws(() => parseUserPolicy({ agents: [], rawTerminal: true }));
   assert.throws(() => parseEnvEntries([{ key: "HOME", value: "ok\nno" }]));
   const rewritten = applyEnvEntries("# keep\nOLD=1\nANTHROPIC_API_KEY=before\n", [{ key: "ANTHROPIC_API_KEY", value: "secret" }]);
@@ -149,6 +153,7 @@ test("child env takes ~/.env values except identity and loader variables", async
 test("policy options stay optional and narrow the offered catalog", () => {
   const inherited = parseUserPolicy({ agents: ["cursor"], rawTerminal: true });
   assert.equal(inherited.options, undefined);
+  assert.equal(inherited.fileManager, false);
   const narrowed = parseUserPolicy({
     agents: ["cursor"],
     rawTerminal: false,
