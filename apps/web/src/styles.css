@@ -361,6 +361,11 @@ textarea { resize: vertical; }
   white-space: nowrap;
   min-width: 0;
 }
+.repo-name {
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--green);
+}
 .repo-time, .chat-state {
   margin-left: auto;
   color: var(--muted);
