@@ -53,6 +53,34 @@ test("an ACP session streams chunks and can import a CLI session", async () => {
   }
 });
 
+test("a running turn does not wait on set_mode", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-acp-busy-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p", type: "prompt", chatId, prompt: "hold" });
+    await live.next((message) => message.event?.type === "text_delta" && message.event?.text === "held");
+    const started = Date.now();
+    const changed = await once(sock, { id: "mode", type: "set_mode", chatId, modeId: "plan" });
+    assert.equal(changed.type, "ok");
+    assert.ok(Date.now() - started < 1000, "set_mode waited on the running agent");
+    const detail = await getChat(home, chatId, true);
+    assert.equal(detail.chat.mode, "plan");
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("probe reads the session catalog and a personal list rejects other models", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-probe-"));
   const sock = path.join(home, "runner.sock");

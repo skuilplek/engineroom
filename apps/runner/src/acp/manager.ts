@@ -29,6 +29,7 @@ export interface AcpContext {
 export class AcpManager {
   private sessions = new Map<string, AcpSession>();
   private starting = new Map<string, Promise<AcpSession>>();
+  private opening = new Map<string, AcpSession>();
   private idle = new Map<string, NodeJS.Timeout>();
   private order: string[] = [];
 
@@ -101,6 +102,7 @@ export class AcpManager {
   }
 
   async stopAll() {
+    for (const session of this.opening.values()) await session.stop();
     for (const chatId of [...this.sessions.keys()]) await this.stop(chatId);
   }
 
@@ -215,9 +217,18 @@ export class AcpManager {
       permission: ctx.permission,
       onEvent: ctx.onEvent,
     } satisfies AcpStart);
-    const sessionId = await session.open();
+    this.opening.set(chatId, session);
+    let sessionId: string;
+    try {
+      sessionId = await session.open();
+    } catch (error) {
+      this.opening.delete(chatId);
+      await session.stop();
+      throw error;
+    }
     session.sessionId = sessionId;
     this.sessions.set(chatId, session);
+    this.opening.delete(chatId);
     this.order.push(chatId);
     ctx.needsResync = false;
     return session;

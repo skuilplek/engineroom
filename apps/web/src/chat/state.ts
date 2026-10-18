@@ -51,11 +51,16 @@ export function applySnapshot(state: ChatLive, snapshot: {
   modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
   models?: { currentModelId: string; availableModels: AgentModel[] } | null;
 }): ChatLive {
+  // Live events can arrive before the snapshot. Keep the ones the snapshot
+  // does not already cover so a late snapshot cannot erase the agent's text.
+  const liveAhead = state.seq > snapshot.seq;
+  const newer = liveAhead ? state.entries.filter((entry) => (entry.seq ?? 0) > snapshot.seq) : [];
+  const entries = newer.length > 0 ? [...snapshot.transcript, ...newer] : snapshot.transcript;
   return {
     ...state,
-    entries: snapshot.transcript,
-    seq: snapshot.seq,
-    running: snapshot.running,
+    entries,
+    seq: Math.max(snapshot.seq, state.seq),
+    running: liveAhead ? state.running : snapshot.running,
     title: snapshot.chat.title,
     agent: snapshot.chat.agent,
     workspace: snapshot.chat.workspace,
@@ -63,7 +68,9 @@ export function applySnapshot(state: ChatLive, snapshot: {
     model: snapshot.models?.currentModelId || snapshot.chat.model || state.model,
     modes: snapshot.modes?.availableModes || state.modes,
     models: snapshot.models?.availableModels || state.models,
-    shell: shellFrom(snapshot.transcript),
+    permission: liveAhead ? state.permission : null,
+    queue: liveAhead ? state.queue : [],
+    shell: shellFrom(entries),
     ready: true,
   };
 }

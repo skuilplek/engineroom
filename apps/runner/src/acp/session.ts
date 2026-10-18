@@ -144,23 +144,32 @@ export class AcpSession {
 
   async setMode(modeId: string) {
     if (!this.sessionId) return;
-    await this.rpc.request("session/set_mode", { sessionId: this.sessionId, modeId });
+    await rpcTimeout(this.rpc.request("session/set_mode", { sessionId: this.sessionId, modeId }));
     if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
     this.start.onEvent({ type: "mode", modeId });
   }
 
   async setModel(modelId: string) {
     if (!this.sessionId || !modelId) return;
-    await this.rpc.request("session/set_model", { sessionId: this.sessionId, modelId });
+    await rpcTimeout(this.rpc.request("session/set_model", { sessionId: this.sessionId, modelId }));
     if (this.models) this.models = { ...this.models, currentModelId: modelId };
   }
 
   async stop() {
     this.alive = false;
     for (const terminal of this.terminals.values()) terminal.child.kill("SIGTERM");
-    if (this.child?.pid) {
+    const child = this.child;
+    if (!child?.pid) return;
+    const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      return;
+    }
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 500))]);
+    if (child.exitCode == null && child.signalCode == null) {
       try {
-        this.child.kill("SIGTERM");
+        child.kill("SIGKILL");
       } catch {
         /* already gone */
       }
@@ -315,6 +324,23 @@ export function catalogFromSession(created: unknown): { modes: AgentOptionChoice
     })),
     models: (models?.availableModels ?? []).map((model) => ({ id: model.modelId, name: model.name })),
   };
+}
+
+function rpcTimeout<T>(work: Promise<T>, ms = 8000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("agent did not answer")), ms);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error("agent request failed"));
+      },
+    );
+  });
 }
 
 function readModes(value: unknown): AcpSession["modes"] {

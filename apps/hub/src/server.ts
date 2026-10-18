@@ -559,12 +559,14 @@ export function createHub(options: HubOptions) {
         modes?: { currentModeId: string; availableModes: Array<{ id: string; name: string; description?: string }> } | null;
         models?: { currentModelId: string; availableModels: Array<{ modelId: string; name: string }> } | null;
       };
-      await alignStored(user, snapshot.chat, (request) => channel.request({ ...request, id: randomUUID() } as RunnerRequest));
       const access = await loadAccess(user);
       const choices = access.options[snapshot.chat.agent] ?? { modes: [], models: [] };
       snapshot.modes = filterModes(snapshot.modes, choices.modes, snapshot.chat.mode || "");
       snapshot.models = filterModels(snapshot.models, choices.models, snapshot.chat.model || "");
       ws.send(JSON.stringify({ type: "snapshot", chatId: command.chatId, ...snapshot }));
+      // Alignment talks to the agent. The transcript is already on screen, and a
+      // busy session must not hold the socket open waiting for that call.
+      await alignStored(user, snapshot.chat, (request) => channel.request({ ...request, id: randomUUID() } as RunnerRequest)).catch(() => undefined);
       return;
     }
     if (command.type === "prompt" || command.type === "send") {
@@ -656,7 +658,7 @@ function originAllowed(req: IncomingMessage): boolean {
 }
 
 function fitChoice(current: string, choices: AgentOptionChoice[]): string {
-  if (choices.length === 0) return "";
+  if (choices.length === 0) return current;
   if (choices.some((choice) => choice.id === current)) return current;
   return choices[0]!.id;
 }

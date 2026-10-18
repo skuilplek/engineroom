@@ -70,9 +70,13 @@ function phaseOf(status: unknown): "start" | "done" | "error" {
 }
 
 function textOf(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((item) => textOf(item)).join("");
   if (!value || typeof value !== "object") return "";
-  const text = (value as { text?: unknown }).text;
-  return typeof text === "string" ? text : "";
+  const record = value as { text?: unknown; content?: unknown };
+  if (typeof record.text === "string") return record.text;
+  if (record.content != null && record.content !== value) return textOf(record.content);
+  return "";
 }
 
 function outputText(value: unknown): string {

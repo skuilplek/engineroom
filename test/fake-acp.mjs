@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 const pending = new Map();
+let holding = false;
 const rl = createInterface({ input: process.stdin });
 
 rl.on("line", (line) => {
@@ -39,9 +40,18 @@ async function handle(msg) {
   if (msg.method === "session/list") {
     return reply(msg.id, { sessions: [{ sessionId: "ext-1", cwd: msg.params?.cwd || "/tmp", updatedAt: new Date().toISOString(), title: "Outside" }] });
   }
+  if (msg.method === "session/set_mode" || msg.method === "session/set_model") {
+    if (holding) return;
+    return reply(msg.id, {});
+  }
   if (msg.method === "session/prompt") {
     const text = msg.params.prompt?.[0]?.text || "";
     const sessionId = msg.params.sessionId;
+    if (text === "hold") {
+      holding = true;
+      notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "held" } } });
+      return;
+    }
     notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello " } } });
     notify("session/update", {
       sessionId,

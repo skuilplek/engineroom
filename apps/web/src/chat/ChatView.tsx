@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { RepositoryEntry } from "@engineroom/protocol";
+import type { RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { workspaceLabel } from "../format.ts";
-import { noteSeq, onAgent, sendCommand, watchChat } from "../socket.ts";
+import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { DiffView } from "./Diff.tsx";
 import { groupTranscript, presentTool } from "./group.ts";
@@ -32,6 +32,8 @@ export function ChatView({
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const opened = useRef(false);
+  const sawSnapshot = useRef(false);
+  const queued = useRef<Array<{ event: StreamEvent; seq: number }>>([]);
   const titleRef = useRef(onTitle);
   titleRef.current = onTitle;
 
@@ -40,16 +42,32 @@ export function ChatView({
     setRaw(false);
     setError("");
     opened.current = false;
+    sawSnapshot.current = false;
+    queued.current = [];
     watchChat(chatId, 0);
     const stop = onAgent((message) => {
       if (message.type === "error") {
         setError(message.error);
         return;
       }
+      if (message.type === "event" && message.chatId === chatId && !sawSnapshot.current) {
+        queued.current.push({ event: message.event, seq: message.seq });
+        return;
+      }
       if (message.type === "snapshot" && message.chatId === chatId) {
-        setLive((current) => applySnapshot(current, message));
+        sawSnapshot.current = true;
+        const pending = queued.current.splice(0);
+        setLive((current) => {
+          let next = applySnapshot(current, message);
+          for (const item of pending) next = applyEvent(next, item.event, item.seq);
+          return next;
+        });
         noteSeq(chatId, message.seq);
         titleRef.current(message.chat.title);
+        for (const item of pending) {
+          noteSeq(chatId, item.seq);
+          if (item.event.type === "title") titleRef.current(item.event.text);
+        }
         if (!opened.current) {
           opened.current = true;
           const text = claimOpening(chatId);
@@ -63,7 +81,10 @@ export function ChatView({
         if (message.event.type === "title") titleRef.current(message.event.text);
       }
     });
-    return () => stop();
+    return () => {
+      stop();
+      unwatchChat(chatId);
+    };
   }, [chatId, claimOpening]);
 
   const blocks = useMemo(() => groupTranscript(live.entries), [live.entries]);
@@ -158,7 +179,9 @@ export function ChatView({
               if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
               return <p className="status" key={index}>{block.text}</p>;
             })}
-            {blocks.length === 0 && <p className="empty">{live.ready ? "Send a prompt to start." : "Loading chat…"}</p>}
+            {blocks.length === 0 && (
+              <p className="empty">{error || (live.ready ? "Send a prompt to start." : "Loading chat…")}</p>
+            )}
           </div>
           {live.shell && (
             <section className={shellOpen ? "shell-log open" : "shell-log"}>
