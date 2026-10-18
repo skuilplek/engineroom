@@ -356,5 +356,48 @@ test("repository file requests validate relative paths and visibility flags", as
       path: "../outside.ts",
     }),
   );
+
+  const writeReq = parseRunnerRequest({
+    id: "13",
+    type: "write_repo_file",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+    content: "export const a = 1;\n",
+  });
+  assert.equal(writeReq.type, "write_repo_file");
+
+  const createReq = parseRunnerRequest({
+    id: "14",
+    type: "create_repo_entry",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/utils",
+    kind: "dir",
+  });
+  assert.equal(createReq.type, "create_repo_entry");
+
+  const renameReq = parseRunnerRequest({
+    id: "15",
+    type: "rename_repo_entry",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+    newPath: "src/main.ts",
+  });
+  assert.equal(renameReq.type, "rename_repo_entry");
+
+  const deleteReq = parseRunnerRequest({
+    id: "16",
+    type: "delete_repo_entry",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/main.ts",
+  });
+  assert.equal(deleteReq.type, "delete_repo_entry");
+
+  const policyWithEditor = parseUserPolicy({ agents: ["cursor"], rawTerminal: false, fileEditor: false });
+  assert.equal(policyWithEditor.fileEditor, false);
+  const policyDefaultEditor = parseUserPolicy({ agents: ["cursor"], rawTerminal: false });
+  assert.equal(policyDefaultEditor.fileEditor, true);
+
+  const readOnlySettings = applySettings(DEFAULT_SETTINGS, parseSettingsPatch({ filesReadOnly: true }));
+  assert.equal(readOnlySettings.filesReadOnly, true);
 });
 

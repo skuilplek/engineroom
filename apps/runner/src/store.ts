@@ -48,6 +48,7 @@ export async function loadSettings(home: string): Promise<Settings> {
       patch.permission = parsed.permission;
     }
     if (isTheme(parsed.theme)) patch.theme = parsed.theme;
+    if (typeof parsed.filesReadOnly === "boolean") patch.filesReadOnly = parsed.filesReadOnly;
     if (parsed.binaries && typeof parsed.binaries === "object") patch.binaries = parsed.binaries;
     return applySettings(DEFAULT_SETTINGS, patch);
   } catch (error) {

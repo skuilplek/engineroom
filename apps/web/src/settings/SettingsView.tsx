@@ -9,14 +9,16 @@ export function SettingsView({
   agents,
   agentCatalog,
   options,
+  fileEditorAllowed = true,
   onTheme,
   onSaved,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
+  fileEditorAllowed?: boolean;
   onTheme: (theme: ThemePreference) => void;
-  onSaved: (theme: ThemePreference) => void;
+  onSaved: (theme: ThemePreference, filesReadOnly: boolean) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
@@ -48,7 +50,7 @@ export function SettingsView({
       const savedSettings = await saveSettings(settings);
       const nextTheme = normalizeTheme(savedSettings.theme);
       setSettings({ ...savedSettings, theme: nextTheme });
-      onSaved(nextTheme);
+      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly));
       setSaved("Saved");
     } catch (err) {
       setError(message(err));
@@ -171,6 +173,18 @@ export function SettingsView({
           <option value="allow">Allow everything</option>
         </select>
       </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!fileEditorAllowed || Boolean(settings.filesReadOnly)}
+          disabled={!fileEditorAllowed}
+          onChange={(event) => setSettings({ ...settings, filesReadOnly: event.target.checked })}
+        />
+        Read-only file viewer
+      </label>
+      {!fileEditorAllowed && (
+        <p className="muted">File editing is turned off by your administrator.</p>
+      )}
       <details>
         <summary>CLI paths</summary>
         {agents.map((agent) => {

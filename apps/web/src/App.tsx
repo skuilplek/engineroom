@@ -98,6 +98,13 @@ function Shell({
       return false;
     }
   });
+  const [filesExpanded, setFilesExpanded] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("engineroom.filesExpanded") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("engineroom.sidebarCollapsed") === "1";
@@ -114,6 +121,18 @@ function Shell({
       const next = !current;
       try {
         localStorage.setItem("engineroom.filesOpen", next ? "1" : "0");
+      } catch {
+        /* ignore storage failure */
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleFilesExpanded = useCallback(() => {
+    setFilesExpanded((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("engineroom.filesExpanded", next ? "1" : "0");
       } catch {
         /* ignore storage failure */
       }
@@ -212,9 +231,12 @@ function Shell({
     }
   }, [repos, session.home]);
 
+  const canEditFiles = Boolean(session.fileEditor) && !session.filesReadOnly;
+
   const shellClass = [
     "shell",
     showFileManager && filesOpen ? "with-drawer" : "",
+    showFileManager && filesOpen && filesExpanded ? "drawer-expanded" : "",
     sidebarCollapsed ? "sidebar-collapsed" : "",
   ].filter(Boolean).join(" ");
 
@@ -247,19 +269,21 @@ function Shell({
             agents={session.agents}
             agentCatalog={session.agentCatalog}
             options={session.options}
+            fileEditorAllowed={session.fileEditor}
             onTheme={applyTheme}
-            onSaved={(theme) => onSession({ ...session, theme })}
+            onSaved={(theme, filesReadOnly) => onSession({ ...session, theme, filesReadOnly })}
           />
         )}
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, agentCatalog) => onSession({
+            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog) => onSession({
               ...session,
               agents,
               rawTerminal,
               cliImport,
               fileManagerOffered,
+              fileEditor: fileEditor ?? session.fileEditor,
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}
@@ -314,7 +338,10 @@ function Shell({
           workspace={selectedRepo.path}
           repoName={selectedRepo.name}
           open={filesOpen}
+          expanded={filesExpanded}
+          canEdit={canEditFiles}
           refreshKey={filesRefreshKey}
+          onToggleExpanded={toggleFilesExpanded}
           onClose={toggleFiles}
         />
       )}

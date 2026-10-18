@@ -130,6 +130,17 @@ export function loadFileManager(file: string): boolean {
   return false;
 }
 
+export function loadFileEditor(file: string): boolean {
+  if (!file) return true;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { fileEditor?: unknown };
+    if (typeof parsed.fileEditor === "boolean") return parsed.fileEditor;
+  } catch {
+    /* default on */
+  }
+  return true;
+}
+
 export function loadAppName(file: string): string {
   if (!file) return DEFAULT_APP_NAME;
   try {
@@ -153,6 +164,7 @@ export function saveAgentFlags(
   rawTerminal?: boolean,
   cliImport?: boolean,
   fileManager?: boolean,
+  fileEditor?: boolean,
 ): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
@@ -167,6 +179,7 @@ export function saveAgentFlags(
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
+  const editor = typeof fileEditor === "boolean" ? fileEditor : loadFileEditor(file);
   const current = readAgentFile(file);
   writeAgentFile(file, {
     ...current,
@@ -176,6 +189,7 @@ export function saveAgentFlags(
     rawTerminal: terminal,
     cliImport: imports,
     fileManager: files,
+    fileEditor: editor,
     appName: loadAppName(file),
     customAgents: custom.map((agent) => ({ ...agent, enabled: Boolean(next[agent.id]) })),
   });

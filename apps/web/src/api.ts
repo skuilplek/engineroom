@@ -31,6 +31,8 @@ export interface Session {
   rawTerminal: boolean;
   fileManager: boolean;
   fileManagerOffered?: boolean;
+  fileEditor: boolean;
+  filesReadOnly?: boolean;
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;
@@ -54,6 +56,7 @@ export interface AgentInventory {
   rawTerminal: boolean;
   cliImport: boolean;
   fileManager: boolean;
+  fileEditor?: boolean;
 }
 
 export interface Account {
@@ -144,6 +147,34 @@ export function listRepoFiles(workspace: string) {
 export function readRepoFile(workspace: string, filePath: string) {
   return api<RepoFileContent>(
     `/api/repositories/file?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
+  );
+}
+
+export function writeRepoFile(workspace: string, filePath: string, content: string) {
+  return api<RepoFileContent>("/api/repositories/file", {
+    method: "PUT",
+    body: JSON.stringify({ workspace, path: filePath, content }),
+  });
+}
+
+export function createRepoEntry(workspace: string, filePath: string, kind: "file" | "dir", content?: string) {
+  return api<{ path: string; kind: "file" | "dir" }>("/api/repositories/file", {
+    method: "POST",
+    body: JSON.stringify({ workspace, path: filePath, kind, ...(content !== undefined ? { content } : {}) }),
+  });
+}
+
+export function renameRepoEntry(workspace: string, filePath: string, newPath: string) {
+  return api<{ path: string; newPath: string }>("/api/repositories/file", {
+    method: "PATCH",
+    body: JSON.stringify({ workspace, path: filePath, newPath }),
+  });
+}
+
+export function deleteRepoEntry(workspace: string, filePath: string) {
+  return api<{ path: string }>(
+    `/api/repositories/file?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
+    { method: "DELETE" },
   );
 }
 
@@ -291,10 +322,23 @@ export function deleteCustomAgent(id: string) {
   return api<AgentInventory>(`/api/admin/agents/custom/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function saveAgents(flags: Record<string, boolean>, rawTerminal?: boolean, cliImport?: boolean, fileManager?: boolean) {
-  return api<{ agents: AgentId[]; rawTerminal?: boolean; cliImport?: boolean; fileManager?: boolean; agentCatalog?: { id: string; label: string }[] }>("/api/admin/agents", {
+export function saveAgents(
+  flags: Record<string, boolean>,
+  rawTerminal?: boolean,
+  cliImport?: boolean,
+  fileManager?: boolean,
+  fileEditor?: boolean,
+) {
+  return api<{
+    agents: AgentId[];
+    rawTerminal?: boolean;
+    cliImport?: boolean;
+    fileManager?: boolean;
+    fileEditor?: boolean;
+    agentCatalog?: { id: string; label: string }[];
+  }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor }),
   });
 }
 

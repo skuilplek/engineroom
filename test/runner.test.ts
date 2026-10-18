@@ -378,6 +378,84 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
     assert.equal(fullPaths.includes("ignored.txt"), true);
     assert.equal(fullPaths.includes("dist/bundle.js"), true);
     assert.equal(fullPaths.includes(".git"), true);
+
+    // Test file CRUD operations
+    const {
+      writeRepositoryFile,
+      createRepositoryEntry,
+      renameRepositoryEntry,
+      deleteRepositoryEntry,
+    } = await import("../apps/runner/src/files.ts");
+
+    const updated = await writeRepositoryFile(home, repo, "src/index.ts", "export const x = 42;\n");
+    assert.equal(updated.content, "export const x = 42;\n");
+    assert.equal(updated.oldContent, "export const x = 1;\n");
+
+    // Rejects modifying .git even if showGitDir is true
+    await assert.rejects(
+      () =>
+        writeRepositoryFile(home, repo, ".git/HEAD", "ref: refs/heads/main\n", {
+          showHidden: true,
+          showGitignored: true,
+          showGitDir: true,
+        }),
+      /cannot modify \.git/,
+    );
+
+    // Rejects writing hidden file when showHidden is false
+    await assert.rejects(
+      () =>
+        writeRepositoryFile(home, repo, ".env", "SECRET=2\n", {
+          showHidden: false,
+          showGitignored: false,
+          showGitDir: false,
+        }),
+      /hidden by policy/,
+    );
+
+    // Rejects symlink escape on write
+    await assert.rejects(
+      () =>
+        writeRepositoryFile(home, repo, "src/escape.txt", "overwrite", {
+          showHidden: true,
+          showGitignored: true,
+          showGitDir: true,
+        }),
+      /invalid file path/,
+    );
+
+    // Create folder and file, rename, and delete
+    const createdDir = await createRepositoryEntry(home, repo, "src/components", "dir");
+    assert.equal(createdDir.path, "src/components");
+    const createdFile = await createRepositoryEntry(
+      home,
+      repo,
+      "src/components/Button.tsx",
+      "file",
+      "export const Button = () => null;\n",
+    );
+    assert.equal(createdFile.path, "src/components/Button.tsx");
+
+    await assert.rejects(
+      () => createRepositoryEntry(home, repo, "src/components/Button.tsx", "file", "dup"),
+      /already exists/,
+    );
+
+    const renamed = await renameRepositoryEntry(
+      home,
+      repo,
+      "src/components/Button.tsx",
+      "src/components/PrimaryButton.tsx",
+    );
+    assert.equal(renamed.newPath, "src/components/PrimaryButton.tsx");
+    const renamedRead = await readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx");
+    assert.equal(renamedRead.content, "export const Button = () => null;\n");
+
+    await deleteRepositoryEntry(home, repo, "src/components");
+    await assert.rejects(
+      () => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"),
+      /file not found/,
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });

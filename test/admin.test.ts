@@ -1166,6 +1166,73 @@ test("the administrator controls repository file visibility for the file manager
     assert.equal(allowedHidden.status, 200);
     const envContent = (await allowedHidden.json()) as { content: string };
     assert.equal(envContent.content, "TOKEN=abc\n");
+
+    // File CRUD via hub routes works when fileEditor is enabled and filesReadOnly is false
+    const createRes = await fetch(`${base}/api/repositories/file`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: repo, path: "src/helper.ts", kind: "file", content: "export const h = 1;\n" }),
+    });
+    assert.equal(createRes.status, 201);
+
+    const writeRes = await fetch(`${base}/api/repositories/file`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ workspace: repo, path: "src/helper.ts", content: "export const h = 2;\n" }),
+    });
+    assert.equal(writeRes.status, 200);
+    assert.equal(((await writeRes.json()) as { content: string }).content, "export const h = 2;\n");
+
+    const renameRes = await fetch(`${base}/api/repositories/file`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ workspace: repo, path: "src/helper.ts", newPath: "src/util.ts" }),
+    });
+    assert.equal(renameRes.status, 200);
+
+    // User enables filesReadOnly in their settings -> mutations return 403
+    const setReadOnly = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ filesReadOnly: true }),
+    });
+    assert.equal(setReadOnly.status, 200);
+
+    const blockedByUserSetting = await fetch(`${base}/api/repositories/file`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ workspace: repo, path: "src/util.ts", content: "nope" }),
+    });
+    assert.equal(blockedByUserSetting.status, 403);
+
+    // Turn user filesReadOnly back off, then disable global fileEditor via admin -> 403
+    await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ filesReadOnly: false }),
+    });
+    await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true, fileEditor: false }),
+    });
+    const blockedByAdmin = await fetch(
+      `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/util.ts")}`,
+      { method: "DELETE", headers },
+    );
+    assert.equal(blockedByAdmin.status, 403);
+
+    // Re-enable global fileEditor and delete the file
+    await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true, fileEditor: true }),
+    });
+    const deleteRes = await fetch(
+      `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/util.ts")}`,
+      { method: "DELETE", headers },
+    );
+    assert.equal(deleteRes.status, 200);
   } finally {
     hub.close();
     await runner.close();

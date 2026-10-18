@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { open, readdir, realpath, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   assertRepoRelativePath,
@@ -204,6 +205,196 @@ export async function readRepositoryFile(
     truncated,
     size,
   };
+}
+
+function isGitInternalPath(relPath: string): boolean {
+  return relPath === ".git" || relPath.startsWith(".git/") || relPath.split("/").includes(".git");
+}
+
+async function assertEditablePath(
+  repoReal: string,
+  rawPath: string,
+  visibility: FileVisibility,
+): Promise<{ relPath: string; candidate: string }> {
+  const relPath = assertRepoRelativePath(rawPath);
+  if (isGitInternalPath(relPath)) {
+    throw new Error("cannot modify .git directory");
+  }
+  if (!isPathAllowedByVisibility(relPath, visibility)) {
+    throw new Error("file is hidden by policy");
+  }
+  if (!visibility.showGitignored) {
+    const ignored = await checkGitIgnored(repoReal, [relPath]);
+    if (ignored.has(relPath)) throw new Error("file is hidden by policy");
+  }
+  const candidate = path.resolve(repoReal, relPath);
+  if (!isInsidePath(repoReal, candidate) || candidate === repoReal) {
+    throw new Error("invalid file path");
+  }
+  return { relPath, candidate };
+}
+
+export async function writeRepositoryFile(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  content: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<RepoFileContent> {
+  if (Buffer.byteLength(content, "utf8") > MAX_PREVIEW_BYTES) {
+    throw new Error("file is too large");
+  }
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  const { relPath, candidate } = await assertEditablePath(repoReal, rawPath, visibility);
+
+  let resolved: string;
+  try {
+    resolved = await realpath(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("file not found");
+    }
+    throw error;
+  }
+  if (!isInsidePath(repoReal, resolved) || resolved === repoReal) {
+    throw new Error("invalid file path");
+  }
+
+  const info = await stat(resolved);
+  if (!info.isFile()) throw new Error("not a regular file");
+
+  const sampleLen = Math.min(info.size, BINARY_SAMPLE_BYTES);
+  if (sampleLen > 0) {
+    const handle = await open(resolved, "r");
+    try {
+      const sample = Buffer.alloc(sampleLen);
+      const { bytesRead } = await handle.read(sample, 0, sampleLen, 0);
+      if (isBinaryBuffer(sample.subarray(0, bytesRead))) {
+        throw new Error("cannot edit binary file");
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+
+  const tmp = `${resolved}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, content, { mode: info.mode & 0o777 || 0o644 });
+    await rename(tmp, resolved);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  return readRepositoryFile(home, workspace, relPath, visibility);
+}
+
+export async function createRepositoryEntry(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  kind: "file" | "dir",
+  content = "",
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string; kind: "file" | "dir" }> {
+  if (Buffer.byteLength(content, "utf8") > MAX_PREVIEW_BYTES) {
+    throw new Error("file is too large");
+  }
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  const { relPath, candidate } = await assertEditablePath(repoReal, rawPath, visibility);
+
+  try {
+    await lstat(candidate);
+    throw new Error("path already exists");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const parentDir = path.dirname(candidate);
+  await mkdir(parentDir, { recursive: true });
+  const parentReal = await realpath(parentDir);
+  if (!isInsidePath(repoReal, parentReal)) {
+    throw new Error("invalid file path");
+  }
+
+  if (kind === "dir") {
+    await mkdir(candidate);
+  } else {
+    await writeFile(candidate, content, { flag: "wx", mode: 0o644 });
+  }
+
+  return { path: relPath, kind };
+}
+
+export async function renameRepositoryEntry(
+  home: string,
+  workspace: string,
+  oldRawPath: string,
+  newRawPath: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string; newPath: string }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  const src = await assertEditablePath(repoReal, oldRawPath, visibility);
+  const dst = await assertEditablePath(repoReal, newRawPath, visibility);
+  if (src.relPath === dst.relPath) {
+    return { path: src.relPath, newPath: dst.relPath };
+  }
+
+  let srcReal: string;
+  try {
+    srcReal = await realpath(src.candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("file not found");
+    }
+    throw error;
+  }
+  if (!isInsidePath(repoReal, srcReal) || srcReal === repoReal) {
+    throw new Error("invalid file path");
+  }
+
+  try {
+    await lstat(dst.candidate);
+    throw new Error("destination already exists");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const dstParent = path.dirname(dst.candidate);
+  await mkdir(dstParent, { recursive: true });
+  const dstParentReal = await realpath(dstParent);
+  if (!isInsidePath(repoReal, dstParentReal)) {
+    throw new Error("invalid file path");
+  }
+
+  await rename(src.candidate, dst.candidate);
+  return { path: src.relPath, newPath: dst.relPath };
+}
+
+export async function deleteRepositoryEntry(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  const { relPath, candidate } = await assertEditablePath(repoReal, rawPath, visibility);
+
+  let targetReal: string;
+  try {
+    targetReal = await realpath(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("file not found");
+    }
+    throw error;
+  }
+  if (!isInsidePath(repoReal, targetReal) || targetReal === repoReal) {
+    throw new Error("invalid file path");
+  }
+
+  await rm(candidate, { recursive: true, force: false });
+  return { path: relPath };
 }
 
 export function isPathAllowedByVisibility(relPath: string, visibility: FileVisibility): boolean {

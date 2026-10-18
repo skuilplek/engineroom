@@ -59,6 +59,7 @@ export interface Settings {
   binaries: Partial<Record<AgentId, string>>;
   permission: PermissionPolicy;
   theme: ThemePreference;
+  filesReadOnly?: boolean;
   lockedBinaries?: AgentId[];
 }
 
@@ -68,6 +69,7 @@ export interface SettingsPatch {
   binaries?: Partial<Record<AgentId, string | null>>;
   permission?: PermissionPolicy;
   theme?: ThemePreference;
+  filesReadOnly?: boolean;
 }
 
 export interface ChatMeta {
@@ -218,6 +220,7 @@ export interface UserPolicy {
   binaries: Partial<Record<AgentId, string>>;
   rawTerminal: boolean;
   fileManager: boolean;
+  fileEditor?: boolean;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -335,7 +338,11 @@ export type RunnerRequest =
   | { id: string; type: "probe_agent"; agent: AgentId }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
-  | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility };
+  | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
+  | { id: string; type: "write_repo_file"; workspace: string; path: string; content: string; visibility?: FileVisibility }
+  | { id: string; type: "create_repo_entry"; workspace: string; path: string; kind: "file" | "dir"; content?: string; visibility?: FileVisibility }
+  | { id: string; type: "rename_repo_entry"; workspace: string; path: string; newPath: string; visibility?: FileVisibility }
+  | { id: string; type: "delete_repo_entry"; workspace: string; path: string; visibility?: FileVisibility };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -348,6 +355,7 @@ export const DEFAULT_SETTINGS: Settings = {
   binaries: {},
   permission: "ask",
   theme: "dark",
+  filesReadOnly: false,
 };
 
 export function isAgentId(value: unknown): value is AgentId {
@@ -615,6 +623,63 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }
+    case "write_repo_file": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (typeof body.content !== "string") throw new Error("invalid file content");
+      if (new TextEncoder().encode(body.content).byteLength > 256 * 1024) throw new Error("file is too large");
+      return {
+        id: body.id,
+        type: "write_repo_file",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        content: body.content,
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "create_repo_entry": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (body.kind !== "file" && body.kind !== "dir") throw new Error("invalid entry kind");
+      let content: string | undefined;
+      if (body.content != null) {
+        if (typeof body.content !== "string") throw new Error("invalid file content");
+        if (new TextEncoder().encode(body.content).byteLength > 256 * 1024) throw new Error("file is too large");
+        content = body.content;
+      }
+      return {
+        id: body.id,
+        type: "create_repo_entry",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        kind: body.kind,
+        ...(content !== undefined ? { content } : {}),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "rename_repo_entry": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return {
+        id: body.id,
+        type: "rename_repo_entry",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        newPath: assertRepoRelativePath(body.newPath),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "delete_repo_entry": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return {
+        id: body.id,
+        type: "delete_repo_entry",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
     default:
       throw new Error("unknown request");
   }
@@ -833,12 +898,15 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   }
   if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
   const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : false;
+  if (body.fileEditor != null && typeof body.fileEditor !== "boolean") throw new Error("invalid file editor");
+  const fileEditor = body.fileEditor == null ? true : body.fileEditor;
   const options = parsePolicyOptions(body.options);
   return {
     agents,
     binaries: parsePolicyBinaries(body.binaries),
     rawTerminal: body.rawTerminal,
     fileManager,
+    fileEditor,
     ...(options ? { options } : {}),
   };
 }
@@ -899,7 +967,7 @@ function offeredChoices(available: AgentOptionChoice[], offeredIds: string[], pe
 }
 
 export function defaultPolicy(): UserPolicy {
-  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: false };
+  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: false, fileEditor: true };
 }
 
 export function parseEnvEntries(value: unknown): EnvEntry[] {
@@ -958,6 +1026,10 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     if (!isTheme(body.theme)) throw new Error("invalid theme");
     patch.theme = body.theme;
   }
+  if (body.filesReadOnly != null) {
+    if (typeof body.filesReadOnly !== "boolean") throw new Error("invalid filesReadOnly");
+    patch.filesReadOnly = body.filesReadOnly;
+  }
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
     const binaries: SettingsPatch["binaries"] = {};
@@ -985,6 +1057,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     binaries: { ...current.binaries },
     permission: patch.permission ?? current.permission ?? "ask",
     theme: patch.theme ?? current.theme ?? "dark",
+    filesReadOnly: patch.filesReadOnly ?? current.filesReadOnly ?? false,
   };
   if (patch.binaries) {
     for (const agent of Object.keys(patch.binaries)) {

@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileManager, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
+import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileEditor, loadFileManager, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -57,6 +57,9 @@ interface RunnerCall {
   modeId?: string;
   modelId?: string;
   path?: string;
+  newPath?: string;
+  kind?: "file" | "dir";
+  content?: string;
   visibility?: FileVisibility;
 }
 
@@ -193,6 +196,8 @@ export function createHub(options: HubOptions) {
       rawTerminal: access.rawTerminal,
       fileManager: access.fileManager,
       fileManagerOffered: loadFileManager(agentsFile),
+      fileEditor: access.fileEditor,
+      filesReadOnly: Boolean(settings.filesReadOnly),
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),
@@ -206,6 +211,7 @@ export function createHub(options: HubOptions) {
     agents: AgentId[];
     rawTerminal: boolean;
     fileManager: boolean;
+    fileEditor: boolean;
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
@@ -223,6 +229,7 @@ export function createHub(options: HubOptions) {
       agents,
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
       fileManager: loadFileManager(agentsFile) && policy.fileManager,
+      fileEditor: loadFileEditor(agentsFile) && policy.fileEditor !== false,
       options: optionMap,
     };
   }
@@ -232,6 +239,14 @@ export function createHub(options: HubOptions) {
     const access = await loadAccess(user);
     const allowed = access.options[agent]?.modes ?? [];
     if (!allowed.some((choice) => choice.id === mode)) throw new Error("invalid mode");
+  }
+
+  async function assertFileEditorAllowed(user: LinuxUser) {
+    await assertFileManager(user);
+    const access = await loadAccess(user);
+    if (!access.fileEditor) throw new Error("file editing is not enabled");
+    const settings = (await call(user, { type: "get_settings" })) as Settings;
+    if (settings.filesReadOnly) throw new Error("file editing is not enabled");
   }
 
   async function assertModelChoice(user: LinuxUser, agent: AgentId, model: string) {
@@ -295,13 +310,14 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body), fileManagerFrom(body));
+      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body), fileManagerFrom(body), fileEditorFrom(body));
       const listed = await listAgents(agentsFile, commandDirs);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
         rawTerminal: loadRawTerminal(agentsFile),
         cliImport: loadCliImport(agentsFile),
         fileManager: loadFileManager(agentsFile),
+        fileEditor: loadFileEditor(agentsFile),
         agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
       });
       return;
@@ -514,6 +530,73 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "read_repo_file", workspace, path: filePath, visibility }));
       return;
     }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "PUT") {
+      await assertFileEditorAllowed(user);
+      const body = (await readJson(req)) as { workspace?: unknown; path?: unknown; content?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(body.path);
+      if (typeof body.content !== "string") throw new Error("invalid file content");
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, {
+        type: "write_repo_file",
+        workspace,
+        path: filePath,
+        content: body.content,
+        visibility,
+      }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "POST") {
+      await assertFileEditorAllowed(user);
+      const body = (await readJson(req)) as { workspace?: unknown; path?: unknown; kind?: unknown; content?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(body.path);
+      if (body.kind !== "file" && body.kind !== "dir") throw new Error("invalid entry kind");
+      const content = typeof body.content === "string" ? body.content : undefined;
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 201, await call(user, {
+        type: "create_repo_entry",
+        workspace,
+        path: filePath,
+        kind: body.kind,
+        ...(content !== undefined ? { content } : {}),
+        visibility,
+      }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "PATCH") {
+      await assertFileEditorAllowed(user);
+      const body = (await readJson(req)) as { workspace?: unknown; path?: unknown; newPath?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(body.path);
+      const newPath = assertRepoRelativePath(body.newPath);
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, {
+        type: "rename_repo_entry",
+        workspace,
+        path: filePath,
+        newPath,
+        visibility,
+      }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "DELETE") {
+      await assertFileEditorAllowed(user);
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(url.searchParams.get("path") || "");
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, {
+        type: "delete_repo_entry",
+        workspace,
+        path: filePath,
+        visibility,
+      }));
+      return;
+    }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "list_chats" }));
       return;
@@ -636,7 +719,11 @@ export function createHub(options: HubOptions) {
       command.type === "set_repositories" ||
       command.type === "probe_agent" ||
       command.type === "list_repo_files" ||
-      command.type === "read_repo_file"
+      command.type === "read_repo_file" ||
+      command.type === "write_repo_file" ||
+      command.type === "create_repo_entry" ||
+      command.type === "rename_repo_entry" ||
+      command.type === "delete_repo_entry"
     ) {
       throw new Error("unknown request");
     }
@@ -713,6 +800,7 @@ export function createHub(options: HubOptions) {
       rawTerminal: loadRawTerminal(agentsFile),
       cliImport: loadCliImport(agentsFile),
       fileManager: loadFileManager(agentsFile),
+      fileEditor: loadFileEditor(agentsFile),
     };
   }
 
@@ -876,6 +964,12 @@ function fileManagerFrom(body: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function fileEditorFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { fileEditor?: unknown }).fileEditor;
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
   if (Buffer.isBuffer(data)) return new Uint8Array(data);
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -883,14 +977,17 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 }
 
 function statusFor(message: string): number {
-  if (message.includes("not enabled") || message.includes("hidden by policy")) return 403;
+  if (message.includes("not enabled") || message.includes("hidden by policy") || message.includes("cannot modify .git")) return 403;
   if (
     message.includes("invalid") ||
     message.includes("empty") ||
     message.includes("must") ||
     message.includes("taken") ||
     message.includes("does not report") ||
-    message.includes("not a regular file")
+    message.includes("not a regular file") ||
+    message.includes("too large") ||
+    message.includes("cannot edit binary") ||
+    message.includes("already exists")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
   if (message.includes("already running")) return 409;

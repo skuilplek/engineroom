@@ -31,7 +31,14 @@ import { TranscriptWriter } from "./persist.ts";
 import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
 import { loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
-import { listRepositoryFiles, readRepositoryFile } from "./files.ts";
+import {
+  createRepositoryEntry,
+  deleteRepositoryEntry,
+  listRepositoryFiles,
+  readRepositoryFile,
+  renameRepositoryEntry,
+  writeRepositoryFile,
+} from "./files.ts";
 import {
   clearTranscript,
   createChat,
@@ -318,6 +325,14 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listRepositoryFiles(home, request.workspace, request.visibility);
       case "read_repo_file":
         return readRepositoryFile(home, request.workspace, request.path, request.visibility);
+      case "write_repo_file":
+        return writeRepositoryFile(home, request.workspace, request.path, request.content, request.visibility);
+      case "create_repo_entry":
+        return createRepositoryEntry(home, request.workspace, request.path, request.kind, request.content, request.visibility);
+      case "rename_repo_entry":
+        return renameRepositoryEntry(home, request.workspace, request.path, request.newPath, request.visibility);
+      case "delete_repo_entry":
+        return deleteRepositoryEntry(home, request.workspace, request.path, request.visibility);
       default:
         throw new Error("unsupported request");
     }
