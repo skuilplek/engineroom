@@ -33,6 +33,7 @@ export function main() {
     agentsFile: process.env.ENGINEROOM_AGENTS_FILE || "/var/lib/engineroom/agents.json",
     agentOptionsFile: process.env.ENGINEROOM_AGENT_OPTIONS_FILE || "/var/lib/engineroom/agent-options.json",
     catalogFile: process.env.ENGINEROOM_CATALOG_FILE || "/var/lib/engineroom/catalog.json",
+    reposFile: process.env.ENGINEROOM_REPOS_FILE || "/var/lib/engineroom/repos.json",
     checksFile: process.env.ENGINEROOM_CHECKS_FILE || "/etc/engineroom/checks.json",
     adminCtl: process.env.ENGINEROOM_ADMIN_CTL || "/usr/local/bin/engineroom-admin",
   });

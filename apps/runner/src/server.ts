@@ -32,6 +32,7 @@ import {
   createChat,
   getChat,
   listChats,
+  detectRepositories,
   listRepositories,
   loadSettings,
   saveSettings,
@@ -266,7 +267,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         };
       }
       case "sync_repositories":
-        return syncGrantedRepositories(home, request.repos, clone);
+        return syncGrantedRepositories(home, request.repos, clone, request.directory);
+      case "detect_repositories":
+        return detectRepositories(home, request.directory);
       case "list_workspaces":
         return (await import("./workspace.ts")).listWorkspaces(home);
       case "list_repositories":

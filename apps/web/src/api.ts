@@ -113,6 +113,17 @@ export function listCatalog() {
   return api<{ repositories: CatalogEntry[] }>("/api/admin/catalog");
 }
 
+export function getRepoDirectory() {
+  return api<{ directory: string }>("/api/admin/repository-folder");
+}
+
+export function saveRepoDirectory(directory: string) {
+  return api<{ directory: string }>("/api/admin/repository-folder", {
+    method: "PUT",
+    body: JSON.stringify({ directory }),
+  });
+}
+
 export function addCatalog(name: string, url: string) {
   return api<CatalogEntry>("/api/admin/catalog", {
     method: "POST",

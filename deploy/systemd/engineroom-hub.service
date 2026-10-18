@@ -17,6 +17,7 @@ Environment=ENGINEROOM_ADMIN_CTL=/usr/local/bin/engineroom-admin
 Environment=ENGINEROOM_AGENTS_FILE=/var/lib/engineroom/agents.json
 Environment=ENGINEROOM_AGENT_OPTIONS_FILE=/var/lib/engineroom/agent-options.json
 Environment=ENGINEROOM_CATALOG_FILE=/var/lib/engineroom/catalog.json
+Environment=ENGINEROOM_REPOS_FILE=/var/lib/engineroom/repos.json
 Environment=ENGINEROOM_CHECKS_FILE=/etc/engineroom/checks.json
 Environment=ENGINEROOM_SOCKET_DIR=/run/engineroom
 Environment=ENGINEROOM_WEB_DIST=/usr/local/share/engineroom/web

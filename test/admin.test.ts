@@ -261,8 +261,8 @@ test("the administrator enables repositories for one user", async () => {
     assert.equal(saved.status, 200);
 
     const visible = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string; path: string }>;
-    assert.deepEqual(visible.map((item) => item.name), ["widget"]);
-    const widget = visible[0];
+    assert.deepEqual(visible.map((item) => item.name), ["other", "widget"]);
+    const widget = visible.find((item) => item.name === "widget");
     assert.ok(widget);
 
     const created = await fetch(`${base}/api/chats`, {
@@ -271,12 +271,12 @@ test("the administrator enables repositories for one user", async () => {
       body: JSON.stringify({ workspace: widget.path, title: "widget chat" }),
     });
     assert.equal(created.status, 201);
-    const hidden = await fetch(`${base}/api/chats`, {
+    const custom = await fetch(`${base}/api/chats`, {
       method: "POST",
       headers: carolHeaders,
-      body: JSON.stringify({ workspace: carolOther }),
+      body: JSON.stringify({ workspace: carolOther, title: "custom" }),
     });
-    assert.equal(hidden.status, 403);
+    assert.equal(custom.status, 201);
     const loose = await fetch(`${base}/api/chats`, {
       method: "POST",
       headers: carolHeaders,
@@ -290,14 +290,14 @@ test("the administrator enables repositories for one user", async () => {
       body: JSON.stringify({ ids: [] }),
     });
     assert.equal(cleared.status, 200);
-    const after = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as unknown[];
-    assert.deepEqual(after, []);
-    const blockedAgain = await fetch(`${base}/api/chats`, {
+    const after = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
+    assert.deepEqual(after.map((item) => item.name), ["other", "widget"]);
+    const stillOpen = await fetch(`${base}/api/chats`, {
       method: "POST",
       headers: carolHeaders,
       body: JSON.stringify({ workspace: widget.path }),
     });
-    assert.equal(blockedAgain.status, 403);
+    assert.equal(stillOpen.status, 201);
   } finally {
     hub.close();
     await aliceRunner.close();

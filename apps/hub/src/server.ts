@@ -8,6 +8,7 @@ import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accoun
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadRawTerminal, saveAgentFlags } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
+import { loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
 import { lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
@@ -24,6 +25,7 @@ export interface HubOptions {
   agentsFile?: string;
   agentOptionsFile?: string;
   catalogFile?: string;
+  reposFile?: string;
   checksFile?: string;
   commandDirs?: string[];
   adminCtl?: string;
@@ -48,6 +50,8 @@ interface RunnerCall {
   policy?: UserPolicy;
   entries?: EnvEntry[];
   repos?: CatalogEntry[];
+  catalog?: string[];
+  directory?: string;
   modeId?: string;
   modelId?: string;
 }
@@ -61,6 +65,7 @@ export function createHub(options: HubOptions) {
   const agentsFile = options.agentsFile || "";
   const agentOptionsFile = options.agentOptionsFile || (agentsFile ? path.join(path.dirname(agentsFile), "agent-options.json") : "");
   const catalogFile = options.catalogFile || "";
+  const reposFile = options.reposFile || "";
   const checksFile = options.checksFile || "";
   const commandDirs = options.commandDirs;
   const accounts = options.listAccounts ?? (() => listAccounts());
@@ -160,6 +165,7 @@ export function createHub(options: HubOptions) {
       return;
     }
     failures.delete(key);
+    await call(user, { type: "detect_repositories", directory: loadRepoDirectory(reposFile) }).catch(() => undefined);
     res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret), options.cookieSecure));
     sendJson(res, 200, await profile(user));
   }
@@ -274,6 +280,16 @@ export function createHub(options: HubOptions) {
       sendJson(res, 201, { ok: true });
       return;
     }
+    if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, { directory: loadRepoDirectory(reposFile) });
+      return;
+    }
+    if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "PUT") {
+      const body = (await readJson(req)) as { directory?: unknown };
+      const directory = saveRepoDirectory(reposFile, typeof body.directory === "string" ? body.directory : "");
+      sendJson(res, 200, { directory });
+      return;
+    }
     if (parts[2] === "catalog" && parts.length === 3 && req.method === "GET") {
       sendJson(res, 200, { repositories: loadCatalog(catalogFile) });
       return;
@@ -328,7 +344,12 @@ export function createHub(options: HubOptions) {
           if (!entry) throw new Error("invalid repository");
           repos.push(entry);
         }
-        sendJson(res, 200, await call(target, { type: "sync_repositories", repos }));
+        sendJson(res, 200, await call(target, {
+          type: "sync_repositories",
+          repos,
+          catalog: catalog.map((entry) => entry.name),
+          directory: loadRepoDirectory(reposFile),
+        }));
         return;
       }
       if (action === "env" && req.method === "GET") {

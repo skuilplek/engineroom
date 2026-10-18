@@ -227,7 +227,8 @@ export type RunnerRequest =
   | { id: string; type: "get_env" }
   | { id: string; type: "put_env"; entries: EnvEntry[] }
   | { id: string; type: "get_access" }
-  | { id: string; type: "sync_repositories"; repos: CatalogEntry[] }
+  | { id: string; type: "sync_repositories"; repos: CatalogEntry[]; catalog: string[]; directory: string }
+  | { id: string; type: "detect_repositories"; directory: string }
   | { id: string; type: "send"; chatId: string; prompt: string }
   | { id: string; type: "prompt"; chatId: string; prompt: string }
   | { id: string; type: "cancel"; chatId: string }
@@ -353,7 +354,15 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "put_env":
       return { id: body.id, type: "put_env", entries: parseEnvEntries(body.entries) };
     case "sync_repositories":
-      return { id: body.id, type: "sync_repositories", repos: parseCatalogEntries(body.repos) };
+      return {
+        id: body.id,
+        type: "sync_repositories",
+        repos: parseCatalogEntries(body.repos),
+        catalog: body.catalog == null ? [] : parseCatalogNames(body.catalog),
+        directory: body.directory == null || body.directory === "" ? "Sites" : assertRepoDirectory(body.directory),
+      };
+    case "detect_repositories":
+      return { id: body.id, type: "detect_repositories", directory: assertRepoDirectory(body.directory) };
     case "get_chat":
     case "cancel":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
@@ -516,6 +525,41 @@ function assertRemoteUrl(value: string, protocol: "https:" | "ssh:"): string {
   if (parsed.protocol !== protocol || !parsed.hostname) throw new Error("invalid repository url");
   if (parsed.password || (protocol === "https:" && parsed.username)) throw new Error("invalid repository url");
   return value;
+}
+
+export function assertRepoDirectory(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid repository folder");
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 200 || trimmed.startsWith("/") || trimmed.includes("\\") || trimmed.includes("\0")) {
+    throw new Error("invalid repository folder");
+  }
+  const parts = trimmed.split("/").filter((part) => part.length > 0);
+  if (parts.length === 0 || parts.length > 8) throw new Error("invalid repository folder");
+  for (const part of parts) {
+    if (
+      part === "."
+      || part === ".."
+      || part.startsWith(".")
+      || part === "node_modules"
+      || part === "vendor"
+      || part === "dist"
+      || part === "build"
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(part)
+    ) {
+      throw new Error("invalid repository folder");
+    }
+  }
+  return parts.join("/");
+}
+
+export function parseCatalogNames(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("invalid repositories");
+  const names: string[] = [];
+  for (const item of value) {
+    const name = assertCatalogName(item);
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 export function parseCatalogEntries(value: unknown): CatalogEntry[] {

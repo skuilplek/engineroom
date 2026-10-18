@@ -14,6 +14,7 @@ import {
   addCatalog,
   changePassword,
   getAgentOptions,
+  getRepoDirectory,
   getUserAccess,
   listAccounts,
   listCatalog,
@@ -26,6 +27,7 @@ import {
   saveUserGrants,
   saveUserPolicy,
   saveUserSettings,
+  saveRepoDirectory,
   serverOverview,
   type Account,
   type AgentOptionsState,
@@ -61,6 +63,7 @@ export function AdminView({
   const [password, setPassword] = useState("");
   const [repoName, setRepoName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
+  const [repoFolder, setRepoFolder] = useState("Sites");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,6 +97,7 @@ export function AdminView({
   useEffect(() => {
     refreshUsers().catch((err) => setError(message(err)));
     listCatalog().then((body) => setCatalog(body.repositories)).catch((err) => setError(message(err)));
+    getRepoDirectory().then((body) => setRepoFolder(body.directory)).catch((err) => setError(message(err)));
     getAgentOptions().then((options) => {
       setAgentOptions(options);
       const draft: Partial<Record<AgentId, { modes: string[]; models: string[] }>> = {};
@@ -152,6 +156,22 @@ export function AdminView({
       setAgentOptions((current) => ({ ...current, [agent]: record }));
       setOfferedDraft((current) => ({ ...current, [agent]: record.offered }));
       setSaved(`Loaded ${agentLabel(agent)} modes and models`);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFolder(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setSaved("");
+    try {
+      const savedFolder = await saveRepoDirectory(repoFolder.trim());
+      setRepoFolder(savedFolder.directory);
+      setSaved("Repository folder saved");
     } catch (err) {
       setError(message(err));
     } finally {
@@ -331,9 +351,19 @@ export function AdminView({
         )}
 
         {tab === "repositories" && (
+          <>
+          <form className="admin-pane" onSubmit={(event) => void saveFolder(event)}>
+            <h2>Repository folder</h2>
+            <p className="muted">People can start a chat in any git repository inside this folder of their home, including ones they add themselves. The folder is scanned when they sign in. The default is Sites.</p>
+            <label>
+              Folder
+              <input value={repoFolder} onChange={(event) => setRepoFolder(event.target.value)} placeholder="Sites" required />
+            </label>
+            <button className="primary" type="submit" disabled={busy}>Save folder</button>
+          </form>
           <form className="admin-pane" onSubmit={(event) => void addRepo(event)}>
             <h2>Repository catalog</h2>
-            <p className="muted">Add a git remote here, then grant it to a person. Granting clones it into their Sites directory. Removing it from the catalog leaves an existing checkout until you save that person again.</p>
+            <p className="muted">These remotes are what a person can install. Granting one clones it into their repository folder. A checkout that is already there stays available for chats.</p>
             <div className="repo-admin">
               {catalog.map((entry) => (
                 <div className="account" key={entry.id}>
@@ -356,6 +386,7 @@ export function AdminView({
             </label>
             <button className="primary" type="submit" disabled={busy}>Add repository</button>
           </form>
+          </>
         )}
 
         {tab === "people" && (

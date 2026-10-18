@@ -73,7 +73,16 @@ test("runner requests reject a chat id that is not a uuid", () => {
   assert.equal(command.type, "prompt");
 });
 
-test("catalog urls and names stay on a remote", () => {
+test("catalog urls and names stay on a remote", async () => {
+  const { assertRepoDirectory } = await import("@engineroom/protocol");
+  assert.equal(assertRepoDirectory("Sites"), "Sites");
+  assert.equal(assertRepoDirectory(" work/repos "), "work/repos");
+  assert.throws(() => assertRepoDirectory("../Sites"));
+  assert.throws(() => assertRepoDirectory("/tmp/repos"));
+  assert.throws(() => assertRepoDirectory(".hidden"));
+  const detected = parseRunnerRequest({ id: "8", type: "detect_repositories", directory: "Sites" });
+  assert.equal(detected.type, "detect_repositories");
+  assert.throws(() => parseRunnerRequest({ id: "9", type: "detect_repositories", directory: "node_modules" }));
   assert.equal(assertGitUrl("https://github.com/org/repo.git"), "https://github.com/org/repo.git");
   assert.equal(assertGitUrl("ssh://git@github.com/org/repo.git"), "ssh://git@github.com/org/repo.git");
   assert.equal(assertGitUrl("git@github.com:org/repo.git"), "git@github.com:org/repo.git");

@@ -3,6 +3,7 @@ import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, stat, wr
 import path from "node:path";
 import {
   AGENTS,
+  assertRepoDirectory,
   applySettings,
   CHAT_ID_RE,
   cleanModel,
@@ -72,22 +73,28 @@ export async function saveSettings(home: string, patch: SettingsPatch): Promise<
 }
 
 export async function listRepositories(home: string): Promise<RepositoryEntry[]> {
-  const [found, enabled] = await Promise.all([listGitRepositories(home), loadEnabledRepositories(home)]);
-  return found.map((entry) => ({ ...entry, enabled: enabled.has(entry.path) }));
+  const state = await loadRepoState(home);
+  const found = await listGitRepositories(home, state.directory);
+  return found.map((entry) => ({ ...entry, enabled: state.enabled.has(entry.path) }));
 }
 
-export async function setEnabledRepositories(home: string, requested: string[]): Promise<RepositoryEntry[]> {
+export async function detectRepositories(home: string, directory: string): Promise<RepositoryEntry[]> {
+  const found = await listGitRepositories(home, directory);
+  return setEnabledRepositories(home, found.map((entry) => entry.path), directory);
+}
+
+export async function setEnabledRepositories(home: string, requested: string[], directory = "Sites"): Promise<RepositoryEntry[]> {
   const homeReal = await realpath(home);
   const enabled: string[] = [];
   for (const raw of requested) {
     const resolved = await resolveWorkspace(home, raw);
-    if (resolved === homeReal || !repositoryPathAllowed(homeReal, resolved) || !(await isGitRepository(resolved))) {
+    if (resolved === homeReal || !repositoryPathAllowed(homeReal, resolved, directory) || !(await isGitRepository(resolved))) {
       throw new Error("invalid repository");
     }
     if (!enabled.includes(resolved)) enabled.push(resolved);
   }
   await ensureRoot(home);
-  await writeAtomic(repositoriesFile(home), `${JSON.stringify({ enabled }, null, 2)}\n`);
+  await writeAtomic(repositoriesFile(home), `${JSON.stringify({ directory, enabled }, null, 2)}\n`);
   return listRepositories(home);
 }
 
@@ -212,21 +219,30 @@ async function resolveChatWorkspace(home: string, requested?: string): Promise<s
   const homeReal = await realpath(home);
   const workspace = await resolveWorkspace(home, requested);
   if (workspace === homeReal) return workspace;
-  const enabled = await loadEnabledRepositories(home);
-  if (!repositoryPathAllowed(homeReal, workspace) || !enabled.has(workspace) || !(await isGitRepository(workspace))) {
+  const state = await loadRepoState(home);
+  if (!repositoryPathAllowed(homeReal, workspace, state.directory) || !(await isGitRepository(workspace))) {
     throw new Error("repository is not enabled");
   }
   return workspace;
 }
 
-async function loadEnabledRepositories(home: string): Promise<Set<string>> {
+async function loadRepoState(home: string): Promise<{ directory: string; enabled: Set<string> }> {
   try {
-    const parsed = JSON.parse(await readFile(repositoriesFile(home), "utf8")) as { enabled?: unknown };
-    if (!Array.isArray(parsed.enabled)) return new Set();
-    return new Set(parsed.enabled.filter((item): item is string => typeof item === "string" && item.startsWith("/")));
+    const parsed = JSON.parse(await readFile(repositoriesFile(home), "utf8")) as { directory?: unknown; enabled?: unknown };
+    let directory = "Sites";
+    try {
+      if (typeof parsed.directory === "string" && parsed.directory.trim()) directory = assertRepoDirectory(parsed.directory);
+    } catch {
+      directory = "Sites";
+    }
+    const enabled = Array.isArray(parsed.enabled)
+      ? parsed.enabled.filter((item): item is string => typeof item === "string" && item.startsWith("/"))
+      : [];
+    return { directory, enabled: new Set(enabled) };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
-    if (error instanceof SyntaxError) return new Set();
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
+      return { directory: "Sites", enabled: new Set() };
+    }
     throw error;
   }
 }

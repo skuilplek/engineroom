@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
+import { syncGrantedRepositories } from "../apps/runner/src/repos.ts";
 import { createChat, listChats, listRepositories, setEnabledRepositories } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import "./peercred-helper.ts";
@@ -29,6 +30,23 @@ test("workspaces reject a symlink that leaves the home directory", async () => {
   assert.equal(listed.some((entry) => entry.name === "work"), true);
   await rm(home, { recursive: true, force: true });
   await rm(outside, { recursive: true, force: true });
+});
+
+test("an empty catalog grant keeps a local repository enabled", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-grants-"));
+  const repo = path.join(home, "Sites", "local");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  try {
+    await setEnabledRepositories(home, [repo]);
+    const kept = await syncGrantedRepositories(home, [], async () => {
+      throw new Error("should not clone");
+    });
+    assert.equal(kept.repositories.find((entry) => entry.name === "local")?.enabled, true);
+    const chat = await createChat(home, { workspace: repo, title: "local" });
+    assert.equal(chat.workspace, await import("node:fs/promises").then((fs) => fs.realpath(repo)));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("git repositories are discovered inside the home and stay disabled", async () => {
@@ -63,7 +81,8 @@ test("git repositories are discovered inside the home and stay disabled", async 
     assert.equal(listed.every((entry) => entry.enabled === false), true);
 
     await assert.rejects(() => createChat(home, { workspace: path.join(home, "notes") }), /not enabled/);
-    await assert.rejects(() => createChat(home, { workspace: repo }), /not enabled/);
+    const opened = await createChat(home, { workspace: repo, title: "discovered" });
+    assert.equal(opened.workspace, await import("node:fs/promises").then((fs) => fs.realpath(repo)));
     await assert.rejects(() => createChat(home, { workspace: "/etc" }), /home directory/);
     const atHome = await createChat(home, { title: "loose" });
     assert.equal(atHome.workspace, await import("node:fs/promises").then((fs) => fs.realpath(home)));

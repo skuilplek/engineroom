@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/prom
 import path from "node:path";
 import { isInsidePath, type CatalogEntry, type RepositoryEntry } from "@engineroom/protocol";
 import { gitClone } from "./clone.ts";
-import { listRepositories, setEnabledRepositories } from "./store.ts";
+import { detectRepositories, listRepositories } from "./store.ts";
 import { isGitRepository } from "./workspace.ts";
 
 export type CloneRepository = (url: string, dest: string) => Promise<void>;
@@ -27,13 +27,13 @@ export async function syncGrantedRepositories(
   home: string,
   repos: CatalogEntry[],
   clone: CloneRepository = gitClone,
+  directory = "Sites",
 ): Promise<{ grants: string[]; repositories: RepositoryEntry[] }> {
   const homeReal = await realpath(home);
-  const sites = path.join(homeReal, "Sites");
+  const sites = path.resolve(homeReal, directory);
   await mkdir(sites, { recursive: true });
   const sitesReal = await realpath(sites);
   if (!isInsidePath(homeReal, sitesReal) || sitesReal === homeReal) throw new Error("invalid repository");
-  const enabled: string[] = [];
   for (const repo of repos) {
     const dest = path.join(sitesReal, repo.name);
     if (!isInsidePath(sitesReal, dest) || dest === sitesReal) throw new Error("invalid repository");
@@ -45,9 +45,8 @@ export async function syncGrantedRepositories(
     }
     const resolved = await realpath(dest);
     if (!isInsidePath(sitesReal, resolved) || resolved === sitesReal) throw new Error("invalid repository");
-    enabled.push(resolved);
   }
-  await setEnabledRepositories(home, enabled);
+  await detectRepositories(home, directory);
   const ids = repos.map((repo) => repo.id);
   const file = grantsFile(home);
   const tmp = `${file}.${process.pid}.tmp`;
