@@ -23,6 +23,7 @@ import {
   removeCatalog,
   saveAgentOptions,
   saveAgents,
+  saveBranding,
   saveUserEnv,
   saveUserGrants,
   saveUserPolicy,
@@ -48,15 +49,18 @@ const TABS: { id: AdminTab; label: string }[] = [
 export function AdminView({
   session,
   onAgents,
+  onBranding,
   onAccess,
 }: {
   session: Session;
   onAgents: (agents: AgentId[], rawTerminal: boolean, cliImport: boolean) => void;
+  onBranding: (appName: string) => void;
   onAccess: () => void;
 }) {
   const [flags, setFlags] = useState<Record<AgentId, boolean>>(() => agentFlags(session.agents));
   const [rawTerminal, setRawTerminal] = useState(session.rawTerminal);
   const [cliImport, setCliImport] = useState(session.cliImport);
+  const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [selected, setSelected] = useState("");
@@ -117,6 +121,23 @@ export function AdminView({
     }
     setError("");
     setFlags(next);
+  }
+
+  async function saveName(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const savedName = await saveBranding(appName);
+      setAppName(savedName.appName);
+      onBranding(savedName.appName);
+      setSaved("Application name saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveAgentList(event: FormEvent) {
@@ -259,6 +280,18 @@ export function AdminView({
       <div className="admin-stage" role="tabpanel" id={`admin-panel-${tab}`} aria-labelledby={`admin-tab-${tab}`}>
         {tab === "overview" && (
           <div className="admin-overview">
+            <form className="branding-form" onSubmit={(event) => void saveName(event)}>
+              <label>
+                Application name
+                <input
+                  value={appName}
+                  maxLength={64}
+                  onChange={(event) => setAppName(event.target.value)}
+                  required
+                />
+              </label>
+              <button className="primary" type="submit" disabled={busy}>Save</button>
+            </form>
             <ServerPanel />
             <div className="overview-links">
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>

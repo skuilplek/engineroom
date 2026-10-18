@@ -4,6 +4,16 @@ import { AGENTS, type AgentId } from "@engineroom/protocol";
 
 export type AgentFlags = Record<AgentId, boolean>;
 
+export const DEFAULT_APP_NAME = "AgentWrapper";
+const APP_NAME_MAX = 64;
+
+export function parseAppName(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid app name");
+  const name = value.trim();
+  if (!name || name.length > APP_NAME_MAX || /[\u0000-\u001f]/.test(name)) throw new Error("invalid app name");
+  return name;
+}
+
 export function allAgentsOn(): AgentFlags {
   return { cursor: true, claude: true, pi: true };
 }
@@ -64,13 +74,44 @@ export function loadCliImport(file: string): boolean {
   return false;
 }
 
+export function loadAppName(file: string): string {
+  if (!file) return DEFAULT_APP_NAME;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { appName?: unknown };
+    return parseAppName(parsed.appName);
+  } catch {
+    return DEFAULT_APP_NAME;
+  }
+}
+
+export function saveAppName(file: string, name: string): string {
+  const appName = parseAppName(name);
+  const current = readAgentFile(file);
+  writeAgentFile(file, { ...current, appName });
+  return appName;
+}
+
 export function saveAgentFlags(file: string, flags: AgentFlags, rawTerminal?: boolean, cliImport?: boolean): AgentFlags {
   const next = flagsFromBody(flags);
   if (!AGENTS.some((agent) => next[agent])) throw new Error("at least one agent must stay on");
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
-  const tmp = `${file}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify({ ...next, rawTerminal: terminal, cliImport: imports })}\n`, { mode: 0o644 });
-  renameSync(tmp, file);
+  writeAgentFile(file, { ...next, rawTerminal: terminal, cliImport: imports, appName: loadAppName(file) });
   return next;
+}
+
+function readAgentFile(file: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    /* start from the fields being saved */
+  }
+  return {};
+}
+
+function writeAgentFile(file: string, body: Record<string, unknown>) {
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(body)}\n`, { mode: 0o644 });
+  renameSync(tmp, file);
 }

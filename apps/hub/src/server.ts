@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertUsername, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isInsidePath, isTheme, parseClientCommand, parseEnvEntries, parseUserPolicy, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadCliImport, loadRawTerminal, saveAgentFlags } from "./agents.ts";
+import { enabledAgentIds, flagsFromBody, loadAgentFlags, loadAppName, loadCliImport, loadRawTerminal, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -182,6 +182,7 @@ export function createHub(options: HubOptions) {
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),
+      appName: loadAppName(agentsFile),
     };
   }
 
@@ -248,6 +249,12 @@ export function createHub(options: HubOptions) {
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[2] === "overview" && parts.length === 3 && req.method === "GET") {
       sendJson(res, 200, await serverOverview({ configFile: checksFile, commandDirs }));
+      return;
+    }
+    if (parts[2] === "branding" && parts.length === 3 && req.method === "PUT") {
+      const body = await readJson(req);
+      const appName = saveAppName(agentsFile, appNameFrom(body));
+      sendJson(res, 200, { appName });
       return;
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
@@ -693,6 +700,13 @@ function filterModels(
   const availableModels = raw.availableModels.filter((model) => ids.has(model.modelId));
   const currentModelId = availableModels.some((model) => model.modelId === selected) ? selected : availableModels[0]?.modelId || "";
   return { currentModelId, availableModels };
+}
+
+function appNameFrom(body: unknown): string {
+  if (!body || typeof body !== "object") throw new Error("invalid app name");
+  const value = (body as { appName?: unknown }).appName;
+  if (typeof value !== "string") throw new Error("invalid app name");
+  return value;
 }
 
 function rawTerminalFrom(body: unknown): boolean | undefined {

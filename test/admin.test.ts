@@ -86,10 +86,12 @@ test("the administrator sets agents and accounts", async () => {
       admin: boolean;
       agents: string[];
       cliImport: boolean;
+      appName: string;
     };
     assert.equal(me.admin, true);
     assert.deepEqual(me.agents, ["cursor"]);
     assert.equal(me.cliImport, false);
+    assert.equal(me.appName, "AgentWrapper");
 
     const blockedImport = await new Promise<string>((resolve, reject) => {
       const socket = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
@@ -174,9 +176,10 @@ test("the administrator sets agents and accounts", async () => {
     const enabledBody = (await enabled.json()) as { agents: string[]; cliImport: boolean };
     assert.deepEqual(enabledBody.agents, ["claude"]);
     assert.equal(enabledBody.cliImport, false);
-    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { claude: boolean; cliImport: boolean };
+    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { claude: boolean; cliImport: boolean; appName: string };
     assert.equal(stored.claude, true);
     assert.equal(stored.cliImport, false);
+    assert.equal(stored.appName, "AgentWrapper");
 
     const imports = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
@@ -186,6 +189,39 @@ test("the administrator sets agents and accounts", async () => {
     assert.equal(imports.status, 200);
     assert.equal(((await imports.json()) as { cliImport: boolean }).cliImport, true);
 
+    const blankName = await fetch(`${base}/api/admin/branding`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ appName: "   " }),
+    });
+    assert.equal(blankName.status, 400);
+    const longName = await fetch(`${base}/api/admin/branding`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ appName: "a".repeat(65) }),
+    });
+    assert.equal(longName.status, 400);
+
+    const named = await fetch(`${base}/api/admin/branding`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ appName: "  Shop Floor  " }),
+    });
+    assert.equal(named.status, 200);
+    assert.equal(((await named.json()) as { appName: string }).appName, "Shop Floor");
+    const namedMe = (await (await fetch(`${base}/api/me`, { headers })).json()) as { appName: string };
+    assert.equal(namedMe.appName, "Shop Floor");
+
+    const kept = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: false, claude: true, pi: false, cliImport: true }),
+    });
+    assert.equal(kept.status, 200);
+    const keptFile = JSON.parse(await readFile(agentsFile, "utf8")) as { appName: string; cliImport: boolean };
+    assert.equal(keptFile.appName, "Shop Floor");
+    assert.equal(keptFile.cliImport, true);
+
     const carol = await fetch(`${base}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -194,14 +230,22 @@ test("the administrator sets agents and accounts", async () => {
     const carolCookie = (carol.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     const denied = await fetch(`${base}/api/admin/users`, { headers: { Cookie: carolCookie! } });
     assert.equal(denied.status, 403);
+    const deniedName = await fetch(`${base}/api/admin/branding`, {
+      method: "PUT",
+      headers: { Cookie: carolCookie!, "Content-Type": "application/json" },
+      body: JSON.stringify({ appName: "Nope" }),
+    });
+    assert.equal(deniedName.status, 403);
     const carolMe = (await (await fetch(`${base}/api/me`, { headers: { Cookie: carolCookie! } })).json()) as {
       admin: boolean;
       agents: string[];
       cliImport: boolean;
+      appName: string;
     };
     assert.equal(carolMe.admin, false);
     assert.deepEqual(carolMe.agents, ["claude"]);
     assert.equal(carolMe.cliImport, true);
+    assert.equal(carolMe.appName, "Shop Floor");
   } finally {
     hub.close();
     await runner.close();

@@ -22,7 +22,7 @@ export function Sidebar({
   onLogout,
   onImported,
 }: {
-  session: { username: string; admin: boolean };
+  session: { username: string; admin: boolean; cliImport?: boolean; appName: string };
   chats: ChatMeta[];
   repos: RepositoryEntry[];
   home: string;
@@ -41,7 +41,7 @@ export function Sidebar({
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
   const [agent, setAgent] = useState<AgentId>("cursor");
   const groups = buildGroups(chats, repos, home, query);
-  const repoSelected = repos.some((repo) => strip(repo.path) === strip(target));
+  const appName = session.appName.trim() || "AgentWrapper";
 
   useEffect(() => onAgent((message) => {
     if (message.type === "sessions") setSessions(message.sessions);
@@ -55,10 +55,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <button className="new-chat" type="button" disabled={!repoSelected} onClick={() => onNew(target)}>
-        <IconPlus />
-        New Chat
-      </button>
+      <p className="app-brand" title={appName}>{appName}</p>
       <label className="search">
         <span className="sr">Search chats</span>
         <input value={query} placeholder="Search chats" onChange={(event) => setQuery(event.target.value)} />

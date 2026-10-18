@@ -183,6 +183,7 @@ function Shell({
           <AdminView
             session={session}
             onAgents={(agents, rawTerminal, cliImport) => onSession({ ...session, agents, rawTerminal, cliImport })}
+            onBranding={(appName) => onSession({ ...session, appName })}
             onAccess={() => {
               me().then(onSession).catch(() => undefined);
               refresh().catch(() => undefined);
