@@ -3,25 +3,28 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { assertGitUrl } from "@engineroom/protocol";
 
-export async function gitClone(url: string, dest: string): Promise<void> {
-  assertGitUrl(url);
-  await mkdir(path.dirname(dest), { recursive: true });
-  await new Promise<void>((resolve, reject) => {
+function gitEnv(): NodeJS.ProcessEnv {
+  return {
+    HOME: process.env.HOME,
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_COUNT: "0",
+  };
+}
+
+function runGit(args: string[], fallback: string, cwd?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
     const child = spawn(
       "git",
-      ["-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", "clone", "--", url, dest],
+      ["-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", ...args],
       {
+        cwd,
         stdio: ["ignore", "ignore", "pipe"],
-        env: {
-          HOME: process.env.HOME,
-          PATH: process.env.PATH || "/usr/bin:/bin",
-          USER: process.env.USER,
-          LOGNAME: process.env.LOGNAME,
-          SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_CONFIG_NOSYSTEM: "1",
-          GIT_CONFIG_COUNT: "0",
-        },
+        env: gitEnv(),
       },
     );
     let stderr = "";
@@ -37,7 +40,18 @@ export async function gitClone(url: string, dest: string): Promise<void> {
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(stderr.trim() || "clone failed"));
+      else reject(new Error(stderr.trim() || fallback));
     });
   });
+}
+
+export async function gitClone(url: string, dest: string): Promise<void> {
+  assertGitUrl(url);
+  await mkdir(path.dirname(dest), { recursive: true });
+  await runGit(["clone", "--", url, dest], "clone failed");
+}
+
+export async function gitInit(dest: string): Promise<void> {
+  await mkdir(dest, { recursive: true });
+  await runGit(["init", "-b", "main"], "git init failed", dest);
 }

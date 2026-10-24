@@ -130,14 +130,35 @@ test("catalog urls and names stay on a remote", async () => {
   assert.equal(policy.fileManager, true);
   assert.equal(policy.fileDownload, true);
   assert.equal(policy.fileUpload, true);
+  assert.equal(policy.projectCreate, true);
   assert.equal(defaultPolicy().fileManager, true);
   assert.equal(defaultPolicy().fileDownload, true);
   assert.equal(defaultPolicy().fileUpload, true);
+  assert.equal(defaultPolicy().projectCreate, true);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileManager: true }).fileManager, true);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileManager: false }).fileManager, false);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: false, fileUpload: false }).fileDownload, false);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: false, fileUpload: false }).fileUpload, false);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, projectCreate: false }).projectCreate, false);
   assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: "yes" }));
+  assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, projectCreate: "yes" }));
+  const initialized = parseRunnerRequest({ id: "10", type: "create_repository", name: " widget ", directory: "Sites" });
+  assert.equal(initialized.type, "create_repository");
+  if (initialized.type === "create_repository") {
+    assert.equal(initialized.name, "widget");
+    assert.equal(initialized.directory, "Sites");
+    assert.equal(initialized.url, undefined);
+  }
+  const cloned = parseRunnerRequest({
+    id: "11",
+    type: "create_repository",
+    name: "widget",
+    directory: "Sites",
+    url: "https://github.com/org/repo.git",
+  });
+  if (cloned.type === "create_repository") assert.equal(cloned.url, "https://github.com/org/repo.git");
+  assert.throws(() => parseRunnerRequest({ id: "12", type: "create_repository", name: "../widget", directory: "Sites" }));
+  assert.throws(() => parseRunnerRequest({ id: "13", type: "create_repository", name: "widget", directory: "Sites", url: "file:///tmp/repo.git" }));
   assert.equal(repoUploadPath("src", "notes.txt"), "src/notes.txt");
   assert.equal(repoUploadPath("", "notes.txt"), "notes.txt");
   assert.throws(() => repoUploadPath("src", "../secret"));

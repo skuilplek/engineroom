@@ -383,6 +383,13 @@ textarea { resize: vertical; }
   color: var(--muted);
   font-size: 13px;
 }
+.new-project {
+  display: grid;
+  gap: 8px;
+  margin: 12px 10px 0;
+}
+.new-project-actions { display: flex; gap: 8px; }
+.new-project-actions .primary { flex: 1; }
 .tree {
   overflow: auto;
   flex: 1;

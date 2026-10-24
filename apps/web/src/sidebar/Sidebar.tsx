@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { buildGroups, relativeTime, strip, type RepoGroup } from "../format.ts";
 import { IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
@@ -22,9 +22,10 @@ export function Sidebar({
   onSettings,
   onAdmin,
   onLogout,
+  onCreateProject,
   onImported,
 }: {
-  session: { username: string; admin: boolean; cliImport?: boolean; appName: string };
+  session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean };
   chats: ChatMeta[];
   repos: RepositoryEntry[];
   home: string;
@@ -39,6 +40,7 @@ export function Sidebar({
   onSettings: () => void;
   onAdmin: () => void;
   onLogout: () => void;
+  onCreateProject: (name: string, url: string) => Promise<void>;
   onImported: (chat: ChatMeta) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -123,6 +125,7 @@ export function Sidebar({
       )}
       {!collapsed && (
         <>
+          {session.projectCreate && <NewProject onCreate={onCreateProject} />}
           <p className="section-label">Conversations</p>
           <div className="tree">
             {groups.map((group) => (
@@ -144,6 +147,58 @@ export function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+function NewProject({ onCreate }: { onCreate: (name: string, url: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onCreate(name.trim(), url.trim());
+      setName("");
+      setUrl("");
+      setOpen(false);
+    } catch {
+      /* the sidebar alert shows the reason */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button className="nav-item" type="button" onClick={() => setOpen(true)}>
+        <IconPlus />
+        New project
+      </button>
+    );
+  }
+
+  return (
+    <form className="new-project" onSubmit={(event) => void submit(event)}>
+      <label>
+        Folder name
+        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="widget" required autoFocus />
+      </label>
+      <label>
+        Git URL
+        <input
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="Leave blank to start an empty repository"
+        />
+      </label>
+      <div className="new-project-actions">
+        <button className="primary" type="submit" disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button type="button" onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
+      </div>
+    </form>
   );
 }
 

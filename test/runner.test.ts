@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
-import { syncGrantedRepositories } from "../apps/runner/src/repos.ts";
+import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
 import { createChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import { MAX_TRANSFER_BYTES } from "@engineroom/protocol";
@@ -68,6 +68,62 @@ test("an empty catalog grant keeps a local repository enabled", async () => {
     assert.equal(chat.workspace, await import("node:fs/promises").then((fs) => fs.realpath(repo)));
   } finally {
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a user can initialize or clone a repository inside Sites", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-create-repo-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-create-out-"));
+  const sites = path.join(home, "Sites");
+  try {
+    await symlink(outside, sites);
+    await assert.rejects(() => createRepository(home, "proj"), /invalid repository/);
+    assert.equal((await readdir(outside)).includes("proj"), false);
+    await rm(sites);
+
+    await assert.rejects(() => createRepository(home, "../proj"), /invalid repository name/);
+    await assert.rejects(() => createRepository(home, ".hidden"), /invalid repository name/);
+
+    await mkdir(path.join(sites, "taken"), { recursive: true });
+    await assert.rejects(() => createRepository(home, "taken"), /already exists/);
+    await symlink(outside, path.join(sites, "link"));
+    await assert.rejects(() => createRepository(home, "link"), /already exists/);
+    assert.equal((await lstat(path.join(sites, "link"))).isSymbolicLink(), true);
+
+    const created = await createRepository(home, "fresh");
+    assert.equal(created.name, "fresh");
+    assert.equal(created.enabled, true);
+    assert.match(await readFile(path.join(created.path, ".git", "HEAD"), "utf8"), /ref: refs\/heads\/main/);
+
+    let clonedUrl = "";
+    const cloned = await createRepository(
+      home,
+      "remote",
+      "Sites",
+      "https://example.com/remote.git",
+      async (url, dest) => {
+        clonedUrl = url;
+        await mkdir(path.join(dest, ".git"), { recursive: true });
+      },
+    );
+    assert.equal(clonedUrl, "https://example.com/remote.git");
+    assert.equal(cloned.name, "remote");
+    assert.equal(cloned.enabled, true);
+    assert.equal((await listRepositories(home)).find((entry) => entry.name === "fresh")?.enabled, true);
+    await assert.rejects(() => readFile(path.join(home, ".engineroom", "grants.json"), "utf8"));
+
+    await assert.rejects(
+      () => createRepository(home, "partial", "Sites", "https://example.com/partial.git", async (_url, dest) => {
+        await mkdir(dest, { recursive: true });
+        await writeFile(path.join(dest, "partial"), "x");
+        throw new Error("clone failed");
+      }),
+      /clone failed/,
+    );
+    await assert.rejects(() => stat(path.join(sites, "partial")));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

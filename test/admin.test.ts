@@ -392,6 +392,168 @@ test("the administrator enables repositories for one user", async () => {
   }
 });
 
+test("project creation can be turned off for the site or for one person", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-create-admin-"));
+  const aliceHome = path.join(root, "alice");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  const reposFile = path.join(root, "repos.json");
+  await mkdir(aliceHome, { recursive: true });
+  await mkdir(carolHome, { recursive: true });
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home: aliceHome,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  let clones = 0;
+  const clone = async (_url: string, dest: string) => {
+    clones += 1;
+    await mkdir(path.join(dest, ".git"), { recursive: true });
+  };
+  const aliceRunner = await startRunner({
+    home: aliceHome,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+    clone,
+  });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+    clone,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("create-project-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    reposFile,
+    lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const aliceLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const aliceCookie = (aliceLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(aliceCookie);
+    assert.ok(carolCookie);
+    const aliceHeaders = { Cookie: aliceCookie!, "Content-Type": "application/json" };
+    const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
+
+    const blocked = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "widget", url: "https://example.com/widget.git" }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal(clones, 0);
+    const before = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { projectCreate: boolean };
+    assert.equal(before.projectCreate, false);
+
+    const enabled = await fetch(`${base}/api/admin/repository-folder`, {
+      method: "PUT",
+      headers: aliceHeaders,
+      body: JSON.stringify({ directory: "Sites", projectCreate: true }),
+    });
+    assert.equal(enabled.status, 200);
+    assert.equal(((await enabled.json()) as { projectCreate: boolean }).projectCreate, true);
+    const offered = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { projectCreate: boolean };
+    assert.equal(offered.projectCreate, true);
+
+    const deniedPerson = await fetch(`${base}/api/admin/users/carol/policy`, {
+      method: "PUT",
+      headers: aliceHeaders,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, projectCreate: false }),
+    });
+    assert.equal(deniedPerson.status, 200);
+    const hidden = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "widget", url: "https://example.com/widget.git" }),
+    });
+    assert.equal(hidden.status, 403);
+    assert.equal(clones, 0);
+    const personal = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { projectCreate: boolean };
+    assert.equal(personal.projectCreate, false);
+
+    const allowedPerson = await fetch(`${base}/api/admin/users/carol/policy`, {
+      method: "PUT",
+      headers: aliceHeaders,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, projectCreate: true }),
+    });
+    assert.equal(allowedPerson.status, 200);
+
+    const created = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "widget", url: "https://example.com/widget.git" }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(clones, 1);
+    const widget = (await created.json()) as { name: string; path: string; enabled: boolean };
+    assert.equal(widget.name, "widget");
+    assert.equal(widget.enabled, true);
+
+    const listed = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
+    assert.equal(listed.some((entry) => entry.name === "widget"), true);
+
+    const duplicate = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "widget", url: "https://example.com/widget.git" }),
+    });
+    assert.equal(duplicate.status, 400);
+
+    const fresh = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "fresh" }),
+    });
+    assert.equal(fresh.status, 201);
+    assert.equal(clones, 1);
+    const empty = (await fresh.json()) as { path: string };
+    assert.match(await readFile(path.join(empty.path, ".git", "HEAD"), "utf8"), /ref: refs\/heads\/main/);
+    const after = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
+    assert.deepEqual(after.map((entry) => entry.name).sort(), ["fresh", "widget"]);
+
+    const escaped = await fetch(`${base}/api/repositories`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ name: "../nope" }),
+    });
+    assert.equal(escaped.status, 400);
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await carolRunner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the administrator sets one person's access, environment, and password", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-person-admin-"));
   const home = path.join(root, "alice");

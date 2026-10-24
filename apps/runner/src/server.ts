@@ -31,7 +31,7 @@ import { loadEnv, saveEnv } from "./envfile.ts";
 import { TranscriptWriter } from "./persist.ts";
 import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
-import { loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
+import { createRepository, loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
 import {
   createRepositoryEntry,
   deleteRepositoryEntry,
@@ -293,6 +293,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return syncGrantedRepositories(home, request.repos, clone, request.directory);
       case "detect_repositories":
         return detectRepositories(home, request.directory);
+      case "create_repository":
+        return createRepository(home, request.name, request.directory, request.url, clone);
       case "list_workspaces":
         return (await import("./workspace.ts")).listWorkspaces(home);
       case "list_repositories":

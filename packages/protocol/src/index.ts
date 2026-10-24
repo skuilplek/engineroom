@@ -238,6 +238,7 @@ export interface UserPolicy {
   fileEditor?: boolean;
   fileDownload: boolean;
   fileUpload: boolean;
+  projectCreate: boolean;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -336,6 +337,7 @@ export type RunnerRequest =
   | { id: string; type: "get_access" }
   | { id: string; type: "sync_repositories"; repos: CatalogEntry[]; catalog: string[]; directory: string }
   | { id: string; type: "detect_repositories"; directory: string }
+  | { id: string; type: "create_repository"; name: string; directory: string; url?: string }
   | { id: string; type: "send"; chatId: string; prompt: string }
   | { id: string; type: "prompt"; chatId: string; prompt: string }
   | { id: string; type: "cancel"; chatId: string }
@@ -582,6 +584,16 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       };
     case "detect_repositories":
       return { id: body.id, type: "detect_repositories", directory: assertRepoDirectory(body.directory) };
+    case "create_repository": {
+      const url = body.url == null || body.url === "" ? undefined : assertGitUrl(body.url);
+      return {
+        id: body.id,
+        type: "create_repository",
+        name: assertCatalogName(typeof body.name === "string" ? body.name.trim() : body.name),
+        directory: body.directory == null || body.directory === "" ? "Sites" : assertRepoDirectory(body.directory),
+        ...(url ? { url } : {}),
+      };
+    }
     case "get_chat":
     case "cancel":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
@@ -1014,8 +1026,10 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   const fileEditor = body.fileEditor == null ? true : body.fileEditor;
   if (body.fileDownload != null && typeof body.fileDownload !== "boolean") throw new Error("invalid file download");
   if (body.fileUpload != null && typeof body.fileUpload !== "boolean") throw new Error("invalid file upload");
+  if (body.projectCreate != null && typeof body.projectCreate !== "boolean") throw new Error("invalid project creation");
   const fileDownload = body.fileDownload == null ? true : body.fileDownload;
   const fileUpload = body.fileUpload == null ? true : body.fileUpload;
+  const projectCreate = body.projectCreate == null ? true : body.projectCreate;
   const options = parsePolicyOptions(body.options);
   return {
     agents,
@@ -1025,6 +1039,7 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     fileEditor,
     fileDownload,
     fileUpload,
+    projectCreate,
     ...(options ? { options } : {}),
   };
 }
@@ -1093,6 +1108,7 @@ export function defaultPolicy(): UserPolicy {
     fileEditor: true,
     fileDownload: true,
     fileUpload: true,
+    projectCreate: true,
   };
 }
 

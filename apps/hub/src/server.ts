@@ -8,7 +8,7 @@ import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accoun
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
-import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
+import { loadFileVisibility, loadProjectCreate, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
@@ -65,6 +65,8 @@ interface RunnerCall {
   overwrite?: boolean;
   visibility?: FileVisibility;
   names?: string[];
+  name?: string;
+  url?: string;
 }
 
 export function createHub(options: HubOptions) {
@@ -211,6 +213,7 @@ export function createHub(options: HubOptions) {
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
       fileVisibility: loadFileVisibility(reposFile),
+      projectCreate: access.projectCreate,
       agentCatalog: namesFor(access.agents, agentsFile),
     };
   }
@@ -222,6 +225,7 @@ export function createHub(options: HubOptions) {
     fileEditor: boolean;
     fileDownload: boolean;
     fileUpload: boolean;
+    projectCreate: boolean;
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
@@ -243,6 +247,7 @@ export function createHub(options: HubOptions) {
       fileEditor: loadFileEditor(agentsFile) && policy.fileEditor !== false,
       fileDownload: fileManager && loadFileDownload(agentsFile) && policy.fileDownload,
       fileUpload: fileManager && loadFileUpload(agentsFile) && policy.fileUpload,
+      projectCreate: loadProjectCreate(reposFile) && policy.projectCreate,
       options: optionMap,
     };
   }
@@ -294,6 +299,11 @@ export function createHub(options: HubOptions) {
   async function assertAgentAllowed(user: LinuxUser, agent: AgentId) {
     const access = await loadAccess(user);
     if (!access.agents.includes(agent)) throw new Error("invalid agent");
+  }
+
+  async function assertProjectCreate(user: LinuxUser) {
+    const access = await loadAccess(user);
+    if (!access.projectCreate) throw new Error("project creation is not enabled");
   }
 
   async function assertFileManager(user: LinuxUser) {
@@ -417,16 +427,22 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "GET") {
-      sendJson(res, 200, { directory: loadRepoDirectory(reposFile), visibility: loadFileVisibility(reposFile) });
+      sendJson(res, 200, {
+        directory: loadRepoDirectory(reposFile),
+        visibility: loadFileVisibility(reposFile),
+        projectCreate: loadProjectCreate(reposFile),
+      });
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "PUT") {
-      const body = (await readJson(req)) as { directory?: unknown; visibility?: unknown };
+      const body = (await readJson(req)) as { directory?: unknown; visibility?: unknown; projectCreate?: unknown };
+      if (body.projectCreate != null && typeof body.projectCreate !== "boolean") throw new Error("invalid project creation");
       const nextVisibility = body.visibility != null ? parseFileVisibility(body.visibility) : undefined;
       const saved = saveRepoDirectory(
         reposFile,
         typeof body.directory === "string" ? body.directory : "",
         nextVisibility,
+        typeof body.projectCreate === "boolean" ? body.projectCreate : undefined,
       );
       sendJson(res, 200, saved);
       return;
@@ -560,6 +576,19 @@ export function createHub(options: HubOptions) {
     if (parts[1] === "repositories" && parts.length === 2 && req.method === "GET") {
       const listed = (await call(user, { type: "list_repositories" })) as RepositoryEntry[];
       sendJson(res, 200, listed.filter((entry) => entry.enabled));
+      return;
+    }
+    if (parts[1] === "repositories" && parts.length === 2 && req.method === "POST") {
+      await assertProjectCreate(user);
+      const body = (await readJson(req)) as { name?: unknown; url?: unknown };
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      const created = await call(user, {
+        type: "create_repository",
+        name: typeof body.name === "string" ? body.name.trim() : "",
+        directory: loadRepoDirectory(reposFile),
+        ...(url ? { url } : {}),
+      });
+      sendJson(res, 201, created);
       return;
     }
     if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
@@ -806,6 +835,7 @@ export function createHub(options: HubOptions) {
       command.type === "put_env" ||
       command.type === "get_access" ||
       command.type === "sync_repositories" ||
+      command.type === "create_repository" ||
       command.type === "set_repositories" ||
       command.type === "probe_agent" ||
       command.type === "list_repo_files" ||

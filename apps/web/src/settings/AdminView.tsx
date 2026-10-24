@@ -101,6 +101,7 @@ export function AdminView({
   const [repoName, setRepoName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [repoFolder, setRepoFolder] = useState("Sites");
+  const [projectCreate, setProjectCreate] = useState(session.projectCreate);
   const [fileVisibility, setFileVisibility] = useState<FileVisibility>(() => ({
     ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY),
   }));
@@ -140,6 +141,7 @@ export function AdminView({
     getRepoDirectory().then((body) => {
       setRepoFolder(body.directory);
       if (body.visibility) setFileVisibility(body.visibility);
+      if (typeof body.projectCreate === "boolean") setProjectCreate(body.projectCreate);
     }).catch((err) => setError(message(err)));
     listAdminAgents().then((body) => {
       setInventory(body.agents);
@@ -313,9 +315,10 @@ export function AdminView({
     setError("");
     setSaved("");
     try {
-      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility);
+      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility, projectCreate);
       setRepoFolder(savedFolder.directory);
       if (savedFolder.visibility) setFileVisibility(savedFolder.visibility);
+      setProjectCreate(savedFolder.projectCreate);
       onAccess();
       setSaved("Repository folder saved");
     } catch (err) {
@@ -572,6 +575,11 @@ export function AdminView({
               Folder
               <input value={repoFolder} onChange={(event) => setRepoFolder(event.target.value)} placeholder="Sites" required />
             </label>
+            <label className="check">
+              <input type="checkbox" checked={projectCreate} onChange={() => setProjectCreate((value) => !value)} />
+              Allow users to create projects
+            </label>
+            <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off.</p>
             <h3>File manager visibility</h3>
             <p className="muted">Choose which repository files are visible in the right-hand file manager. Hidden dotfiles, gitignored files, and .git/ are hidden by default.</p>
             <div className="admin-checks">
@@ -673,6 +681,7 @@ export function AdminView({
                   globalFileEditor={fileEditor}
                   globalFileDownload={fileDownload}
                   globalFileUpload={fileUpload}
+                  globalProjectCreate={session.projectCreate}
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
@@ -711,6 +720,7 @@ function PersonPanel({
   globalFileEditor,
   globalFileDownload,
   globalFileUpload,
+  globalProjectCreate,
   agentOptions,
   agentNames,
   catalog,
@@ -729,6 +739,7 @@ function PersonPanel({
   globalFileEditor: boolean;
   globalFileDownload: boolean;
   globalFileUpload: boolean;
+  globalProjectCreate: boolean;
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
@@ -937,7 +948,7 @@ function PersonPanel({
       <h2>{username}</h2>
       <UserConversations username={username} agentNames={agentNames} />
       <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
           {globalAgents.map((agent) => (
             <label className="check" key={agent}>
@@ -1002,6 +1013,15 @@ function PersonPanel({
           File upload
         </label>
         {!globalFileUpload && <p className="muted">File upload is off for everyone, so this stays off until that is turned on.</p>}
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={policy.projectCreate}
+            onChange={() => setPolicy({ ...policy, projectCreate: !policy.projectCreate })}
+          />
+          Create projects
+        </label>
+        {!globalProjectCreate && <p className="muted">Creating projects is off for everyone, so this stays off until that is turned on.</p>}
         {allowed.map((agent) => {
           const config = agentOptions[agent];
           const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));

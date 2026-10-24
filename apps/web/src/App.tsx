@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { isTheme, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
-import { listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
+import { createRepository, listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
 import { StartView } from "./chat/StartView.tsx";
@@ -297,6 +297,19 @@ function Shell({
           setView("admin");
         }}
         onLogout={() => logout().finally(onLogout)}
+        onCreateProject={async (name, url) => {
+          try {
+            setError("");
+            const repo = await createRepository(name, url);
+            const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
+            setChats(nextChats);
+            setRepos(nextRepos);
+            choose(repo.path);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "could not create the project");
+            throw err;
+          }
+        }}
         onImported={(chat) => {
           remember(chat);
           openChat(chat);

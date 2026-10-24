@@ -41,6 +41,7 @@ export interface Session {
   appName: string;
   theme: ThemePreference;
   fileVisibility?: FileVisibility;
+  projectCreate: boolean;
   agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
@@ -146,6 +147,13 @@ export function listRepositories() {
   return api<RepositoryEntry[]>("/api/repositories");
 }
 
+export function createRepository(name: string, url?: string) {
+  return api<RepositoryEntry>("/api/repositories", {
+    method: "POST",
+    body: JSON.stringify({ name, ...(url ? { url } : {}) }),
+  });
+}
+
 export function listRepoFiles(workspace: string) {
   return api<RepoFilesResult>(`/api/repositories/files?workspace=${encodeURIComponent(workspace)}`);
 }
@@ -241,13 +249,17 @@ export function listCatalog() {
 }
 
 export function getRepoDirectory() {
-  return api<{ directory: string; visibility: FileVisibility }>("/api/admin/repository-folder");
+  return api<{ directory: string; visibility: FileVisibility; projectCreate?: boolean }>("/api/admin/repository-folder");
 }
 
-export function saveRepoDirectory(directory: string, visibility?: FileVisibility) {
-  return api<{ directory: string; visibility: FileVisibility }>("/api/admin/repository-folder", {
+export function saveRepoDirectory(directory: string, visibility?: FileVisibility, projectCreate?: boolean) {
+  return api<{ directory: string; visibility: FileVisibility; projectCreate: boolean }>("/api/admin/repository-folder", {
     method: "PUT",
-    body: JSON.stringify({ directory, ...(visibility ? { visibility } : {}) }),
+    body: JSON.stringify({
+      directory,
+      ...(visibility ? { visibility } : {}),
+      ...(typeof projectCreate === "boolean" ? { projectCreate } : {}),
+    }),
   });
 }
 
