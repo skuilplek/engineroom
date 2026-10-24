@@ -302,6 +302,7 @@ function Shell({
             targetLabel={selectedRepo.name}
             filesOpen={filesEnabled ? filesOpen : undefined}
             onToggleFiles={filesEnabled ? toggleFiles : undefined}
+            username={session.username}
             onStarted={(chat, prompt) => {
               remember(chat);
               openingRef.current = { id: chat.id, prompt };
@@ -330,6 +331,7 @@ function Shell({
             onToggleFiles={filesEnabled && selectedRepo ? toggleFiles : undefined}
             onWorkspace={onChatWorkspace}
             onFilesChanged={bumpFilesRefresh}
+            username={session.username}
           />
         )}
       </section>

@@ -5,6 +5,7 @@ import { createChat, getSettings } from "../api.ts";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message } from "../format.ts";
 import { IconArrow } from "../icons.tsx";
+import { usePromptHeight } from "./promptHeight.ts";
 
 export function StartView({
   agents,
@@ -15,6 +16,7 @@ export function StartView({
   onStarted,
   filesOpen,
   onToggleFiles,
+  username,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
@@ -24,8 +26,10 @@ export function StartView({
   onStarted: (chat: ChatMeta, prompt: string) => void;
   filesOpen?: boolean;
   onToggleFiles?: () => void;
+  username: string;
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
+  const promptHeight = usePromptHeight(username);
   const [agent, setAgent] = useState<AgentId>(agents[0] || "cursor");
   const [mode, setMode] = useState("");
   const [model, setModel] = useState("");
@@ -90,9 +94,11 @@ export function StartView({
       <form className="launch" onSubmit={(event) => void submit(event)}>
         <textarea
           ref={box}
+          style={promptHeight.style}
           value={prompt}
           placeholder="What do you want to build?"
           aria-label="What do you want to build?"
+          onPointerDown={promptHeight.onPointerDown}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {

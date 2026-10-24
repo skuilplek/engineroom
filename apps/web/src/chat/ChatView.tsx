@@ -8,6 +8,7 @@ import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { DiffView } from "./Diff.tsx";
 import { groupTranscript, presentTool } from "./group.ts";
 import { Markdown } from "./Markdown.tsx";
+import { usePromptHeight } from "./promptHeight.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -22,6 +23,7 @@ export function ChatView({
   onToggleFiles,
   onWorkspace,
   onFilesChanged,
+  username,
 }: {
   chatId: string;
   home: string;
@@ -34,8 +36,10 @@ export function ChatView({
   onToggleFiles?: () => void;
   onWorkspace?: (workspace: string) => void;
   onFilesChanged?: () => void;
+  username: string;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
+  const promptHeight = usePromptHeight(username);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
@@ -228,8 +232,10 @@ export function ChatView({
           {live.queue.length > 0 && <p className="queue">{live.queue.length} queued</p>}
           <form className="composer" onSubmit={submit}>
             <textarea
+              style={promptHeight.style}
               value={prompt}
               placeholder={live.running ? "Queue a follow-up" : "Message this chat"}
+              onPointerDown={promptHeight.onPointerDown}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {

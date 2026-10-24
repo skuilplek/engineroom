@@ -35,6 +35,18 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
+# The hub service mounts the system read-only, and sudo stays in that mount
+# namespace. useradd then fails with "cannot lock /etc/passwd". Continue in
+# the host mount namespace, where /etc and /home can be updated.
+if [[ "${ENGINEROOM_ADMIN_NS:-}" != "host" ]]; then
+  self_mnt="$(readlink /proc/self/ns/mnt 2>/dev/null || true)"
+  init_mnt="$(readlink /proc/1/ns/mnt 2>/dev/null || true)"
+  if [[ -n "$self_mnt" && -n "$init_mnt" && "$self_mnt" != "$init_mnt" ]]; then
+    export ENGINEROOM_ADMIN_NS=host
+    exec nsenter -t 1 -m -- "$0" "$@"
+  fi
+fi
+
 case "$action" in
   add)
     IFS= read -r password || true

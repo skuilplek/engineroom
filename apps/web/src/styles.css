@@ -503,9 +503,12 @@ textarea { resize: vertical; }
 .launch textarea {
   border: 0;
   background: transparent;
-  min-height: 84px;
+  height: 84px;
+  min-height: 64px;
+  max-height: min(50vh, 480px);
   padding: 4px 4px 8px;
-  resize: none;
+  resize: vertical;
+  overflow: auto;
 }
 .launch textarea:focus-visible, .composer textarea:focus-visible { outline: none; }
 .launch-bar { display: flex; align-items: center; gap: 8px; }
@@ -552,6 +555,7 @@ textarea { resize: vertical; }
 .topbar p { margin: 4px 0 0; }
 .transcript {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 20px;
   display: flex;
@@ -577,11 +581,16 @@ textarea { resize: vertical; }
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
 }
 .composer-tools { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
 .composer-tools select { width: auto; max-width: 14rem; }
 .composer textarea {
+  height: 64px;
   min-height: 64px;
+  max-height: min(50vh, 480px);
+  resize: vertical;
+  overflow: auto;
   background: var(--sunken);
   border-color: var(--line-strong);
   border-radius: 14px;
