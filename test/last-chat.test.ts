@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMeta } from "@engineroom/protocol";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "../apps/web/src/chat/lastChat.ts";
+import { isMissingChat } from "../apps/web/src/chat/missingChat.ts";
 
 const alice = "11111111-1111-1111-1111-111111111111";
 const bob = "22222222-2222-2222-2222-222222222222";
@@ -62,6 +63,14 @@ test("a missing chat is not chosen from the list", () => {
   assert.equal(pickLastChat([listed], readLastChat("alice", store)), null);
   forgetLastChat("alice", store);
   assert.equal(readLastChat("alice", store), null);
+});
+
+test("only a missing chat sends the user home", () => {
+  assert.equal(isMissingChat("chat not found"), true);
+  assert.equal(isMissingChat("ENOENT: no such file or directory, open '/home/a/.engineroom/chats/x/meta.json'"), true);
+  assert.equal(isMissingChat("send failed"), false);
+  assert.equal(isMissingChat("invalid agent"), false);
+  assert.equal(isMissingChat("sign in required"), false);
 });
 
 test("last chat storage failures are ignored", () => {

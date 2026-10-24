@@ -88,6 +88,18 @@ export function createHub(options: HubOptions) {
     invalidateUserCache(username);
   };
 
+  const liveSockets = new Map<string, Set<WebSocket>>();
+  const endedSockets = new WeakSet<WebSocket>();
+
+  function closeLiveSockets(username: string) {
+    const group = liveSockets.get(username);
+    if (!group) return;
+    for (const ws of [...group]) {
+      endedSockets.add(ws);
+      if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close(4401, "sign in required");
+    }
+  }
+
   const server = createServer((req, res) => {
     void handle(req, res).catch((error) => {
       const message = error instanceof Error ? error.message : "request failed";
@@ -136,6 +148,8 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (url.pathname === "/api/logout" && req.method === "POST") {
+      const username = readSession(cookieValue(req.headers.cookie), options.sessionSecret);
+      if (username) closeLiveSockets(username);
       res.setHeader("Set-Cookie", clearCookie(options.cookieSecure));
       sendJson(res, 200, { ok: true });
       return;
@@ -776,10 +790,14 @@ export function createHub(options: HubOptions) {
       ws.close(4401, "sign in required");
       return;
     }
+    const group = liveSockets.get(user.username) ?? new Set<WebSocket>();
+    liveSockets.set(user.username, group);
+    group.add(ws);
     const held = new Set<string>();
     const queued: Array<{ data: Buffer | ArrayBuffer | Buffer[]; isBinary: boolean }> = [];
     let channel: RunnerChannel | null = null;
     const deliver = (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (endedSockets.has(ws) || ws.readyState !== ws.OPEN) return;
       if (!channel) {
         queued.push({ data, isBinary });
         return;
@@ -793,6 +811,9 @@ export function createHub(options: HubOptions) {
     ws.on("message", (data, isBinary) => deliver(data, isBinary));
     ws.on("close", () => {
       closed = true;
+      endedSockets.add(ws);
+      group.delete(ws);
+      if (group.size === 0) liveSockets.delete(user.username);
       if (!channel) return;
       for (const chatId of held) {
         void channel.request({ id: randomUUID(), type: "pty_detach", chatId }).catch(() => undefined);
@@ -816,6 +837,7 @@ export function createHub(options: HubOptions) {
     isBinary: boolean,
     held: Set<string>,
   ) {
+    if (endedSockets.has(ws) || ws.readyState !== ws.OPEN) return;
     if (isBinary) {
       const frame = decodePtyFrame(rawBytes(data));
       if (!frame) return;

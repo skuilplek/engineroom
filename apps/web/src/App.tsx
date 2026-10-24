@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { isTheme, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
 import { createRepository, listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
+import { HomeView } from "./chat/HomeView.tsx";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
 import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
@@ -9,7 +10,7 @@ import { message, strip } from "./format.ts";
 import { AdminView } from "./settings/AdminView.tsx";
 import { SettingsView } from "./settings/SettingsView.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
-import { onAgent, startAgentSocket } from "./socket.ts";
+import { onAgent, startAgentSocket, stopAgentSocket } from "./socket.ts";
 import { applyTheme, rememberTheme } from "./theme.ts";
 
 type View = "chat" | "settings" | "start" | "admin";
@@ -201,6 +202,10 @@ function Shell({
 
   useEffect(() => {
     startAgentSocket();
+    return () => stopAgentSocket();
+  }, [session.username]);
+
+  useEffect(() => {
     refresh().catch((err) => {
       setCheckingChat(false);
       setError(message(err));
@@ -251,6 +256,29 @@ function Shell({
     showChat(chat, reposRef.current);
   }
 
+  function leaveMissingChat() {
+    forgetLastChat(usernameRef.current);
+    setActiveId(null);
+    setTarget(homeRef.current);
+    setView("start");
+    setError("");
+    setCheckingChat(false);
+  }
+
+  async function createProject(name: string, url: string) {
+    try {
+      setError("");
+      const repo = await createRepository(name, url);
+      const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
+      setChats(nextChats);
+      setRepos(nextRepos);
+      choose(repo.path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "could not create the project");
+      throw err;
+    }
+  }
+
   const onTitle = useCallback((title: string) => {
     setChats((current) => current.map((chat) => (chat.id === activeId ? { ...chat, title } : chat)));
   }, [activeId]);
@@ -296,20 +324,11 @@ function Shell({
           choseRef.current = true;
           setView("admin");
         }}
-        onLogout={() => logout().finally(onLogout)}
-        onCreateProject={async (name, url) => {
-          try {
-            setError("");
-            const repo = await createRepository(name, url);
-            const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
-            setChats(nextChats);
-            setRepos(nextRepos);
-            choose(repo.path);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "could not create the project");
-            throw err;
-          }
+        onLogout={() => {
+          stopAgentSocket();
+          logout().finally(onLogout);
         }}
+        onCreateProject={createProject}
         onImported={(chat) => {
           remember(chat);
           openChat(chat);
@@ -374,9 +393,15 @@ function Shell({
           />
         )}
         {!checkingChat && view === "start" && !selectedRepo && (
-          <div className="start">
-            <p className="lede">Use the plus next to a repository to start a chat.</p>
-          </div>
+          <HomeView
+            repos={repos}
+            chats={chats}
+            home={session.home}
+            projectCreate={Boolean(session.projectCreate)}
+            onPickProject={choose}
+            onOpen={openChat}
+            onCreateProject={createProject}
+          />
         )}
         {view === "chat" && activeId && (
           <ChatView
@@ -392,6 +417,7 @@ function Shell({
             onToggleFiles={filesEnabled && selectedRepo ? toggleFiles : undefined}
             onWorkspace={onChatWorkspace}
             onFilesChanged={bumpFilesRefresh}
+            onUnavailable={leaveMissingChat}
             username={session.username}
           />
         )}

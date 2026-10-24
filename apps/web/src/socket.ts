@@ -25,86 +25,190 @@ export type ServerMessage =
 
 type Listener = (message: ServerMessage) => void;
 
-const listeners = new Set<Listener>();
-const watches = new Map<string, number>();
-const pending: object[] = [];
-let socket: WebSocket | null = null;
-let retry = 500;
-let started = false;
+const SOCKET_OPEN = 1;
+const SOCKET_CLOSED = 3;
 
-export function startAgentSocket() {
-  if (started && socket && socket.readyState !== WebSocket.CLOSED) return;
-  started = true;
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/api/ws`);
-  ws.binaryType = "arraybuffer";
-  socket = ws;
-  ws.onopen = () => {
-    retry = 500;
-    for (const command of pending.splice(0)) ws.send(JSON.stringify(command));
-    for (const [chatId, lastSeq] of watches) ws.send(JSON.stringify({ type: "watch", chatId, lastSeq }));
-  };
-  ws.onmessage = (event) => {
-    if (event.data instanceof ArrayBuffer) {
-      const frame = decodePtyFrame(new Uint8Array(event.data));
-      if (frame) emit({ type: "pty", chatId: frame.chatId, data: frame.data });
+export interface AgentTransport {
+  readyState: number;
+  binaryType: string;
+  send(data: string | Uint8Array): void;
+  close(): void;
+  onopen: (() => void) | null;
+  onmessage: ((event: { data: unknown }) => void) | null;
+  onclose: (() => void) | null;
+}
+
+export class AgentSocket {
+  private transport: AgentTransport | null = null;
+  private retry = 500;
+  private generation = 0;
+  private live = false;
+  private readonly watches = new Map<string, number>();
+  private readonly pending: object[] = [];
+  private readonly listeners = new Set<Listener>();
+  private readonly connect: (url: string) => AgentTransport;
+  private readonly url: () => string;
+  private readonly later: (fn: () => void, ms: number) => void;
+
+  constructor(connect: (url: string) => AgentTransport, url: () => string, later: (fn: () => void, ms: number) => void) {
+    this.connect = connect;
+    this.url = url;
+    this.later = later;
+  }
+
+  start() {
+    if (this.live && this.transport && this.transport.readyState !== SOCKET_CLOSED) return;
+    this.live = true;
+    const generation = this.generation;
+    const ws = this.connect(this.url());
+    ws.binaryType = "arraybuffer";
+    this.transport = ws;
+    ws.onopen = () => {
+      if (generation !== this.generation || this.transport !== ws) return;
+      this.retry = 500;
+      for (const command of this.pending.splice(0)) ws.send(JSON.stringify(command));
+      for (const [chatId, lastSeq] of this.watches) ws.send(JSON.stringify({ type: "watch", chatId, lastSeq }));
+    };
+    ws.onmessage = (event) => {
+      if (generation !== this.generation || this.transport !== ws) return;
+      if (event.data instanceof ArrayBuffer) {
+        const frame = decodePtyFrame(new Uint8Array(event.data));
+        if (frame) this.emit({ type: "pty", chatId: frame.chatId, data: frame.data });
+        return;
+      }
+      try {
+        this.emit(JSON.parse(String(event.data)) as ServerMessage);
+      } catch {
+        /* ignore a malformed frame */
+      }
+    };
+    ws.onclose = () => {
+      if (generation !== this.generation) return;
+      if (this.transport === ws) this.transport = null;
+      if (!this.live) return;
+      const wait = this.retry;
+      this.retry = Math.min(this.retry * 2, 8000);
+      this.later(() => {
+        if (generation !== this.generation || !this.live) return;
+        this.start();
+      }, wait);
+    };
+  }
+
+  stop() {
+    this.live = false;
+    this.generation += 1;
+    this.watches.clear();
+    this.pending.length = 0;
+    this.retry = 500;
+    const current = this.transport;
+    this.transport = null;
+    if (current && current.readyState !== SOCKET_CLOSED) current.close();
+  }
+
+  onAgent(listener: Listener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  watchChat(chatId: string, lastSeq: number) {
+    this.watches.set(chatId, lastSeq);
+    if (this.transport?.readyState === SOCKET_OPEN) {
+      this.transport.send(JSON.stringify({ type: "watch", chatId, lastSeq }));
+    }
+  }
+
+  unwatchChat(chatId: string) {
+    this.watches.delete(chatId);
+    this.send({ type: "unwatch", chatId }, false);
+  }
+
+  noteSeq(chatId: string, seq: number) {
+    const current = this.watches.get(chatId);
+    if (current == null || seq <= current) return;
+    this.watches.set(chatId, seq);
+  }
+
+  sendCommand(command: object) {
+    this.send(command, true);
+  }
+
+  sendPty(chatId: string, data: string) {
+    if (this.transport?.readyState !== SOCKET_OPEN) return;
+    this.transport.send(encodePtyFrame(chatId, new TextEncoder().encode(data)));
+  }
+
+  private send(command: object, queue: boolean) {
+    if (this.transport?.readyState === SOCKET_OPEN) {
+      this.transport.send(JSON.stringify(command));
       return;
     }
-    try {
-      emit(JSON.parse(String(event.data)) as ServerMessage);
-    } catch {
-      /* ignore a malformed frame */
-    }
-  };
-  ws.onclose = () => {
-    if (socket === ws) socket = null;
-    window.setTimeout(() => startAgentSocket(), retry);
-    retry = Math.min(retry * 2, 8000);
-  };
+    if (queue) this.pending.push(command);
+  }
+
+  private emit(message: ServerMessage) {
+    for (const listener of this.listeners) listener(message);
+  }
+}
+
+interface BrowserGlobals {
+  location: { protocol: string; host: string };
+  window: { setTimeout: (fn: () => void, ms: number) => unknown };
+  WebSocket: new (url: string) => AgentTransport;
+}
+
+function browserGlobals(): BrowserGlobals {
+  return globalThis as unknown as BrowserGlobals;
+}
+
+const browserSocket = new AgentSocket(
+  (url) => {
+    const ws = new (browserGlobals().WebSocket)(url);
+    ws.binaryType = "arraybuffer";
+    return ws;
+  },
+  () => {
+    const loc = browserGlobals().location;
+    const proto = loc.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${loc.host}/api/ws`;
+  },
+  (fn, ms) => {
+    browserGlobals().window.setTimeout(fn, ms);
+  },
+);
+
+export function startAgentSocket() {
+  browserSocket.start();
+}
+
+export function stopAgentSocket() {
+  browserSocket.stop();
 }
 
 export function onAgent(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return browserSocket.onAgent(listener);
 }
 
 export function watchChat(chatId: string, lastSeq: number) {
-  watches.set(chatId, lastSeq);
-  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "watch", chatId, lastSeq }));
+  browserSocket.watchChat(chatId, lastSeq);
 }
 
 export function unwatchChat(chatId: string) {
-  watches.delete(chatId);
-  send({ type: "unwatch", chatId }, false);
+  browserSocket.unwatchChat(chatId);
 }
 
 export function noteSeq(chatId: string, seq: number) {
-  const current = watches.get(chatId);
-  if (current == null || seq <= current) return;
-  watches.set(chatId, seq);
+  browserSocket.noteSeq(chatId, seq);
 }
 
 export function sendCommand(command: object) {
-  send(command, true);
+  browserSocket.sendCommand(command);
 }
 
 export function sendPty(chatId: string, data: string) {
-  if (socket?.readyState !== WebSocket.OPEN) return;
-  socket.send(encodePtyFrame(chatId, new TextEncoder().encode(data)));
+  browserSocket.sendPty(chatId, data);
 }
 
 export function sendPtyResize(chatId: string, cols: number, rows: number) {
   sendCommand({ type: "pty_resize", chatId, cols, rows });
-}
-
-function send(command: object, queue: boolean) {
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(command));
-    return;
-  }
-  if (queue) pending.push(command);
-}
-
-function emit(message: ServerMessage) {
-  for (const listener of listeners) listener(message);
 }

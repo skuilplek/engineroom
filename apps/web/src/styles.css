@@ -496,6 +496,27 @@ textarea { resize: vertical; }
 .start h1, .start .lede { text-align: center; }
 .start h1 { margin-bottom: 28px; }
 .start .lede { max-width: 28rem; }
+.home {
+  align-items: stretch;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding-top: 10vh;
+}
+.home-card {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 16px;
+}
+.home-card + .home-card { margin-top: 16px; }
+.home-card h2 { font-size: 16px; margin: 0; }
+.home-card .primary { justify-self: start; }
+.home-card .chat-row { padding-left: 8px; }
+.home-card .chat-time { max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+.home-chats { display: grid; gap: 2px; }
 .launch {
   width: min(760px, 100%);
   display: flex;

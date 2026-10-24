@@ -280,6 +280,90 @@ test("a websocket emits a line before the agent finishes and rejects a foreign o
   }
 });
 
+test("logout closes the live socket and a missing chat is not a filesystem error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-hub-logout-"));
+  const home = path.join(root, "home");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("hub-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  let ws: WebSocket | undefined;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie! };
+    const missing = await fetch(`${base}/api/chats/11111111-1111-4111-8111-111111111111`, { headers });
+    assert.equal(missing.status, 404);
+    const body = (await missing.json()) as { error?: string };
+    assert.equal(body.error, "chat not found");
+
+    ws = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+      headers: { Cookie: cookie!, Origin: base },
+    });
+    const messages: string[] = [];
+    ws.on("message", (data) => messages.push(data.toString()));
+    await new Promise<void>((resolve, reject) => {
+      ws?.once("open", () => resolve());
+      ws?.once("error", reject);
+    });
+    ws.send(JSON.stringify({ type: "watch", chatId: "22222222-2222-4222-8222-222222222222", lastSeq: 0 }));
+    const ready = Date.now() + 3000;
+    while (!messages.some((line) => line.includes("chat not found"))) {
+      if (Date.now() > ready) throw new Error(`watch never failed cleanly: ${messages.join("\n").slice(0, 300)}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const closed = new Promise<void>((resolve) => ws?.once("close", () => resolve()));
+    const loggedOut = await fetch(`${base}/api/logout`, { method: "POST", headers });
+    assert.equal(loggedOut.status, 200);
+    await Promise.race([
+      closed,
+      new Promise((_resolve, reject) => setTimeout(() => reject(new Error("socket stayed open after logout")), 2000)),
+    ]);
+    assert.equal(ws.readyState, WebSocket.CLOSED);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(messages.some((line) => line.includes("ENOENT")), false);
+  } finally {
+    ws?.close();
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a fresh watch shows saved modes and models before ACP starts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-hub-options-"));
   const home = path.join(root, "home");

@@ -9,7 +9,7 @@ import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
-import { createChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
+import { createChat, getChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import { MAX_TRANSFER_BYTES } from "@engineroom/protocol";
 import "./peercred-helper.ts";
@@ -49,6 +49,24 @@ test("overlapping chat saves keep both fields", async () => {
     assert.equal(saved?.title, "Saved title");
     assert.equal(saved?.model, "custom-model");
     assert.equal(saved?.mode, "agent");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a missing chat is reported as not found and left out of the list", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-missing-chat-"));
+  try {
+    const kept = await createChat(home, { title: "kept" });
+    const gone = await createChat(home, { title: "gone" });
+    await rm(path.join(home, ".engineroom", "chats", gone.id), { recursive: true, force: true });
+    const listed = await listChats(home, new Set());
+    assert.deepEqual(listed.map((chat) => chat.id), [kept.id]);
+    await assert.rejects(() => getChat(home, gone.id, false), /chat not found/);
+    await assert.rejects(
+      () => getChat(home, "11111111-1111-4111-8111-111111111111", false),
+      (error: Error) => error.message === "chat not found",
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }

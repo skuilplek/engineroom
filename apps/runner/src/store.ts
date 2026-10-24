@@ -206,7 +206,13 @@ export async function appendTranscript(home: string, chatId: string, entry: Tran
 }
 
 async function readMeta(home: string, chatId: string): Promise<ChatMeta> {
-  const raw = await readFile(path.join(chatDir(home, chatId), "meta.json"), "utf8");
+  let raw: string;
+  try {
+    raw = await readFile(path.join(chatDir(home, chatId), "meta.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("chat not found");
+    throw error;
+  }
   const chat = JSON.parse(raw) as ChatMeta;
   if (chat.id !== chatId) throw new Error("chat id mismatch");
   return chat;

@@ -3,6 +3,7 @@ import type { RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { workspaceLabel } from "../format.ts";
+import { isMissingChat } from "./missingChat.ts";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { DiffView } from "./Diff.tsx";
@@ -23,6 +24,7 @@ export function ChatView({
   onToggleFiles,
   onWorkspace,
   onFilesChanged,
+  onUnavailable,
   username,
 }: {
   chatId: string;
@@ -36,6 +38,7 @@ export function ChatView({
   onToggleFiles?: () => void;
   onWorkspace?: (workspace: string) => void;
   onFilesChanged?: () => void;
+  onUnavailable: () => void;
   username: string;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
@@ -55,6 +58,8 @@ export function ChatView({
   workspaceRef.current = onWorkspace;
   const filesChangedRef = useRef(onFilesChanged);
   filesChangedRef.current = onFilesChanged;
+  const unavailableRef = useRef(onUnavailable);
+  unavailableRef.current = onUnavailable;
 
   useEffect(() => {
     setLive(emptyLive());
@@ -66,6 +71,10 @@ export function ChatView({
     watchChat(chatId, 0);
     const stop = onAgent((message) => {
       if (message.type === "error") {
+        if (!sawSnapshot.current && isMissingChat(message.error)) {
+          unavailableRef.current();
+          return;
+        }
         setError(message.error);
         return;
       }
