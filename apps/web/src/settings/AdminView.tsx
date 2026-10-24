@@ -74,6 +74,8 @@ export function AdminView({
     fileManagerOffered: boolean,
     fileEditor?: boolean,
     agentCatalog?: { id: string; label: string }[],
+    fileDownloadOffered?: boolean,
+    fileUploadOffered?: boolean,
   ) => void;
   onBranding: (appName: string) => void;
   onAccess: () => void;
@@ -88,6 +90,8 @@ export function AdminView({
   const [cliImport, setCliImport] = useState(session.cliImport);
   const [fileManager, setFileManager] = useState(session.fileManagerOffered ?? false);
   const [fileEditor, setFileEditor] = useState(session.fileEditor ?? true);
+  const [fileDownload, setFileDownload] = useState(session.fileDownloadOffered ?? false);
+  const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
@@ -146,6 +150,8 @@ export function AdminView({
       setCliImport(body.cliImport);
       setFileManager(body.fileManager);
       setFileEditor(body.fileEditor ?? true);
+      setFileDownload(body.fileDownload ?? false);
+      setFileUpload(body.fileUpload ?? false);
       const first = body.agents.find((agent) => agent.available);
       setAgentTab(first?.id ?? "+");
     }).catch((err) => setError(message(err)));
@@ -169,7 +175,7 @@ export function AdminView({
     setFlags(next);
   }
 
-  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean }, select?: string) {
+  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
     setFlags(nextFlags);
@@ -178,6 +184,8 @@ export function AdminView({
     setCliImport(body.cliImport);
     if (typeof body.fileManager === "boolean") setFileManager(body.fileManager);
     if (typeof body.fileEditor === "boolean") setFileEditor(body.fileEditor);
+    if (typeof body.fileDownload === "boolean") setFileDownload(body.fileDownload);
+    if (typeof body.fileUpload === "boolean") setFileUpload(body.fileUpload);
     if (select) setAgentTab(select);
   }
 
@@ -204,7 +212,7 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
-      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor);
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload);
       onAgents(
         savedAgents.agents,
         savedAgents.rawTerminal ?? rawTerminal,
@@ -212,6 +220,8 @@ export function AdminView({
         savedAgents.fileManager ?? fileManager,
         savedAgents.fileEditor ?? fileEditor,
         savedAgents.agentCatalog,
+        savedAgents.fileDownload ?? fileDownload,
+        savedAgents.fileUpload ?? fileUpload,
       );
       if (Object.keys(offeredDraft).length > 0) {
         const savedOptions = await saveAgentOptions(offeredDraft);
@@ -417,7 +427,7 @@ export function AdminView({
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>
                 <span>Agents</span>
                 <strong>{offered.length}</strong>
-                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {fileEditor ? "File editor on." : "File editor off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
               </button>
               <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
                 <span>Repositories</span>
@@ -454,6 +464,14 @@ export function AdminView({
                 <label className="check">
                   <input type="checkbox" checked={fileEditor} onChange={() => setFileEditor((value) => !value)} />
                   File editor
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={fileDownload} onChange={() => setFileDownload((value) => !value)} />
+                  File download
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={fileUpload} onChange={() => setFileUpload((value) => !value)} />
+                  File upload
                 </label>
               </div>
               <div className="agent-tabs" role="tablist" aria-label="Installed agents" onKeyDown={onAgentTabKey}>
@@ -653,6 +671,8 @@ export function AdminView({
                   globalTerminal={session.rawTerminal}
                   globalFileManager={session.fileManagerOffered ?? false}
                   globalFileEditor={fileEditor}
+                  globalFileDownload={fileDownload}
+                  globalFileUpload={fileUpload}
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
@@ -689,6 +709,8 @@ function PersonPanel({
   globalTerminal,
   globalFileManager,
   globalFileEditor,
+  globalFileDownload,
+  globalFileUpload,
   agentOptions,
   agentNames,
   catalog,
@@ -705,6 +727,8 @@ function PersonPanel({
   globalTerminal: boolean;
   globalFileManager: boolean;
   globalFileEditor: boolean;
+  globalFileDownload: boolean;
+  globalFileUpload: boolean;
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
@@ -913,7 +937,7 @@ function PersonPanel({
       <h2>{username}</h2>
       <UserConversations username={username} agentNames={agentNames} />
       <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, modes, models, the terminal, the file manager, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
           {globalAgents.map((agent) => (
             <label className="check" key={agent}>
@@ -960,6 +984,24 @@ function PersonPanel({
           File editor
         </label>
         {!globalFileEditor && <p className="muted">The file editor is off for everyone, so this stays read-only until that is turned on.</p>}
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={policy.fileDownload !== false}
+            onChange={() => setPolicy({ ...policy, fileDownload: !(policy.fileDownload !== false) })}
+          />
+          File download
+        </label>
+        {!globalFileDownload && <p className="muted">File download is off for everyone, so this stays off until that is turned on.</p>}
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={policy.fileUpload !== false}
+            onChange={() => setPolicy({ ...policy, fileUpload: !(policy.fileUpload !== false) })}
+          />
+          File upload
+        </label>
+        {!globalFileUpload && <p className="muted">File upload is off for everyone, so this stays off until that is turned on.</p>}
         {allowed.map((agent) => {
           const config = agentOptions[agent];
           const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));

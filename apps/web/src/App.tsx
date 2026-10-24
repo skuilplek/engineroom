@@ -263,6 +263,8 @@ function Shell({
   }, [repos, session.home]);
 
   const canEditFiles = Boolean(session.fileEditor) && !session.filesReadOnly;
+  const canDownloadFiles = Boolean(session.fileDownload);
+  const canUploadFiles = Boolean(session.fileUpload) && !session.filesReadOnly;
 
   const shellClass = [
     "shell",
@@ -314,13 +316,15 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog) => onSession({
+            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog, fileDownloadOffered, fileUploadOffered) => onSession({
               ...session,
               agents,
               rawTerminal,
               cliImport,
               fileManagerOffered,
               fileEditor: fileEditor ?? session.fileEditor,
+              fileDownloadOffered: fileDownloadOffered ?? session.fileDownloadOffered,
+              fileUploadOffered: fileUploadOffered ?? session.fileUploadOffered,
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}
@@ -386,6 +390,8 @@ function Shell({
           open={filesOpen}
           expanded={filesExpanded}
           canEdit={canEditFiles}
+          canDownload={canDownloadFiles}
+          canUpload={canUploadFiles}
           refreshKey={filesRefreshKey}
           onToggleExpanded={toggleFilesExpanded}
           onClose={toggleFiles}

@@ -20,6 +20,8 @@ import {
   parseAgentCommand,
   parseRunnerRequest,
   parseSettingsPatch,
+  parseTransferBase64,
+  repoUploadPath,
   defaultPolicy,
   parseUserPolicy,
   socketPathForUser,
@@ -126,9 +128,21 @@ test("catalog urls and names stay on a remote", async () => {
   assert.deepEqual(policy.agents, ["cursor"]);
   assert.equal(policy.rawTerminal, false);
   assert.equal(policy.fileManager, true);
+  assert.equal(policy.fileDownload, true);
+  assert.equal(policy.fileUpload, true);
   assert.equal(defaultPolicy().fileManager, true);
+  assert.equal(defaultPolicy().fileDownload, true);
+  assert.equal(defaultPolicy().fileUpload, true);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileManager: true }).fileManager, true);
   assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileManager: false }).fileManager, false);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: false, fileUpload: false }).fileDownload, false);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: false, fileUpload: false }).fileUpload, false);
+  assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, fileDownload: "yes" }));
+  assert.equal(repoUploadPath("src", "notes.txt"), "src/notes.txt");
+  assert.equal(repoUploadPath("", "notes.txt"), "notes.txt");
+  assert.throws(() => repoUploadPath("src", "../secret"));
+  assert.equal(parseTransferBase64("aGVsbG8="), "aGVsbG8=");
+  assert.throws(() => parseTransferBase64("%%%"));
   assert.throws(() => parseUserPolicy({ agents: [], rawTerminal: true }));
   assert.throws(() => parseEnvEntries([{ key: "HOME", value: "ok\nno" }]));
   const rewritten = applyEnvEntries("# keep\nOLD=1\nANTHROPIC_API_KEY=before\n", [{ key: "ANTHROPIC_API_KEY", value: "secret" }]);
@@ -454,6 +468,33 @@ test("repository file requests validate relative paths and visibility flags", as
   assert.equal(policyWithEditor.fileEditor, false);
   const policyDefaultEditor = parseUserPolicy({ agents: ["cursor"], rawTerminal: false });
   assert.equal(policyDefaultEditor.fileEditor, true);
+  assert.equal(policyDefaultEditor.fileDownload, true);
+  assert.equal(policyDefaultEditor.fileUpload, true);
+
+  const downloadReq = parseRunnerRequest({
+    id: "17",
+    type: "download_repo_file",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+  });
+  assert.equal(downloadReq.type, "download_repo_file");
+  const uploadReq = parseRunnerRequest({
+    id: "18",
+    type: "upload_repo_file",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/blob.bin",
+    contentBase64: Buffer.from([0, 1, 255]).toString("base64"),
+    overwrite: true,
+  });
+  assert.equal(uploadReq.type, "upload_repo_file");
+  if (uploadReq.type === "upload_repo_file") assert.equal(uploadReq.overwrite, true);
+  assert.throws(() => parseRunnerRequest({
+    id: "19",
+    type: "upload_repo_file",
+    workspace: "/home/alice/Sites/proj",
+    path: "../secret",
+    contentBase64: "YQ==",
+  }));
 
   const readOnlySettings = applySettings(DEFAULT_SETTINGS, parseSettingsPatch({ filesReadOnly: true }));
   assert.equal(readOnlySettings.filesReadOnly, true);

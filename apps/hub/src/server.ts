@@ -3,15 +3,16 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileEditor, loadFileManager, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
+import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
+import { readUpload } from "./multipart.ts";
 import { callRunner, type RunnerLink } from "./runner-client.ts";
 import { clearCookie, cookieValue, readSession, sessionCookie, signSession } from "./session.ts";
 
@@ -60,6 +61,8 @@ interface RunnerCall {
   newPath?: string;
   kind?: "file" | "dir";
   content?: string;
+  contentBase64?: string;
+  overwrite?: boolean;
   visibility?: FileVisibility;
   names?: string[];
 }
@@ -198,6 +201,10 @@ export function createHub(options: HubOptions) {
       fileManager: access.fileManager,
       fileManagerOffered: loadFileManager(agentsFile),
       fileEditor: access.fileEditor,
+      fileDownload: access.fileDownload,
+      fileUpload: access.fileUpload,
+      fileDownloadOffered: loadFileDownload(agentsFile),
+      fileUploadOffered: loadFileUpload(agentsFile),
       filesReadOnly: Boolean(settings.filesReadOnly),
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
@@ -213,6 +220,8 @@ export function createHub(options: HubOptions) {
     rawTerminal: boolean;
     fileManager: boolean;
     fileEditor: boolean;
+    fileDownload: boolean;
+    fileUpload: boolean;
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
@@ -226,11 +235,14 @@ export function createHub(options: HubOptions) {
       const config = stored[agent];
       optionMap[agent] = effectiveAgentOptions(config?.discovered, config?.offered, policy.options?.[agent]);
     }
+    const fileManager = loadFileManager(agentsFile) && policy.fileManager;
     return {
       agents,
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
-      fileManager: loadFileManager(agentsFile) && policy.fileManager,
+      fileManager,
       fileEditor: loadFileEditor(agentsFile) && policy.fileEditor !== false,
+      fileDownload: fileManager && loadFileDownload(agentsFile) && policy.fileDownload,
+      fileUpload: fileManager && loadFileUpload(agentsFile) && policy.fileUpload,
       options: optionMap,
     };
   }
@@ -289,6 +301,20 @@ export function createHub(options: HubOptions) {
     if (!access.fileManager) throw new Error("file manager is not enabled");
   }
 
+  async function assertFileDownload(user: LinuxUser) {
+    await assertFileManager(user);
+    const access = await loadAccess(user);
+    if (!access.fileDownload) throw new Error("file download is not enabled");
+  }
+
+  async function assertFileUpload(user: LinuxUser) {
+    await assertFileManager(user);
+    const access = await loadAccess(user);
+    if (!access.fileUpload) throw new Error("file upload is not enabled");
+    const settings = (await call(user, { type: "get_settings" })) as Settings;
+    if (settings.filesReadOnly) throw new Error("file upload is not enabled");
+  }
+
   async function admin(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
     if (user.username !== adminUser || adminUser === "") {
       sendJson(res, 403, { error: "admin only" });
@@ -322,7 +348,16 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const flags = saveAgentFlags(agentsFile, body, rawTerminalFrom(body), cliImportFrom(body), fileManagerFrom(body), fileEditorFrom(body));
+      const flags = saveAgentFlags(
+        agentsFile,
+        body,
+        rawTerminalFrom(body),
+        cliImportFrom(body),
+        fileManagerFrom(body),
+        fileEditorFrom(body),
+        fileDownloadFrom(body),
+        fileUploadFrom(body),
+      );
       const listed = await visibleAgents(user);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
@@ -330,6 +365,8 @@ export function createHub(options: HubOptions) {
         cliImport: loadCliImport(agentsFile),
         fileManager: loadFileManager(agentsFile),
         fileEditor: loadFileEditor(agentsFile),
+        fileDownload: loadFileDownload(agentsFile),
+        fileUpload: loadFileUpload(agentsFile),
         agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
       });
       return;
@@ -531,6 +568,47 @@ export function createHub(options: HubOptions) {
       if (!workspace) throw new Error("invalid workspace");
       const visibility = loadFileVisibility(reposFile);
       sendJson(res, 200, await call(user, { type: "list_repo_files", workspace, visibility }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts[3] === "download" && parts.length === 4 && req.method === "GET") {
+      await assertFileDownload(user);
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      const filePath = assertRepoRelativePath(url.searchParams.get("path") || "");
+      const visibility = loadFileVisibility(reposFile);
+      const result = (await call(user, {
+        type: "download_repo_file",
+        workspace,
+        path: filePath,
+        visibility,
+      })) as RepoFileDownload;
+      const bytes = Buffer.from(result.contentBase64, "base64");
+      if (bytes.length > MAX_TRANSFER_BYTES || bytes.length !== result.size) throw new Error("invalid file content");
+      sendBytes(res, 200, bytes, contentDisposition(result.name));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "file" && parts[3] === "upload" && parts.length === 4 && req.method === "POST") {
+      await assertFileUpload(user);
+      const form = await readUpload(req);
+      const workspace = (form.fields.workspace || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      if (form.files.length === 0) throw new Error("invalid upload");
+      const overwrite = form.fields.overwrite === "true";
+      const visibility = loadFileVisibility(reposFile);
+      const saved: RepoFileUpload[] = [];
+      for (const file of form.files) {
+        const filePath = repoUploadPath(form.fields.directory ?? "", file.filename);
+        const result = (await call(user, {
+          type: "upload_repo_file",
+          workspace,
+          path: filePath,
+          contentBase64: file.data.toString("base64"),
+          overwrite,
+          visibility,
+        })) as RepoFileUpload;
+        saved.push(result);
+      }
+      sendJson(res, 201, { files: saved });
       return;
     }
     if (parts[1] === "repositories" && parts[2] === "file" && parts.length === 3 && req.method === "GET") {
@@ -735,7 +813,9 @@ export function createHub(options: HubOptions) {
       command.type === "write_repo_file" ||
       command.type === "create_repo_entry" ||
       command.type === "rename_repo_entry" ||
-      command.type === "delete_repo_entry"
+      command.type === "delete_repo_entry" ||
+      command.type === "download_repo_file" ||
+      command.type === "upload_repo_file"
     ) {
       throw new Error("unknown request");
     }
@@ -813,6 +893,8 @@ export function createHub(options: HubOptions) {
       cliImport: loadCliImport(agentsFile),
       fileManager: loadFileManager(agentsFile),
       fileEditor: loadFileEditor(agentsFile),
+      fileDownload: loadFileDownload(agentsFile),
+      fileUpload: loadFileUpload(agentsFile),
     };
   }
 
@@ -1012,6 +1094,36 @@ function fileEditorFrom(body: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function fileDownloadFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { fileDownload?: unknown }).fileDownload;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function fileUploadFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { fileUpload?: unknown }).fileUpload;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function contentDisposition(name: string): string {
+  const base = name.split(/[/\\]/).pop()?.replace(/[\r\n]/g, "") || "download";
+  const ascii = base.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_").trim() || "download";
+  const encoded = encodeURIComponent(base).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+function sendBytes(res: ServerResponse, status: number, body: Buffer, disposition: string) {
+  if (res.headersSent) return;
+  res.writeHead(status, {
+    "Content-Type": "application/octet-stream",
+    "Content-Disposition": disposition,
+    "Cache-Control": "no-store",
+    "Content-Length": body.length,
+  });
+  res.end(body);
+}
+
 function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
   if (Buffer.isBuffer(data)) return new Uint8Array(data);
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -1019,6 +1131,7 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 }
 
 function statusFor(message: string): number {
+  if (message.includes("file already exists")) return 409;
   if (message.includes("not enabled") || message.includes("hidden by policy") || message.includes("cannot modify .git")) return 403;
   if (
     message.includes("invalid") ||

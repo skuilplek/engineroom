@@ -7,6 +7,7 @@ import { peerCredentials } from "@engineroom/peercred";
 import {
   assertChatId,
   isBuiltinAgent,
+  MAX_TRANSFER_BYTES,
   maxSeq,
   parseRunnerRequest,
   titleFromPrompt,
@@ -34,9 +35,11 @@ import { loadGrants, syncGrantedRepositories, type CloneRepository } from "./rep
 import {
   createRepositoryEntry,
   deleteRepositoryEntry,
+  downloadRepositoryFile,
   listRepositoryFiles,
   readRepositoryFile,
   renameRepositoryEntry,
+  uploadRepositoryFile,
   writeRepositoryFile,
 } from "./files.ts";
 import {
@@ -335,6 +338,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return renameRepositoryEntry(home, request.workspace, request.path, request.newPath, request.visibility);
       case "delete_repo_entry":
         return deleteRepositoryEntry(home, request.workspace, request.path, request.visibility);
+      case "download_repo_file":
+        return downloadRepositoryFile(home, request.workspace, request.path, request.visibility);
+      case "upload_repo_file":
+        return uploadRepositoryFile(
+          home,
+          request.workspace,
+          request.path,
+          request.contentBase64,
+          request.overwrite === true,
+          request.visibility,
+        );
       default:
         throw new Error("unsupported request");
     }
@@ -670,7 +684,7 @@ function readRequest(socket: Socket): Promise<string> {
       if (index >= 0) {
         cleanup();
         resolve(buf.slice(0, index));
-      } else if (buf.length > 1_500_000) {
+      } else if (buf.length > Math.ceil(MAX_TRANSFER_BYTES / 3) * 4 + 64 * 1024) {
         cleanup();
         reject(new Error("request is too large"));
       }

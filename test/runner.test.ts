@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import { startRunner } from "../apps/runner/src/server.ts";
 import { syncGrantedRepositories } from "../apps/runner/src/repos.ts";
 import { createChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
+import { MAX_TRANSFER_BYTES } from "@engineroom/protocol";
 import "./peercred-helper.ts";
 
 const execFileAsync = promisify(execFile);
@@ -455,6 +456,76 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
     await assert.rejects(
       () => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"),
       /file not found/,
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("repository file transfer enforces size, visibility, and overwrite", async () => {
+  const { downloadRepositoryFile, uploadRepositoryFile } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-transfer-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-transfer-out-"));
+  const repo = path.join(home, "Sites", "proj");
+  const visibility = { showHidden: false, showGitignored: false, showGitDir: false };
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await writeFile(path.join(outside, "secret.txt"), "top-secret");
+  try {
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await writeFile(path.join(repo, ".env"), "TOKEN=1\n");
+    await writeFile(path.join(repo, "src", "note.txt"), "hello\n");
+    await symlink(path.join(outside, "secret.txt"), path.join(repo, "src", "escape.txt"));
+    await setEnabledRepositories(home, [repo]);
+
+    const payload = Buffer.from([0, 1, 2, 255, 10]);
+    const created = await uploadRepositoryFile(home, repo, "src/blob.bin", payload.toString("base64"), false, visibility);
+    assert.equal(created.path, "src/blob.bin");
+    assert.equal(created.size, payload.length);
+    const downloaded = await downloadRepositoryFile(home, repo, "src/blob.bin", visibility);
+    assert.equal(downloaded.name, "blob.bin");
+    assert.deepEqual(Buffer.from(downloaded.contentBase64, "base64"), payload);
+
+    await assert.rejects(
+      () => uploadRepositoryFile(home, repo, "src/blob.bin", Buffer.from("next").toString("base64"), false, visibility),
+      /file already exists/,
+    );
+    const replaced = await uploadRepositoryFile(home, repo, "src/blob.bin", Buffer.from("next").toString("base64"), true, visibility);
+    assert.equal(replaced.size, 4);
+    assert.equal(await readFile(path.join(repo, "src", "blob.bin"), "utf8"), "next");
+
+    await assert.rejects(() => downloadRepositoryFile(home, repo, ".env", visibility), /hidden by policy/);
+    await assert.rejects(
+      () => uploadRepositoryFile(home, repo, ".env", Buffer.from("nope").toString("base64"), true, visibility),
+      /hidden by policy/,
+    );
+    await assert.rejects(
+      () => uploadRepositoryFile(home, repo, ".git/HEAD", Buffer.from("nope").toString("base64"), true, {
+        showHidden: true,
+        showGitignored: true,
+        showGitDir: true,
+      }),
+      /cannot modify \.git/,
+    );
+    await assert.rejects(
+      () => uploadRepositoryFile(home, repo, "src/escape.txt", Buffer.from("nope").toString("base64"), true, {
+        showHidden: true,
+        showGitignored: true,
+        showGitDir: true,
+      }),
+      /invalid file path/,
+    );
+    await assert.rejects(() => downloadRepositoryFile(home, repo, "src", visibility), /not a regular file/);
+    await assert.rejects(() => uploadRepositoryFile(home, repo, "../secret", Buffer.from("nope").toString("base64")), /invalid file path/);
+
+    const huge = path.join(repo, "src", "huge.bin");
+    const handle = await open(huge, "w");
+    await handle.truncate(MAX_TRANSFER_BYTES + 1);
+    await handle.close();
+    await assert.rejects(() => downloadRepositoryFile(home, repo, "src/huge.bin", visibility), /too large/);
+    await assert.rejects(
+      () => uploadRepositoryFile(home, repo, "src/too-big.bin", Buffer.alloc(MAX_TRANSFER_BYTES + 1).toString("base64"), false, visibility),
+      /too large/,
     );
   } finally {
     await rm(home, { recursive: true, force: true });

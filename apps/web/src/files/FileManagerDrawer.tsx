@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry } from "@engineroom/protocol";
-import { createRepoEntry, deleteRepoEntry, listRepoFiles, readRepoFile, renameRepoEntry, writeRepoFile } from "../api.ts";
+import { ApiError, createRepoEntry, deleteRepoEntry, downloadRepoFile, listRepoFiles, readRepoFile, renameRepoEntry, uploadRepoFiles, writeRepoFile } from "../api.ts";
 import { DiffView } from "../chat/Diff.tsx";
 import { message } from "../format.ts";
 import {
   IconBranch,
   IconChevron,
+  IconDownload,
   IconEdit,
   IconExpand,
   IconFile,
@@ -15,6 +16,7 @@ import {
   IconPanelRight,
   IconRefresh,
   IconTrash,
+  IconUpload,
 } from "../icons.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 
@@ -35,6 +37,8 @@ export function FileManagerDrawer({
   open,
   expanded = false,
   canEdit = false,
+  canDownload = false,
+  canUpload = false,
   refreshKey,
   onToggleExpanded,
   onClose,
@@ -44,6 +48,8 @@ export function FileManagerDrawer({
   open: boolean;
   expanded?: boolean;
   canEdit?: boolean;
+  canDownload?: boolean;
+  canUpload?: boolean;
   refreshKey?: number;
   onToggleExpanded?: () => void;
   onClose: () => void;
@@ -72,6 +78,7 @@ export function FileManagerDrawer({
   const [renameInput, setRenameInput] = useState("");
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const uploadInput = useRef<HTMLInputElement>(null);
 
   const isDirty = Boolean(preview && !preview.binary && draftContent !== preview.content);
   const isEditable = Boolean(canEdit && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
@@ -293,6 +300,66 @@ export function FileManagerDrawer({
     }
   }
 
+  async function submitDownload() {
+    if (!workspace || !selectedPath || !canDownload || actionBusy) return;
+    setActionBusy(true);
+    setError("");
+    try {
+      const { blob, name } = await downloadRepoFile(workspace, selectedPath);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function submitUpload(list: FileList) {
+    if (!workspace || !canUpload || actionBusy) return;
+    const picked = [...list];
+    if (picked.length === 0) return;
+    const directory = selectedDir;
+    const clashes = picked.filter((file) => {
+      const rel = directory ? `${directory}/${file.name}` : file.name;
+      return files.some((entry) => entry.path === rel);
+    });
+    let overwrite = false;
+    if (clashes.length > 0) {
+      const label = clashes.length === 1 ? clashes[0]!.name : `${clashes.length} files`;
+      if (!window.confirm(`Replace ${label}?`)) return;
+      overwrite = true;
+    }
+    setActionBusy(true);
+    setError("");
+    try {
+      await uploadRepoFiles(workspace, directory, picked, overwrite);
+      await loadFiles(workspace);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && !overwrite) {
+        if (window.confirm("A file with that name already exists. Replace it?")) {
+          try {
+            await uploadRepoFiles(workspace, directory, picked, true);
+            await loadFiles(workspace);
+            return;
+          } catch (retryErr) {
+            setError(message(retryErr));
+            await loadFiles(workspace);
+            return;
+          }
+        }
+      }
+      setError(message(err));
+      await loadFiles(workspace);
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function confirmDelete(targetPath: string) {
     if (!workspace || actionBusy) return;
     setActionBusy(true);
@@ -358,6 +425,43 @@ export function FileManagerDrawer({
                 <IconNewFolder />
               </button>
             </>
+          )}
+          {canUpload && (
+            <>
+              <button
+                className="icon-btn"
+                type="button"
+                title={selectedDir ? `Upload into ${selectedDir}` : "Upload into repository root"}
+                aria-label={selectedDir ? `Upload into ${selectedDir}` : "Upload into repository root"}
+                disabled={actionBusy}
+                onClick={() => uploadInput.current?.click()}
+              >
+                <IconUpload />
+              </button>
+              <input
+                ref={uploadInput}
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => {
+                  const list = event.target.files;
+                  if (list && list.length > 0) void submitUpload(list);
+                  event.target.value = "";
+                }}
+              />
+            </>
+          )}
+          {canDownload && selectedPath && (
+            <button
+              className="icon-btn"
+              type="button"
+              title={`Download ${selectedPath}`}
+              aria-label={`Download ${selectedPath}`}
+              disabled={actionBusy}
+              onClick={() => void submitDownload()}
+            >
+              <IconDownload />
+            </button>
           )}
           <button
             className="icon-btn"

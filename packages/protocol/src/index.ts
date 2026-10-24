@@ -198,6 +198,21 @@ export interface RepoFileContent {
   size: number;
 }
 
+/** Largest file the file manager will download or upload. */
+export const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
+
+export interface RepoFileDownload {
+  path: string;
+  name: string;
+  contentBase64: string;
+  size: number;
+}
+
+export interface RepoFileUpload {
+  path: string;
+  size: number;
+}
+
 export interface CatalogEntry {
   id: string;
   name: string;
@@ -221,6 +236,8 @@ export interface UserPolicy {
   rawTerminal: boolean;
   fileManager: boolean;
   fileEditor?: boolean;
+  fileDownload: boolean;
+  fileUpload: boolean;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -343,7 +360,17 @@ export type RunnerRequest =
   | { id: string; type: "write_repo_file"; workspace: string; path: string; content: string; visibility?: FileVisibility }
   | { id: string; type: "create_repo_entry"; workspace: string; path: string; kind: "file" | "dir"; content?: string; visibility?: FileVisibility }
   | { id: string; type: "rename_repo_entry"; workspace: string; path: string; newPath: string; visibility?: FileVisibility }
-  | { id: string; type: "delete_repo_entry"; workspace: string; path: string; visibility?: FileVisibility };
+  | { id: string; type: "delete_repo_entry"; workspace: string; path: string; visibility?: FileVisibility }
+  | { id: string; type: "download_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
+  | {
+      id: string;
+      type: "upload_repo_file";
+      workspace: string;
+      path: string;
+      contentBase64: string;
+      overwrite?: boolean;
+      visibility?: FileVisibility;
+    };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -705,6 +732,31 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }
+    case "download_repo_file": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return {
+        id: body.id,
+        type: "download_repo_file",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "upload_repo_file": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (body.overwrite != null && typeof body.overwrite !== "boolean") throw new Error("invalid upload");
+      return {
+        id: body.id,
+        type: "upload_repo_file",
+        workspace: workspace.trim(),
+        path: assertRepoRelativePath(body.path),
+        contentBase64: parseTransferBase64(body.contentBase64),
+        ...(body.overwrite === true ? { overwrite: true } : {}),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
     default:
       throw new Error("unknown request");
   }
@@ -722,6 +774,41 @@ export function parseFileVisibility(value: unknown): FileVisibility {
     showGitignored: Boolean(record.showGitignored),
     showGitDir: Boolean(record.showGitDir),
   };
+}
+
+export function assertUploadFileName(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid file name");
+  const name = value.trim();
+  if (
+    !name ||
+    name.length > 255 ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    /[\u0000-\u001f\u007f]/.test(name)
+  ) {
+    throw new Error("invalid file name");
+  }
+  return name;
+}
+
+export function repoUploadPath(directory: unknown, fileName: unknown): string {
+  const name = assertUploadFileName(fileName);
+  if (typeof directory !== "string" || !directory.trim()) return assertRepoRelativePath(name);
+  const dir = directory.trim().replace(/^\/+|\/+$/g, "");
+  if (!dir) return assertRepoRelativePath(name);
+  return assertRepoRelativePath(`${dir}/${name}`);
+}
+
+export function parseTransferBase64(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid file content");
+  const cleaned = value.replace(/\s+/g, "");
+  const maxChars = Math.ceil(MAX_TRANSFER_BYTES / 3) * 4;
+  if (cleaned.length > maxChars) throw new Error("file is too large");
+  if (cleaned.length > 0 && !/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) throw new Error("invalid file content");
+  return cleaned;
 }
 
 export function assertRepoRelativePath(value: unknown): string {
@@ -925,6 +1012,10 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : true;
   if (body.fileEditor != null && typeof body.fileEditor !== "boolean") throw new Error("invalid file editor");
   const fileEditor = body.fileEditor == null ? true : body.fileEditor;
+  if (body.fileDownload != null && typeof body.fileDownload !== "boolean") throw new Error("invalid file download");
+  if (body.fileUpload != null && typeof body.fileUpload !== "boolean") throw new Error("invalid file upload");
+  const fileDownload = body.fileDownload == null ? true : body.fileDownload;
+  const fileUpload = body.fileUpload == null ? true : body.fileUpload;
   const options = parsePolicyOptions(body.options);
   return {
     agents,
@@ -932,6 +1023,8 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     rawTerminal: body.rawTerminal,
     fileManager,
     fileEditor,
+    fileDownload,
+    fileUpload,
     ...(options ? { options } : {}),
   };
 }
@@ -992,7 +1085,15 @@ function offeredChoices(available: AgentOptionChoice[], offeredIds: string[], pe
 }
 
 export function defaultPolicy(): UserPolicy {
-  return { agents: [...AGENTS], binaries: {}, rawTerminal: true, fileManager: true, fileEditor: true };
+  return {
+    agents: [...AGENTS],
+    binaries: {},
+    rawTerminal: true,
+    fileManager: true,
+    fileEditor: true,
+    fileDownload: true,
+    fileUpload: true,
+  };
 }
 
 export function parseEnvEntries(value: unknown): EnvEntry[] {

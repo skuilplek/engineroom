@@ -32,6 +32,10 @@ export interface Session {
   fileManager: boolean;
   fileManagerOffered?: boolean;
   fileEditor: boolean;
+  fileDownload?: boolean;
+  fileUpload?: boolean;
+  fileDownloadOffered?: boolean;
+  fileUploadOffered?: boolean;
   filesReadOnly?: boolean;
   cliImport: boolean;
   appName: string;
@@ -57,6 +61,8 @@ export interface AgentInventory {
   cliImport: boolean;
   fileManager: boolean;
   fileEditor?: boolean;
+  fileDownload?: boolean;
+  fileUpload?: boolean;
 }
 
 export interface Account {
@@ -176,6 +182,58 @@ export function deleteRepoEntry(workspace: string, filePath: string) {
     `/api/repositories/file?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
     { method: "DELETE" },
   );
+}
+
+export async function downloadRepoFile(workspace: string, filePath: string): Promise<{ blob: Blob; name: string }> {
+  const response = await fetch(
+    `/api/repositories/file/download?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  const blob = await response.blob();
+  const fallback = filePath.split("/").pop() || "download";
+  return { blob, name: filenameFromDisposition(response.headers.get("Content-Disposition"), fallback) };
+}
+
+export async function uploadRepoFiles(
+  workspace: string,
+  directory: string,
+  files: File[],
+  overwrite: boolean,
+): Promise<{ files: { path: string; size: number }[] }> {
+  const body = new FormData();
+  body.set("workspace", workspace);
+  body.set("directory", directory);
+  body.set("overwrite", overwrite ? "true" : "false");
+  for (const file of files) body.append("file", file, file.name);
+  const response = await fetch("/api/repositories/file/upload", { method: "POST", body });
+  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  return (await response.json()) as { files: { path: string; size: number }[] };
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  let text = response.statusText;
+  try {
+    const body = (await response.json()) as { error?: string };
+    if (body.error) text = body.error;
+  } catch {
+    /* keep the status text */
+  }
+  return text;
+}
+
+function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1]);
+    } catch {
+      /* use the plain filename */
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  return quoted?.[1] || fallback;
 }
 
 export function listCatalog() {
@@ -328,6 +386,8 @@ export function saveAgents(
   cliImport?: boolean,
   fileManager?: boolean,
   fileEditor?: boolean,
+  fileDownload?: boolean,
+  fileUpload?: boolean,
 ) {
   return api<{
     agents: AgentId[];
@@ -335,10 +395,12 @@ export function saveAgents(
     cliImport?: boolean;
     fileManager?: boolean;
     fileEditor?: boolean;
+    fileDownload?: boolean;
+    fileUpload?: boolean;
     agentCatalog?: { id: string; label: string }[];
   }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload }),
   });
 }
 

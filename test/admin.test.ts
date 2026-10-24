@@ -1262,6 +1262,190 @@ test("the administrator controls repository file visibility for the file manager
   }
 });
 
+test("the administrator controls file download and upload separately from editing", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-transfer-admin-"));
+  const home = path.join(root, "alice");
+  const socketDir = path.join(root, "socks");
+  const reposFile = path.join(root, "repos.json");
+  const agentsFile = path.join(root, "agents.json");
+  const repo = path.join(home, "Sites", "app");
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+  await writeFile(path.join(repo, ".env"), "TOKEN=abc\n");
+  await writeFile(path.join(repo, "src", "main.ts"), "console.log('hi');\n");
+
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("transfer-admin-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    reposFile,
+    lookup: (username) => (username === "alice" ? alice : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  const downloadUrl = `${base}/api/repositories/file/download?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/main.ts")}`;
+
+  async function upload(cookie: string, name: string, bytes: Buffer, overwrite: boolean) {
+    const form = new FormData();
+    form.set("workspace", repo);
+    form.set("directory", "src");
+    form.set("overwrite", overwrite ? "true" : "false");
+    form.append("file", new Blob([bytes]), name);
+    return fetch(`${base}/api/repositories/file/upload`, { method: "POST", headers: { Cookie: cookie }, body: form });
+  }
+
+  try {
+    const loginRes = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loginRes.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+
+    assert.equal((await fetch(downloadUrl, { headers })).status, 403);
+    const agents = { cursor: true, claude: true, pi: true };
+    const enabledManager = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ ...agents, fileManager: true }),
+    });
+    assert.equal(enabledManager.status, 200);
+    assert.equal((await fetch(`${base}/api/repositories/files?workspace=${encodeURIComponent(repo)}`, { headers })).status, 200);
+    assert.equal((await fetch(downloadUrl, { headers })).status, 403);
+    assert.equal((await upload(cookie!, "blob.bin", Buffer.from([1, 2, 3]), false)).status, 403);
+    const before = (await (await fetch(`${base}/api/me`, { headers })).json()) as {
+      fileDownload: boolean;
+      fileUpload: boolean;
+      fileDownloadOffered: boolean;
+      fileUploadOffered: boolean;
+    };
+    assert.equal(before.fileDownload, false);
+    assert.equal(before.fileUpload, false);
+    assert.equal(before.fileDownloadOffered, false);
+    assert.equal(before.fileUploadOffered, false);
+
+    const enabledDownload = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ ...agents, fileManager: true, fileDownload: true }),
+    });
+    assert.equal(enabledDownload.status, 200);
+    assert.equal(((await enabledDownload.json()) as { fileDownload: boolean }).fileDownload, true);
+    const offered = (await (await fetch(`${base}/api/me`, { headers })).json()) as { fileDownload: boolean; fileDownloadOffered: boolean; fileUpload: boolean };
+    assert.equal(offered.fileDownloadOffered, true);
+    assert.equal(offered.fileDownload, true);
+    assert.equal(offered.fileUpload, false);
+    const downloaded = await fetch(downloadUrl, { headers });
+    assert.equal(downloaded.status, 200);
+    assert.match(downloaded.headers.get("content-disposition") || "", /attachment;/);
+    assert.match(downloaded.headers.get("content-disposition") || "", /main\.ts/);
+    assert.equal(Buffer.from(await downloaded.arrayBuffer()).toString("utf8"), "console.log('hi');\n");
+    assert.equal((await upload(cookie!, "blob.bin", Buffer.from([1, 2, 3]), false)).status, 403);
+
+    const hideDownload = await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: true, fileDownload: false }),
+    });
+    assert.equal(hideDownload.status, 200);
+    assert.equal((await fetch(downloadUrl, { headers })).status, 403);
+
+    await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: true, fileDownload: true, fileUpload: true }),
+    });
+    await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ ...agents, fileManager: true, fileEditor: false, fileDownload: true, fileUpload: true }),
+    });
+    const payload = Buffer.from([0, 1, 255, 10]);
+    const created = await upload(cookie!, "blob.bin", payload, false);
+    assert.equal(created.status, 201);
+    assert.equal(((await created.json()) as { files: Array<{ path: string }> }).files[0]?.path, "src/blob.bin");
+    const binary = await fetch(
+      `${base}/api/repositories/file/download?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/blob.bin")}`,
+      { headers },
+    );
+    assert.equal(binary.status, 200);
+    assert.deepEqual(Buffer.from(await binary.arrayBuffer()), payload);
+
+    await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: true, fileDownload: true, fileUpload: false }),
+    });
+    assert.equal((await upload(cookie!, "other.bin", Buffer.from("no"), false)).status, 403);
+    assert.equal((await fetch(downloadUrl, { headers })).status, 200);
+
+    await fetch(`${base}/api/admin/users/alice/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], rawTerminal: true, fileManager: true, fileDownload: true, fileUpload: true }),
+    });
+    assert.equal((await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ filesReadOnly: true }),
+    })).status, 200);
+    assert.equal((await upload(cookie!, "other.bin", Buffer.from("no"), false)).status, 403);
+    assert.equal((await fetch(downloadUrl, { headers })).status, 200);
+    assert.equal((await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ filesReadOnly: false }),
+    })).status, 200);
+
+    assert.equal((await upload(cookie!, "blob.bin", Buffer.from("next"), false)).status, 409);
+    const replaced = await upload(cookie!, "blob.bin", Buffer.from("next"), true);
+    assert.equal(replaced.status, 201);
+    assert.equal(await readFile(path.join(repo, "src", "blob.bin"), "utf8"), "next");
+
+    const hidden = await fetch(
+      `${base}/api/repositories/file/download?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent(".env")}`,
+      { headers },
+    );
+    assert.equal(hidden.status, 403);
+    const directory = await fetch(
+      `${base}/api/repositories/file/download?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src")}`,
+      { headers },
+    );
+    assert.equal(directory.status, 400);
+  } finally {
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the administrator can read another user's chats and transcripts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-user-chats-"));
   const aliceHome = path.join(root, "alice");

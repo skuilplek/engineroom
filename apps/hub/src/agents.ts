@@ -141,6 +141,28 @@ export function loadFileEditor(file: string): boolean {
   return true;
 }
 
+export function loadFileDownload(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { fileDownload?: unknown };
+    if (typeof parsed.fileDownload === "boolean") return parsed.fileDownload;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
+export function loadFileUpload(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { fileUpload?: unknown };
+    if (typeof parsed.fileUpload === "boolean") return parsed.fileUpload;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
 export function loadAppName(file: string): string {
   if (!file) return DEFAULT_APP_NAME;
   try {
@@ -165,6 +187,8 @@ export function saveAgentFlags(
   cliImport?: boolean,
   fileManager?: boolean,
   fileEditor?: boolean,
+  fileDownload?: boolean,
+  fileUpload?: boolean,
 ): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
@@ -180,6 +204,8 @@ export function saveAgentFlags(
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
   const editor = typeof fileEditor === "boolean" ? fileEditor : loadFileEditor(file);
+  const download = typeof fileDownload === "boolean" ? fileDownload : loadFileDownload(file);
+  const upload = typeof fileUpload === "boolean" ? fileUpload : loadFileUpload(file);
   const current = readAgentFile(file);
   writeAgentFile(file, {
     ...current,
@@ -190,6 +216,8 @@ export function saveAgentFlags(
     cliImport: imports,
     fileManager: files,
     fileEditor: editor,
+    fileDownload: download,
+    fileUpload: upload,
     appName: loadAppName(file),
     customAgents: custom.map((agent) => ({ ...agent, enabled: Boolean(next[agent.id]) })),
   });
