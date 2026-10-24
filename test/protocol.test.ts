@@ -304,6 +304,58 @@ test("claude thinking deltas are kept", () => {
   assert.deepEqual(events, [{ type: "thinking", text: "hmm" }]);
 });
 
+test("pi keeps streaming after the first turn", () => {
+  const parser = createCliParser("pi", "erabc");
+  assert.deepEqual(
+    parser.push({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Looking" },
+    }),
+    [{ type: "text_delta", text: "Looking" }],
+  );
+  assert.deepEqual(parser.push({ type: "turn_end", message: {}, toolResults: [] }), []);
+  assert.deepEqual(parser.push({ type: "agent_end", messages: [], willRetry: true }), []);
+  assert.deepEqual(
+    parser.push({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Done" },
+    }),
+    [{ type: "text_delta", text: "Done" }],
+  );
+  assert.deepEqual(
+    parser.push({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta: "hmm" },
+    }),
+    [{ type: "thinking", text: "hmm" }],
+  );
+  assert.deepEqual(
+    parser.push({
+      type: "message_update",
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 2, id: "call_1", toolName: "bash" },
+    }),
+    [{ type: "tool", id: "call_1", name: "bash", phase: "start" }],
+  );
+  assert.deepEqual(
+    parser.push({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "toolcall_end",
+        contentIndex: 2,
+        toolCall: { id: "call_1", name: "bash", arguments: { command: "ls" } },
+      },
+    }),
+    [{ type: "tool", id: "call_1", name: "bash", phase: "start", input: "ls" }],
+  );
+  assert.deepEqual(parser.push({ type: "auto_retry_start", attempt: 1, errorMessage: "overloaded" }), [
+    { type: "status", text: "Retrying · overloaded" },
+  ]);
+  assert.deepEqual(parser.push({ type: "compaction_start", reason: "threshold" }), [
+    { type: "status", text: "Compacting · threshold" },
+  ]);
+  assert.deepEqual(parser.push({ type: "agent_settled", aborted: false }), [{ type: "done", agentSessionId: null }]);
+});
+
 test("a fresh claude run records the first session id", () => {
   const parser = createCliParser("claude", null);
   parser.push({ type: "system", subtype: "init", session_id: "fresh" });

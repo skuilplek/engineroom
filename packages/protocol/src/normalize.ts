@@ -187,13 +187,18 @@ function pushPi(
     if (event.type === "text_delta" && typeof event.delta === "string") {
       return [{ type: "text_delta", text: event.delta }];
     }
-    if (event.type === "toolcall_end" || event.type === "toolcall_start") {
+    if (event.type === "thinking_delta" && typeof event.delta === "string" && event.delta) {
+      return [{ type: "thinking", text: event.delta }];
+    }
+    if (event.type === "toolcall_start") {
+      const id = typeof event.id === "string" ? event.id : nextId();
+      const name = typeof event.toolName === "string" ? event.toolName : "tool";
+      return [{ type: "tool", id, name, phase: "start" }];
+    }
+    if (event.type === "toolcall_end") {
       const call = (event.toolCall ?? {}) as Record<string, unknown>;
       const id = typeof call.id === "string" ? call.id : nextId();
       const name = typeof call.name === "string" ? call.name : "tool";
-      if (event.type === "toolcall_start") {
-        return [{ type: "tool", id, name, phase: "start" }];
-      }
       return [
         {
           type: "tool",
@@ -221,8 +226,15 @@ function pushPi(
       },
     ];
   }
-  if (msg.type === "agent_end" || msg.type === "turn_end") {
-    return [{ type: "done", agentSessionId: null }];
+  if (msg.type === "turn_end" || msg.type === "agent_end") return [];
+  if (msg.type === "agent_settled") return [{ type: "done", agentSessionId: null }];
+  if (msg.type === "auto_retry_start") {
+    const detail = stringField(msg, "errorMessage");
+    return [{ type: "status", text: detail ? `Retrying · ${detail}` : "Retrying" }];
+  }
+  if (msg.type === "compaction_start") {
+    const reason = stringField(msg, "reason");
+    return [{ type: "status", text: reason ? `Compacting · ${reason}` : "Compacting" }];
   }
   if (msg.type === "error") {
     return [{ type: "error", text: stringField(msg, "message") || stringField(msg, "error") || "agent error" }];
