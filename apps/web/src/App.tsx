@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { isTheme, type AgentId, type ChatMeta } from "@engineroom/protocol";
+import { isTheme, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
 import { listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
+import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
 import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { message, strip } from "./format.ts";
@@ -90,6 +91,7 @@ function Shell({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [target, setTarget] = useState(session.home);
   const [view, setView] = useState<View>("start");
+  const [checkingChat, setCheckingChat] = useState(() => readLastChat(session.username) != null);
   const [error, setError] = useState("");
   const [filesOpen, setFilesOpen] = useState<boolean>(() => {
     try {
@@ -115,6 +117,14 @@ function Shell({
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const openingRef = useRef<{ id: string; prompt: string } | null>(null);
   const consumedRef = useRef<string | null>(null);
+  const restoredRef = useRef(false);
+  const choseRef = useRef(false);
+  const usernameRef = useRef(session.username);
+  const homeRef = useRef(session.home);
+  const reposRef = useRef<RepositoryEntry[]>([]);
+  usernameRef.current = session.username;
+  homeRef.current = session.home;
+  reposRef.current = repos;
 
   const toggleFiles = useCallback(() => {
     setFilesOpen((current) => {
@@ -163,15 +173,38 @@ function Shell({
     return pending.prompt;
   }, []);
 
+  const showChat = useCallback((chat: ChatMeta, knownRepos: RepositoryEntry[]) => {
+    openingRef.current = null;
+    writeLastChat(usernameRef.current, chat.id);
+    setActiveId(chat.id);
+    setView("chat");
+    const key = strip(chat.workspace);
+    if (key === strip(homeRef.current) || knownRepos.some((repo) => strip(repo.path) === key)) setTarget(chat.workspace);
+  }, []);
+
   const refresh = useCallback(async () => {
     const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
     setChats(nextChats);
     setRepos(nextRepos);
-  }, []);
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    setCheckingChat(false);
+    if (choseRef.current) return;
+    const stored = readLastChat(usernameRef.current);
+    const chat = pickLastChat(nextChats, stored);
+    if (chat) {
+      showChat(chat, nextRepos);
+      return;
+    }
+    if (stored) forgetLastChat(usernameRef.current);
+  }, [showChat]);
 
   useEffect(() => {
     startAgentSocket();
-    refresh().catch((err) => setError(message(err)));
+    refresh().catch((err) => {
+      setCheckingChat(false);
+      setError(message(err));
+    });
     return onAgent((incoming) => {
       if (incoming.type === "chats_changed") refresh().catch(() => undefined);
     });
@@ -207,17 +240,15 @@ function Shell({
   }
 
   function choose(path: string) {
+    choseRef.current = true;
     setTarget(path);
     setActiveId(null);
     setView("start");
   }
 
   function openChat(chat: ChatMeta) {
-    openingRef.current = null;
-    setActiveId(chat.id);
-    setView("chat");
-    const key = strip(chat.workspace);
-    if (key === strip(session.home) || repos.some((repo) => strip(repo.path) === key)) setTarget(chat.workspace);
+    choseRef.current = true;
+    showChat(chat, reposRef.current);
   }
 
   const onTitle = useCallback((title: string) => {
@@ -255,8 +286,14 @@ function Shell({
         onToggleCollapsed={toggleSidebar}
         onNew={choose}
         onOpen={openChat}
-        onSettings={() => setView("settings")}
-        onAdmin={() => setView("admin")}
+        onSettings={() => {
+          choseRef.current = true;
+          setView("settings");
+        }}
+        onAdmin={() => {
+          choseRef.current = true;
+          setView("admin");
+        }}
         onLogout={() => logout().finally(onLogout)}
         onImported={(chat) => {
           remember(chat);
@@ -293,7 +330,12 @@ function Shell({
             }}
           />
         )}
-        {view === "start" && selectedRepo && (
+        {checkingChat && view === "start" && (
+          <div className="start">
+            <p className="muted">Loading…</p>
+          </div>
+        )}
+        {!checkingChat && view === "start" && selectedRepo && (
           <StartView
             agents={session.agents}
             agentCatalog={session.agentCatalog}
@@ -304,15 +346,17 @@ function Shell({
             onToggleFiles={filesEnabled ? toggleFiles : undefined}
             username={session.username}
             onStarted={(chat, prompt) => {
+              choseRef.current = true;
               remember(chat);
               openingRef.current = { id: chat.id, prompt };
               consumedRef.current = null;
+              writeLastChat(session.username, chat.id);
               setActiveId(chat.id);
               setView("chat");
             }}
           />
         )}
-        {view === "start" && !selectedRepo && (
+        {!checkingChat && view === "start" && !selectedRepo && (
           <div className="start">
             <p className="lede">Use the plus next to a repository to start a chat.</p>
           </div>
