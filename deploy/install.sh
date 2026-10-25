@@ -39,8 +39,19 @@ install -m 0644 deploy/systemd/engineroom-hub.service /etc/systemd/system/engine
 install -m 0644 deploy/systemd/engineroom-runner@.service /etc/systemd/system/engineroom-runner@.service
 install -m 0644 deploy/systemd/engineroom-runner@.socket /etc/systemd/system/engineroom-runner@.socket
 
-if [[ ! -d node_modules ]]; then
-  npm install
+# Vite's launcher imports ../dist/node/cli.js. That resolves only when
+# node_modules/.bin/vite is a symlink into the vite package. A copied
+# launcher looks for node_modules/dist/node/cli.js and the build fails.
+if [[ ! -L node_modules/.bin/vite ]]; then
+  owner="$(stat -c '%U' "$root")"
+  if [[ -d node_modules && "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
+    chown -R "$owner" node_modules
+  fi
+  if [[ "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
+    sudo -u "$owner" -H -- env PATH="/usr/local/bin:/usr/bin:${PATH}" npm ci
+  else
+    npm ci
+  fi
 fi
 npm run build:web
 
@@ -56,5 +67,5 @@ systemctl daemon-reload
 systemctl enable --now engineroom-hub.service
 
 echo "Hub service installed. It starts at boot with: systemctl enable --now engineroom-hub.service"
-echo "node-pty compiles during npm install and needs python3, make, and g++."
+echo "node-pty compiles during npm ci and needs python3, make, and g++."
 echo "Cursor chats use 'agent acp'. Claude uses 'claude-agent-acp' on PATH when it is installed; otherwise the runner falls back to claude -p."

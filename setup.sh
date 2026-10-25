@@ -17,31 +17,9 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl xz-utils caddy
+apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl caddy nodejs npm
 
-install_node() {
-  local current=""
-  if [[ -x /usr/local/bin/node ]]; then
-    current="$(/usr/local/bin/node -p 'process.versions.node.split(".")[0]')"
-  elif [[ -x /usr/bin/node ]]; then
-    current="$(/usr/bin/node -p 'process.versions.node.split(".")[0]')"
-  fi
-  if [[ -n "$current" && "$current" -ge 24 ]]; then
-    return
-  fi
-  local tmp file
-  tmp="$(mktemp -d)"
-  curl -fsSL -o "$tmp/SHASUMS256.txt" https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt
-  file="$(awk '{print $2}' "$tmp/SHASUMS256.txt" | grep -E '^node-v24\..*-linux-x64\.tar\.xz$' | head -1)"
-  grep -F "  ${file}" "$tmp/SHASUMS256.txt" > "$tmp/check"
-  curl -fsSL -o "$tmp/$file" "https://nodejs.org/dist/latest-v24.x/$file"
-  (cd "$tmp" && sha256sum -c check)
-  tar -C /usr/local --strip-components=1 -xJf "$tmp/$file"
-  rm -rf "$tmp"
-  hash -r
-}
-
-install_node
+hash -r
 node --version
 
 install -d -m 0755 /etc/engineroom
