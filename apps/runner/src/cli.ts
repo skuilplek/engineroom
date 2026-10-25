@@ -5,6 +5,9 @@ import path from "node:path";
 import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
 
+const PATH_MARKER = "__ENGINEROOM_PATH__";
+const loginDirs = new Map<string, string[]>();
+
 export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const keep = [
@@ -40,9 +43,9 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
       env[key] = value;
     }
   }
-  const prefix = [`${home}/.local/bin`, `${home}/bin`, "/usr/local/bin", "/usr/bin", "/bin"];
+  const prefix = [`${home}/.local/bin`, `${home}/bin`, ...rememberedLoginDirs(home), "/usr/local/bin", "/usr/bin", "/bin"];
   const current = (base.PATH || "").split(":").filter(Boolean);
-  env.PATH = [...prefix, ...current].join(":");
+  env.PATH = [...new Set([...prefix, ...current])].join(":");
   env.HOME = home;
   env.TERM = "dumb";
   env.NO_COLOR = "1";
@@ -54,6 +57,91 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
   delete env.LISTEN_PID;
   delete env.LISTEN_FDNAMES;
   return env;
+}
+
+export function rememberedLoginDirs(home: string): string[] {
+  return loginDirs.get(home) ?? [];
+}
+
+// Installers add the agent to the account's shell startup files. The runner's
+// own PATH is only the service default, so a login has to read the shell's PATH
+// before it can see those commands. The directories are kept for later launches.
+export async function refreshLoginCommandDirs(home: string, base: NodeJS.ProcessEnv): Promise<string[]> {
+  const dirs = await probeLoginPath(home, base);
+  loginDirs.set(home, dirs);
+  return dirs;
+}
+
+export function parseLoginPath(stdout: string): string[] {
+  const index = stdout.lastIndexOf(PATH_MARKER);
+  if (index < 0) return [];
+  const raw = stdout.slice(index + PATH_MARKER.length).split(/[\r\n]/, 1)[0] ?? "";
+  return dedupeDirs(raw.split(":"));
+}
+
+function dedupeDirs(parts: string[]): string[] {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const part of parts) {
+    const dir = part.trim();
+    if (!dir.startsWith("/") || /[\0\r\n]/.test(dir)) continue;
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    dirs.push(dir);
+  }
+  return dirs;
+}
+
+function loginShell(shell: string | undefined): { file: string; base: string } | null {
+  if (!shell || !/^\/[A-Za-z0-9._+/-]+$/.test(shell)) return null;
+  const base = shell.split("/").pop() || "";
+  if (base !== "bash" && base !== "zsh" && base !== "sh" && base !== "fish") return null;
+  return { file: shell, base };
+}
+
+async function probeLoginPath(home: string, base: NodeJS.ProcessEnv): Promise<string[]> {
+  const shell = loginShell(base.SHELL) ?? loginShell("/bin/bash");
+  if (!shell) return rememberedLoginDirs(home);
+  const command = `printf '\\n${PATH_MARKER}%s' "$PATH"`;
+  const argSets = shell.base === "fish"
+    ? [["-l", "-c", command], ["-c", command]]
+    : [["-ilc", command], ["-ic", command]];
+  const probed = await Promise.all(argSets.map((args) => runPathProbe(home, base, shell.file, args)));
+  const dirs = dedupeDirs(probed.flat());
+  return dirs.length > 0 ? dirs : rememberedLoginDirs(home);
+}
+
+function runPathProbe(home: string, base: NodeJS.ProcessEnv, shell: string, args: string[]): Promise<string[]> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let child: ChildProcess;
+    try {
+      child = spawn(shell, args, {
+        cwd: home,
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: {
+          HOME: home,
+          USER: base.USER || "",
+          LOGNAME: base.LOGNAME || base.USER || "",
+          SHELL: shell,
+          TERM: "dumb",
+          PATH: "/usr/local/bin:/usr/bin:/bin",
+          LANG: base.LANG || "C.UTF-8",
+        },
+      });
+    } catch {
+      resolve([]);
+      return;
+    }
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      if (stdout.length < 1024 * 1024) stdout += chunk;
+    });
+    const finish = () => resolve(parseLoginPath(stdout));
+    child.once("error", finish);
+    child.once("close", finish);
+  });
 }
 
 export async function resolveBinary(

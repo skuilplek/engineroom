@@ -355,7 +355,7 @@ export type RunnerRequest =
   | { id: string; type: "list_sessions"; agent?: AgentId }
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
   | { id: string; type: "probe_agent"; agent: AgentId }
-  | { id: string; type: "resolve_commands"; names: string[] }
+  | { id: string; type: "resolve_commands"; names: string[]; refresh?: boolean }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
@@ -640,7 +640,12 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       if (!isAgentId(body.agent)) throw new Error("invalid agent");
       return { id: body.id, type: "probe_agent", agent: body.agent };
     case "resolve_commands":
-      return { id: body.id, type: "resolve_commands", names: parseCommandNames(body.names) };
+      return {
+        id: body.id,
+        type: "resolve_commands",
+        names: parseCommandNames(body.names),
+        refresh: body.refresh === true,
+      };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "set_model":

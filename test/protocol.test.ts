@@ -29,7 +29,7 @@ import {
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
-import { childEnv, claudeArgs, cursorArgs, piArgs } from "../apps/runner/src/cli.ts";
+import { childEnv, claudeArgs, cursorArgs, parseLoginPath, piArgs } from "../apps/runner/src/cli.ts";
 import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
@@ -170,6 +170,12 @@ test("catalog urls and names stay on a remote", async () => {
   assert.match(rewritten, /# keep/);
   assert.equal(rewritten.includes("OLD="), false);
   assert.match(rewritten, /ANTHROPIC_API_KEY=secret/);
+});
+
+test("login path marker ignores shell noise and keeps absolute directories", () => {
+  const dirs = parseLoginPath("welcome\n__ENGINEROOM_PATH__/home/zoe/tools:/usr/bin:/home/zoe/tools\n");
+  assert.deepEqual(dirs, ["/home/zoe/tools", "/usr/bin"]);
+  assert.deepEqual(parseLoginPath("no marker"), []);
 });
 
 test("child env takes ~/.env values except identity and loader variables", async () => {

@@ -2,14 +2,33 @@
 # Update an existing Engineroom install from this checkout.
 # Run as root:
 #   sudo ./update.sh
+#   sudo ./update.sh --no-pull
 #
 # Pulls the current branch, installs dependencies, runs deploy/install.sh,
 # and restarts the hub and any running per-user runners. Leaves
 # /etc/engineroom/hub.env and the Caddy site config alone.
+# --no-pull skips the pull and installs the working tree, including
+# uncommitted changes.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
+
+no_pull=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-pull) no_pull=1 ;;
+    -h|--help)
+      echo "usage: sudo ./update.sh [--no-pull]"
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $arg" >&2
+      echo "usage: sudo ./update.sh [--no-pull]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "run as root: sudo ./update.sh" >&2
@@ -41,8 +60,12 @@ run_as_owner() {
   sudo -u "$owner" -H -- env PATH="/usr/local/bin:/usr/bin:${PATH}" "$@"
 }
 
-echo "Pulling the latest commit as ${owner}..."
-run_as_owner git pull --ff-only
+if [[ "$no_pull" -eq 1 ]]; then
+  echo "Skipping git pull; installing the working tree as ${owner}..."
+else
+  echo "Pulling the latest commit as ${owner}..."
+  run_as_owner git pull --ff-only
+fi
 
 install -d -m 0755 /etc/engineroom
 if [[ ! -f /etc/engineroom/checks.json ]]; then
@@ -74,7 +97,11 @@ echo "Waiting for the hub..."
 for _ in $(seq 1 20); do
   if curl -fsS http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
     rev="$(run_as_owner git rev-parse --short HEAD)"
-    echo "Engineroom ${rev} is active and the hub is responding."
+    if [[ "$no_pull" -eq 1 ]]; then
+      echo "Engineroom ${rev} (working tree, pull skipped) is active and the hub is responding."
+    else
+      echo "Engineroom ${rev} is active and the hub is responding."
+    fi
     exit 0
   fi
   sleep 0.5

@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -65,6 +65,7 @@ interface RunnerCall {
   overwrite?: boolean;
   visibility?: FileVisibility;
   names?: string[];
+  refresh?: boolean;
   name?: string;
   url?: string;
 }
@@ -206,7 +207,7 @@ export function createHub(options: HubOptions) {
   }
 
   async function profile(user: LinuxUser) {
-    const access = await loadAccess(user);
+    const access = await loadAccess(user, true);
     const settings = (await call(user, { type: "get_settings" })) as Settings;
     return {
       username: user.username,
@@ -232,7 +233,7 @@ export function createHub(options: HubOptions) {
     };
   }
 
-  async function loadAccess(user: LinuxUser): Promise<{
+  async function loadAccess(user: LinuxUser, refresh = false): Promise<{
     agents: AgentId[];
     rawTerminal: boolean;
     fileManager: boolean;
@@ -243,11 +244,22 @@ export function createHub(options: HubOptions) {
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
-    const listed = await visibleAgents(user);
-    const offerable = new Set(offeredAgentIds(flags, listed));
+    const listed = await visibleAgents(user, refresh);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
-    const agents = policy.agents.filter((agent) => offerable.has(agent));
+    const missing = policy.agents.filter((agent) => !listed.some((item) => item.id === agent && item.available));
+    const overrides: Partial<Record<string, string>> = { ...policy.binaries };
+    const resolvedOverrides = new Map<string, string>();
+    if (missing.length > 0) {
+      const settings = (await call(user, { type: "get_settings" })) as Settings;
+      for (const agent of missing) {
+        overrides[agent] = policy.binaries[agent] || settings.binaries[agent];
+      }
+      const paths = [...new Set(missing.map((agent) => overrides[agent]).filter((value): value is string => Boolean(value)))];
+      const resolved = await resolveCommands(user, paths);
+      for (const [name, found] of resolved) resolvedOverrides.set(name, found);
+    }
+    const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides);
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
     for (const agent of agents) {
       const config = stored[agent];
@@ -938,7 +950,7 @@ export function createHub(options: HubOptions) {
   }
 
   async function agentState(user: LinuxUser) {
-    const listed = await visibleAgents(user);
+    const listed = await visibleAgents(user, true);
     return {
       agents: listed,
       rawTerminal: loadRawTerminal(agentsFile),
@@ -950,24 +962,17 @@ export function createHub(options: HubOptions) {
     };
   }
 
-  async function visibleAgents(user: LinuxUser) {
+  async function visibleAgents(user: LinuxUser, refresh = false) {
     const listed = await listAgents(agentsFile, commandDirs);
-    const resolved = await resolveCommands(
-      user,
-      [...new Set(listed.filter((agent) => !agent.available).map((agent) => agent.binary))],
-    );
-    if (resolved.size === 0) return listed;
-    return listed.map((agent) => {
-      const found = resolved.get(agent.binary);
-      if (!found || agent.available) return agent;
-      return { ...agent, available: true, path: found };
-    });
+    const names = [...new Set(listed.filter((agent) => !agent.available).flatMap((agent) => detectionNames(agent)))];
+    const resolved = await resolveCommands(user, names, refresh);
+    return withResolvedCommands(listed, resolved);
   }
 
-  async function resolveCommands(user: LinuxUser, names: string[]): Promise<Map<string, string>> {
+  async function resolveCommands(user: LinuxUser, names: string[], refresh = false): Promise<Map<string, string>> {
     if (names.length === 0) return new Map();
     try {
-      const result = (await call(user, { type: "resolve_commands", names })) as {
+      const result = (await call(user, { type: "resolve_commands", names, refresh })) as {
         commands?: { name?: string; path?: string | null }[];
       };
       const found = new Map<string, string>();

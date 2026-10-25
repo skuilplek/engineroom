@@ -13,6 +13,7 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
 import "./peercred-helper.ts";
+import { installCommand } from "./command-stub.ts";
 
 test("the hub only opens the signed-in user's runner", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-hub-"));
@@ -22,6 +23,7 @@ test("the hub only opens the signed-in user's runner", async () => {
   await mkdir(home);
   await mkdir(socketDir);
   await mkdir(web);
+  await installCommand(home, "claude");
   await writeFile(path.join(web, "index.html"), "<!doctype html><title>Engineroom</title><h1>Sign in</h1>");
   const uid = process.getuid?.() ?? 1000;
   const gid = process.getgid?.() ?? 1000;

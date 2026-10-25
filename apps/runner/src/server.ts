@@ -24,7 +24,7 @@ import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
-import { childEnv, resolveBinary, binaryNames } from "./cli.ts";
+import { childEnv, refreshLoginCommandDirs, resolveBinary, binaryNames } from "./cli.ts";
 import { gitClone } from "./clone.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
 import { loadEnv, saveEnv } from "./envfile.ts";
@@ -315,7 +315,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "probe_agent":
         return probeAgent(request.agent);
       case "resolve_commands":
-        return resolveCommands(request.names);
+        return resolveCommands(request.names, request.refresh === true);
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -382,7 +382,14 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     if (!allowed.includes(id)) throw new Error(kind === "mode" ? "invalid mode" : "invalid model");
   }
 
-  async function resolveCommands(names: string[]) {
+  let commandPathAt = 0;
+
+  async function resolveCommands(names: string[], refresh: boolean) {
+    // Login asks for a fresh read. Later checks in the same moment reuse it.
+    if (commandPathAt === 0 || (refresh && Date.now() - commandPathAt > 1000)) {
+      await refreshLoginCommandDirs(home, process.env);
+      commandPathAt = Date.now();
+    }
     const env = childEnv(process.env, home);
     const commands = [];
     for (const name of names) {

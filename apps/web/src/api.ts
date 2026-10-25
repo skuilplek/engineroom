@@ -139,7 +139,7 @@ export function getSettings() {
   return api<Settings>("/api/settings");
 }
 
-export function saveSettings(settings: Settings) {
+export function saveSettings(settings: SettingsPatch) {
   return api<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(settings) });
 }
 

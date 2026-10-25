@@ -98,6 +98,24 @@ test("an ACP session streams chunks and can import a CLI session", async () => {
   }
 });
 
+test("resolve_commands finds a binary that only the login shell can see", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-login-path-"));
+  const sock = path.join(home, "runner.sock");
+  const bin = path.join(home, "tool-bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(path.join(bin, "pi"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(path.join(home, ".bashrc"), `export PATH="$HOME/tool-bin:$PATH"\n`);
+  const runner = await startRunner({ home, socketPath: sock, peerCheck: () => undefined });
+  try {
+    const found = await once(sock, { id: "w", type: "resolve_commands", names: ["pi"] });
+    const commands = (found.result as { commands: { name: string; path: string | null }[] }).commands;
+    assert.equal(commands.find((item) => item.name === "pi")?.path, path.join(bin, "pi"));
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("resolve_commands finds a binary on the user path", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-which-"));
   const sock = path.join(home, "runner.sock");

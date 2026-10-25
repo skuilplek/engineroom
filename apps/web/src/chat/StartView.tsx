@@ -30,7 +30,7 @@ export function StartView({
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const promptHeight = usePromptHeight(username);
-  const [agent, setAgent] = useState<AgentId>(agents[0] || "cursor");
+  const [agent, setAgent] = useState<AgentId | "">(agents[0] || "");
   const [mode, setMode] = useState("");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -38,8 +38,15 @@ export function StartView({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (agents.length === 0) {
+      setAgent("");
+      setMode("");
+      setModel("");
+      return;
+    }
     getSettings().then((next) => {
-      const chosen = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0] || next.defaultAgent;
+      const chosen = agents.includes(next.defaultAgent) ? next.defaultAgent : agents[0];
+      if (!chosen) return;
       const modes = options[chosen]?.modes ?? [];
       const models = options[chosen]?.models ?? [];
       setAgent(chosen);
@@ -58,7 +65,7 @@ export function StartView({
   async function submit(event: FormEvent) {
     event.preventDefault();
     const text = prompt.trim();
-    if (!text || busy) return;
+    if (!text || busy || !agent) return;
     setBusy(true);
     setError("");
     try {
@@ -108,6 +115,7 @@ export function StartView({
           }}
         />
         <div className="launch-bar">
+          {agents.length === 0 && <p className="muted">No agents available</p>}
           {agents.length > 1 && (
             <label className="chip">
               <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
@@ -131,7 +139,7 @@ export function StartView({
               </select>
             </label>
           )}
-          <button className="send" type="submit" disabled={busy || !prompt.trim()} aria-label="Send">
+          <button className="send" type="submit" disabled={busy || !agent || !prompt.trim()} aria-label="Send">
             <IconArrow />
           </button>
         </div>

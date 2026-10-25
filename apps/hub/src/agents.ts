@@ -270,6 +270,25 @@ export async function listAgents(file: string, dirs: string[] = SYSTEM_COMMAND_D
   }));
 }
 
+// Names a launch will actually try. Claude's ACP adapter is a different command
+// from the CLI, and either one means the agent is installed for this account.
+export function detectionNames(agent: { id: string; binary: string }): string[] {
+  const names = [agent.binary];
+  if (agent.id === "claude" && agent.binary === "claude") names.push("claude-agent-acp");
+  return [...new Set(names)];
+}
+
+export function withResolvedCommands(listed: ListedAgent[], resolved: ReadonlyMap<string, string>): ListedAgent[] {
+  return listed.map((agent) => {
+    if (agent.available) return agent;
+    for (const name of detectionNames(agent)) {
+      const found = resolved.get(name);
+      if (found) return { ...agent, available: true, path: found };
+    }
+    return agent;
+  });
+}
+
 export function offeredAgentIds(flags: AgentFlags, listed: ListedAgent[]): AgentId[] {
   const availableCustom = new Set(listed.filter((agent) => !agent.builtin && agent.available).map((agent) => agent.id));
   return listed
@@ -279,6 +298,25 @@ export function offeredAgentIds(flags: AgentFlags, listed: ListedAgent[]): Agent
       if (isBuiltinAgent(id)) return true;
       return availableCustom.has(id);
     });
+}
+
+// Agents a person can start. An enabled command that is not installed for them
+// is omitted, unless an absolute binary override for that account resolves.
+export function usableAgentIds(
+  flags: AgentFlags,
+  listed: ListedAgent[],
+  allowed: readonly AgentId[],
+  overrides: Partial<Record<string, string>> = {},
+  resolvedOverrides: ReadonlyMap<string, string> = new Map(),
+): AgentId[] {
+  const offerable = new Set(offeredAgentIds(flags, listed));
+  const byId = new Map(listed.map((agent) => [agent.id, agent]));
+  return allowed.filter((agent) => {
+    if (!offerable.has(agent)) return false;
+    if (byId.get(agent)?.available) return true;
+    const override = overrides[agent];
+    return Boolean(override && resolvedOverrides.has(override));
+  });
 }
 
 export function namesFor(ids: AgentId[], file: string): { id: string; label: string }[] {

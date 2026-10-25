@@ -14,6 +14,7 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
 import "./peercred-helper.ts";
+import { installCommand } from "./command-stub.ts";
 
 test("the administrator sets agents and accounts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-admin-"));
@@ -24,6 +25,7 @@ test("the administrator sets agents and accounts", async () => {
   await mkdir(home);
   await mkdir(carolHome);
   await mkdir(socketDir);
+  await installCommand(carolHome, "claude");
   await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
   const uid = process.getuid?.() ?? 1000;
   const user: LinuxUser = {

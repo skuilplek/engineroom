@@ -22,6 +22,38 @@ apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl cad
 hash -r
 node --version
 
+install_obscura() {
+  if [[ -x /usr/local/bin/obscura && -x /usr/local/bin/obscura-worker ]]; then
+    return
+  fi
+  local arch asset tmp bin worker
+  case "$(uname -m)" in
+    x86_64) arch="x86_64" ;;
+    aarch64|arm64) arch="aarch64" ;;
+    *)
+      echo "obscura: unsupported architecture $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  asset="obscura-${arch}-linux.tar.gz"
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/$asset" "https://github.com/h4ckf0r0day/obscura/releases/latest/download/${asset}"
+  tar -C "$tmp" -xzf "$tmp/$asset"
+  bin="$(find "$tmp" -type f -name obscura -print -quit)"
+  worker="$(find "$tmp" -type f -name obscura-worker -print -quit)"
+  if [[ -z "$bin" || -z "$worker" ]]; then
+    echo "obscura: release archive did not contain obscura and obscura-worker" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  install -m 0755 "$bin" /usr/local/bin/obscura
+  install -m 0755 "$worker" /usr/local/bin/obscura-worker
+  rm -rf "$tmp"
+}
+
+install_obscura
+obscura --version
+
 install -d -m 0755 /etc/engineroom
 host="${ENGINEROOM_HOST:-}"
 if [[ -n "$host" && "$host" != ":80" && "$host" != "localhost" ]]; then
@@ -75,10 +107,26 @@ if [[ -n "${SUDO_USER:-}" ]]; then
 fi
 
 systemctl daemon-reload
+# Caddy is the public listener. Ubuntu's Apache package binds :80 with a
+# default site, including after reboot when the unit is still enabled, and
+# Caddy then exits. Disable it whenever it is installed.
+if systemctl list-unit-files --no-legend 'apache2.service' 2>/dev/null | grep -q '^apache2.service'; then
+  systemctl disable --now apache2
+fi
+if ss -ltn 'sport = :80' | awk 'NR>1 { found=1 } END { exit !found }' && ! systemctl is-active --quiet caddy; then
+  echo "port 80 is in use by another program, so Caddy cannot serve Engineroom:" >&2
+  ss -ltnp 'sport = :80' >&2 || true
+  exit 1
+fi
 systemctl enable --now engineroom-hub.service
 systemctl enable --now caddy
 systemctl restart engineroom-hub.service
 systemctl reload caddy || systemctl restart caddy
+if ! systemctl is-active --quiet caddy; then
+  echo "caddy did not stay running" >&2
+  systemctl status caddy --no-pager >&2 || true
+  exit 1
+fi
 
 if [[ "$cookie_secure" == "1" ]]; then
   url="https://${host}"

@@ -230,6 +230,7 @@ export function AdminView({
         setAgentOptions(savedOptions);
       }
       setSavedFlags(flags);
+      setInventory((current) => current.map((agent) => ({ ...agent, enabled: Boolean(flags[agent.id]) })));
       onAccess();
       setSaved("Agents saved");
     } catch (err) {
@@ -675,7 +676,7 @@ export function AdminView({
                   key={selected}
                   username={selected}
                   self={selected === session.username}
-                  globalAgents={session.agents}
+                  globalAgents={inventory.length > 0 ? inventory.filter((agent) => agent.enabled).map((agent) => agent.id) : session.agents}
                   globalTerminal={session.rawTerminal}
                   globalFileManager={session.fileManagerOffered ?? false}
                   globalFileEditor={fileEditor}

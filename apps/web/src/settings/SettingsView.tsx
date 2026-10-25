@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AgentId, AgentOptionChoice, Settings, ThemePreference } from "@engineroom/protocol";
+import type { AgentId, AgentOptionChoice, Settings, SettingsPatch, ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { getSettings, saveSettings } from "../api.ts";
 import { message } from "../format.ts";
@@ -47,7 +47,7 @@ export function SettingsView({
     setSaved("");
     setError("");
     try {
-      const savedSettings = await saveSettings(settings);
+      const savedSettings = await saveSettings(settingsPayload(settings, agents));
       const nextTheme = normalizeTheme(savedSettings.theme);
       setSettings({ ...savedSettings, theme: nextTheme });
       onSaved(nextTheme, Boolean(savedSettings.filesReadOnly));
@@ -142,25 +142,31 @@ export function SettingsView({
         })}
       </div>
       <h2>Defaults for new chats</h2>
-      <label>
-        Default agent
-        <select
-          value={settings.defaultAgent}
-          onChange={(event) => chooseAgent(event.target.value as Settings["defaultAgent"])}
-        >
-          {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
-        </select>
-      </label>
-      {models.length > 0 && (
-        <label>
-          Default model
-          <select
-            value={settings.defaultModel}
-            onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
-          >
-            {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-          </select>
-        </label>
+      {agents.length === 0 ? (
+        <p className="muted">No agents available</p>
+      ) : (
+        <>
+          <label>
+            Default agent
+            <select
+              value={agents.includes(settings.defaultAgent) ? settings.defaultAgent : agents[0]}
+              onChange={(event) => chooseAgent(event.target.value as Settings["defaultAgent"])}
+            >
+              {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
+            </select>
+          </label>
+          {models.length > 0 && (
+            <label>
+              Default model
+              <select
+                value={settings.defaultModel}
+                onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
+              >
+                {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+              </select>
+            </label>
+          )}
+        </>
       )}
       <label>
         Tool approval
@@ -213,4 +219,10 @@ export function SettingsView({
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
   );
+}
+
+function settingsPayload(settings: Settings, agents: AgentId[]): SettingsPatch {
+  const { defaultAgent, defaultModel, lockedBinaries: _locked, ...rest } = settings;
+  if (!agents.includes(defaultAgent)) return rest;
+  return { ...rest, defaultAgent, defaultModel };
 }
