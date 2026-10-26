@@ -279,6 +279,16 @@ test("policy options stay optional and narrow the offered catalog", () => {
     undefined,
   );
   assert.deepEqual(open.modes.map((mode) => mode.id), ["agent"]);
+  const unoffered = effectiveAgentOptions(
+    {
+      modes: [{ id: "agent", name: "Agent" }, { id: "plan", name: "Plan" }],
+      models: [{ id: "gpt-5", name: "GPT" }],
+    },
+    { modes: [], models: [] },
+    undefined,
+  );
+  assert.deepEqual(unoffered.modes, []);
+  assert.deepEqual(unoffered.models, []);
   const probed = parseRunnerRequest({ id: "1", type: "probe_agent", agent: "cursor" });
   assert.equal(probed.type, "probe_agent");
   assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "Nope" }));
@@ -316,6 +326,15 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(isTheme(""), false);
   assert.throws(() => parseSettingsPatch({ theme: "sepia" }), /invalid theme/);
   assert.throws(() => parseSettingsPatch({ theme: "custom" }), /invalid theme/);
+  assert.equal(next.visibleChats, 5);
+  assert.equal(parseSettingsPatch({ visibleChats: 0 }).visibleChats, 0);
+  assert.equal(parseSettingsPatch({ visibleChats: 100 }).visibleChats, 100);
+  assert.equal(applySettings(next, { visibleChats: 12 }).visibleChats, 12);
+  assert.equal(applySettings(applySettings(next, { visibleChats: 12 }), { theme: "light" }).visibleChats, 12);
+  assert.throws(() => parseSettingsPatch({ visibleChats: -1 }), /invalid visibleChats/);
+  assert.throws(() => parseSettingsPatch({ visibleChats: 101 }), /invalid visibleChats/);
+  assert.throws(() => parseSettingsPatch({ visibleChats: 1.5 }), /invalid visibleChats/);
+  assert.throws(() => parseSettingsPatch({ visibleChats: "5" }), /invalid visibleChats/);
 });
 
 test("session cookies are signed and expire", () => {

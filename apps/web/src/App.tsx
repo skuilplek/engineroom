@@ -381,7 +381,7 @@ function Shell({
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
             onTheme={applyTheme}
-            onSaved={(theme, filesReadOnly) => onSession({ ...session, theme, filesReadOnly })}
+            onSaved={(theme, filesReadOnly, visibleChats) => onSession({ ...session, theme, filesReadOnly, visibleChats })}
             onSession={onSession}
           />
         )}

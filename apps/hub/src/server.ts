@@ -235,6 +235,7 @@ export function createHub(options: HubOptions) {
       fileDownloadOffered: loadFileDownload(agentsFile),
       fileUploadOffered: loadFileUpload(agentsFile),
       filesReadOnly: Boolean(settings.filesReadOnly),
+      visibleChats: Number.isInteger(settings.visibleChats) ? settings.visibleChats : 5,
       options: access.options,
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),

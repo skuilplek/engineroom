@@ -60,6 +60,7 @@ export interface Settings {
   permission: PermissionPolicy;
   theme: ThemePreference;
   filesReadOnly?: boolean;
+  visibleChats: number;
   lockedBinaries?: AgentId[];
 }
 
@@ -70,6 +71,7 @@ export interface SettingsPatch {
   permission?: PermissionPolicy;
   theme?: ThemePreference;
   filesReadOnly?: boolean;
+  visibleChats?: number;
 }
 
 export interface ChatMeta {
@@ -411,6 +413,7 @@ export const DEFAULT_SETTINGS: Settings = {
   permission: "ask",
   theme: "dark",
   filesReadOnly: false,
+  visibleChats: 5,
 };
 
 export function isAgentId(value: unknown): value is AgentId {
@@ -1273,6 +1276,13 @@ function parseEnabledPaths(value: unknown): string[] {
   return enabled;
 }
 
+export function parseVisibleChats(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
+    throw new Error("invalid visibleChats");
+  }
+  return value;
+}
+
 function optionalString(value: unknown, label: string, max: number): string | undefined {
   if (value == null || value === "") return undefined;
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
@@ -1303,6 +1313,7 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     if (typeof body.filesReadOnly !== "boolean") throw new Error("invalid filesReadOnly");
     patch.filesReadOnly = body.filesReadOnly;
   }
+  if (body.visibleChats != null) patch.visibleChats = parseVisibleChats(body.visibleChats);
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
     const binaries: SettingsPatch["binaries"] = {};
@@ -1331,6 +1342,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     permission: patch.permission ?? current.permission ?? "ask",
     theme: patch.theme ?? current.theme ?? "dark",
     filesReadOnly: patch.filesReadOnly ?? current.filesReadOnly ?? false,
+    visibleChats: patch.visibleChats ?? current.visibleChats ?? 5,
   };
   if (patch.binaries) {
     for (const agent of Object.keys(patch.binaries)) {

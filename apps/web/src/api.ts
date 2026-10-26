@@ -38,6 +38,7 @@ export interface Session {
   fileDownloadOffered?: boolean;
   fileUploadOffered?: boolean;
   filesReadOnly?: boolean;
+  visibleChats?: number;
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;

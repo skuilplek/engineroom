@@ -48,8 +48,8 @@ export function StartView({
   onBranchChanged?: () => void;
 }) {
   const [agent, setAgent] = useState<AgentId | "">(agents[0] || "");
-  const [mode, setMode] = useState("");
-  const [model, setModel] = useState("");
+  const [mode, setMode] = useState(() => options[agents[0] || ""]?.modes?.[0]?.id || "");
+  const [model, setModel] = useState(() => options[agents[0] || ""]?.models?.[0]?.id || "");
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

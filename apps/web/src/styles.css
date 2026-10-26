@@ -394,6 +394,7 @@ textarea { resize: vertical; }
   text-align: left;
 }
 .section-toggle:hover { color: var(--ink); }
+.older-chats { margin: 0 0 2px 30px; padding: 4px 0; }
 .new-project {
   display: grid;
   gap: 8px;
@@ -579,8 +580,11 @@ textarea { resize: vertical; }
 .composer-choices select {
   appearance: none;
   -webkit-appearance: none;
+  flex: 0 0 auto;
   width: auto;
+  min-width: 5.5rem;
   max-width: 12rem;
+  field-sizing: content;
   border: 0;
   border-radius: 999px;
   background-color: transparent;

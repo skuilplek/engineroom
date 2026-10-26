@@ -58,6 +58,20 @@ export function buildGroups(
   return groups.filter((group) => !needle || group.chats.length > 0 || group.label.toLowerCase().includes(needle));
 }
 
+export function visibleProjectChats(
+  chats: ChatMeta[],
+  limit: number,
+  activeId: string | null,
+  options: { expanded: boolean; uncapped: boolean },
+): { shown: ChatMeta[]; older: number } {
+  const sorted = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (options.uncapped || limit <= 0) return { shown: sorted, older: 0 };
+  const capped = sorted.filter((chat, index) => index < limit || chat.id === activeId);
+  const older = sorted.length - capped.length;
+  if (options.expanded) return { shown: sorted, older };
+  return { shown: capped, older };
+}
+
 export function workspaceLabel(workspace: string, home: string, repos: RepositoryEntry[]): string {
   if (strip(workspace) === strip(home)) return "No repository";
   return repos.find((repo) => strip(repo.path) === strip(workspace))?.name

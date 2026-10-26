@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
-import { buildGroups, relativeTime, strip, type RepoGroup } from "../format.ts";
+import { buildGroups, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
 import { IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
@@ -25,7 +25,7 @@ export function Sidebar({
   onCreateProject,
   onImported,
 }: {
-  session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean };
+  session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean; visibleChats?: number };
   chats: ChatMeta[];
   repos: RepositoryEntry[];
   home: string;
@@ -47,9 +47,21 @@ export function Sidebar({
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
   const [agent, setAgent] = useState<AgentId>("cursor");
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   const groups = buildGroups(chats, repos, home, query);
   const archivedGroups = buildGroups(chats, repos, home, query, true);
   const appName = session.appName.trim() || "AgentWrapper";
+  const visibleChats = session.visibleChats ?? 5;
+  const searching = query.trim() !== "";
+
+  function toggleOlder(key: string) {
+    setExpandedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => onAgent((message) => {
     if (message.type === "sessions") setSessions(message.sessions);
@@ -131,7 +143,19 @@ export function Sidebar({
           <p className="section-label">Conversations</p>
           <div className="tree">
             {groups.map((group) => (
-              <Group key={group.key} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
+              <Group
+                key={group.key}
+                group={group}
+                view={view}
+                activeId={activeId}
+                target={target}
+                limit={visibleChats}
+                expanded={expandedProjects.has(group.key)}
+                searching={searching}
+                onToggleOlder={() => toggleOlder(group.key)}
+                onNew={onNew}
+                onOpen={onOpen}
+              />
             ))}
             {archivedGroups.length > 0 && (
               <button
@@ -145,7 +169,19 @@ export function Sidebar({
               </button>
             )}
             {archivedOpen && archivedGroups.map((group) => (
-              <Group key={`archived-${group.key}`} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
+              <Group
+                key={`archived-${group.key}`}
+                group={group}
+                view={view}
+                activeId={activeId}
+                target={target}
+                limit={visibleChats}
+                expanded={expandedProjects.has(group.key)}
+                searching={searching}
+                onToggleOlder={() => toggleOlder(group.key)}
+                onNew={onNew}
+                onOpen={onOpen}
+              />
             ))}
           </div>
           {error && <p className="alert" role="alert">{error}</p>}
@@ -255,6 +291,10 @@ function Group({
   view,
   activeId,
   target,
+  limit,
+  expanded,
+  searching,
+  onToggleOlder,
   onNew,
   onOpen,
 }: {
@@ -262,10 +302,15 @@ function Group({
   view: View;
   activeId: string | null;
   target: string;
+  limit: number;
+  expanded: boolean;
+  searching: boolean;
+  onToggleOlder: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
 }) {
   const selected = view === "start" && strip(target) === strip(group.path);
+  const { shown, older } = visibleProjectChats(group.chats, limit, view === "chat" ? activeId : null, { expanded, uncapped: searching });
   return (
     <div>
       <div className={selected ? "repo-line active" : "repo-line"}>
@@ -286,7 +331,7 @@ function Group({
           </button>
         )}
       </div>
-      {group.chats.map((chat) => (
+      {shown.map((chat) => (
         <button
           className={view === "chat" && chat.id === activeId ? "chat-row active" : "chat-row"}
           key={chat.id}
@@ -298,6 +343,12 @@ function Group({
           <span className="chat-time">{relativeTime(chat.updatedAt)}</span>
         </button>
       ))}
+      {older > 0 && (
+        <button className="section-toggle older-chats" type="button" aria-expanded={expanded} onClick={onToggleOlder}>
+          <IconChevron open={expanded} />
+          {expanded ? "Hide older" : `Show ${older} older`}
+        </button>
+      )}
     </div>
   );
 }

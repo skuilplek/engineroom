@@ -9,6 +9,7 @@ import {
   DEFAULT_SETTINGS,
   isAgentId,
   isTheme,
+  parseVisibleChats,
   type AgentId,
   type ChatDetail,
   type ChatMeta,
@@ -49,6 +50,13 @@ export async function loadSettings(home: string): Promise<Settings> {
     }
     if (isTheme(parsed.theme)) patch.theme = parsed.theme;
     if (typeof parsed.filesReadOnly === "boolean") patch.filesReadOnly = parsed.filesReadOnly;
+    if (typeof parsed.visibleChats === "number") {
+      try {
+        patch.visibleChats = parseVisibleChats(parsed.visibleChats);
+      } catch {
+        patch.visibleChats = DEFAULT_SETTINGS.visibleChats;
+      }
+    }
     if (parsed.binaries && typeof parsed.binaries === "object") patch.binaries = parsed.binaries;
     return applySettings(DEFAULT_SETTINGS, patch);
   } catch (error) {

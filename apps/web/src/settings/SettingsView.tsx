@@ -22,7 +22,7 @@ export function SettingsView({
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
   onTheme: (theme: ThemePreference) => void;
-  onSaved: (theme: ThemePreference, filesReadOnly: boolean) => void;
+  onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number) => void;
   onSession: (session: Session) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -41,6 +41,7 @@ export function SettingsView({
         defaultModel,
         permission: next.permission || "ask",
         theme: normalizeTheme(next.theme),
+        visibleChats: normalizeVisibleChats(next.visibleChats),
       });
     }).catch((err) => setError(message(err)));
   }, [agents, options]);
@@ -54,8 +55,8 @@ export function SettingsView({
     try {
       const savedSettings = await saveSettings(settingsPayload(settings, agents));
       const nextTheme = normalizeTheme(savedSettings.theme);
-      setSettings({ ...savedSettings, theme: nextTheme });
-      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly));
+      setSettings({ ...savedSettings, theme: nextTheme, visibleChats: normalizeVisibleChats(savedSettings.visibleChats) });
+      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly), normalizeVisibleChats(savedSettings.visibleChats));
       setSaved("Saved");
     } catch (err) {
       setError(message(err));
@@ -146,6 +147,22 @@ export function SettingsView({
           );
         })}
       </div>
+      <label>
+        Chats shown per project
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={settings.visibleChats}
+          onChange={(event) => {
+            const visibleChats = Number(event.target.value);
+            if (!Number.isInteger(visibleChats) || visibleChats < 0 || visibleChats > 100) return;
+            setSettings({ ...settings, visibleChats });
+          }}
+        />
+      </label>
+      <p className="muted">Older chats stay collapsed. Use 0 to show every chat.</p>
       <h2>Defaults for new chats</h2>
       {piSetup && <PiSetupNotice onReady={onSession} />}
       {agents.length === 0 ? (
@@ -225,6 +242,11 @@ export function SettingsView({
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
   );
+}
+
+function normalizeVisibleChats(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 100) return 5;
+  return value;
 }
 
 function settingsPayload(settings: Settings, agents: AgentId[]): SettingsPatch {

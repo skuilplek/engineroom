@@ -1048,9 +1048,10 @@ test("offered modes and models are probed, then narrowed per person", async () =
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
 
     const hidden = (await (await fetch(`${base}/api/me`, { headers })).json()) as {
-      options: { cursor?: { models: unknown[] } };
+      options: { cursor?: { modes?: unknown[]; models: unknown[] } };
     };
     assert.deepEqual(hidden.options.cursor?.models ?? [], []);
+    assert.deepEqual(hidden.options.cursor?.modes ?? [], []);
     const early = await fetch(`${base}/api/chats`, {
       method: "POST",
       headers,
@@ -1064,6 +1065,11 @@ test("offered modes and models are probed, then narrowed per person", async () =
     assert.deepEqual(catalog.discovered.modes.map((mode) => mode.id), ["agent", "plan"]);
     assert.deepEqual(catalog.discovered.models.map((model) => model.id), ["fake"]);
     assert.deepEqual(catalog.offered, { modes: [], models: [] });
+    const beforeOffer = (await (await fetch(`${base}/api/me`, { headers })).json()) as {
+      options: { cursor?: { modes?: unknown[]; models?: unknown[] } };
+    };
+    assert.deepEqual(beforeOffer.options.cursor?.modes ?? [], []);
+    assert.deepEqual(beforeOffer.options.cursor?.models ?? [], []);
 
     const unknown = await fetch(`${base}/api/admin/agent-options`, {
       method: "PUT",

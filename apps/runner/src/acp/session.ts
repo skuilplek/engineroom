@@ -386,11 +386,20 @@ function readModels(value: unknown): AcpSession["models"] {
   const body = value as { currentModelId?: unknown; availableModels?: unknown };
   const available = Array.isArray(body.availableModels)
     ? body.availableModels
-        .filter((item) => item && typeof item === "object" && typeof (item as { modelId?: unknown }).modelId === "string")
+        .filter((item) => item && typeof item === "object")
         .map((item) => {
-          const model = item as { modelId: string; name?: string };
-          return { modelId: model.modelId, name: model.name || model.modelId };
+          const model = item as { modelId?: unknown; id?: unknown; name?: string };
+          const modelId = typeof model.modelId === "string" && model.modelId
+            ? model.modelId
+            : typeof model.id === "string"
+              ? model.id
+              : "";
+          return { modelId, name: model.name || modelId };
         })
+        .filter((model) => model.modelId)
     : [];
-  return { currentModelId: typeof body.currentModelId === "string" ? body.currentModelId : "", availableModels: available };
+  const currentModelId = typeof body.currentModelId === "string" && body.currentModelId
+    ? body.currentModelId
+    : available[0]?.modelId || "";
+  return { currentModelId, availableModels: available };
 }
