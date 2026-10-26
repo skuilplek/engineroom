@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
-import { createChat, getSettings } from "../api.ts";
+import { createChat, getSettings, type Session } from "../api.ts";
+import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message } from "../format.ts";
 import { IconArrow } from "../icons.tsx";
@@ -17,6 +18,9 @@ export function StartView({
   filesOpen,
   onToggleFiles,
   username,
+  piSetup = false,
+  piLoginHint = false,
+  onSession,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
@@ -27,6 +31,9 @@ export function StartView({
   filesOpen?: boolean;
   onToggleFiles?: () => void;
   username: string;
+  piSetup?: boolean;
+  piLoginHint?: boolean;
+  onSession?: (session: Session) => void;
 }) {
   const box = useRef<HTMLTextAreaElement>(null);
   const promptHeight = usePromptHeight(username);
@@ -116,6 +123,7 @@ export function StartView({
         />
         <div className="launch-bar">
           {agents.length === 0 && <p className="muted">No agents available</p>}
+          {piSetup && onSession && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
           {agents.length > 1 && (
             <label className="chip">
               <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>

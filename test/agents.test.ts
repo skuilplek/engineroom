@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
+import { effectivePiAuth, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
 
 function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
   return {
@@ -55,4 +58,37 @@ test("a resolved binary override keeps an agent that is not on PATH", () => {
     new Map([["/opt/pi", "/opt/pi"]]),
   );
   assert.deepEqual(agents, ["pi"]);
+});
+
+test("pi install, login, and model survive a later agent save", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "er-pi-"));
+  const file = path.join(dir, "agents.json");
+  try {
+    saveAgentFlags(file, {
+      cursor: true,
+      claude: false,
+      pi: true,
+      piInstall: "global",
+      piAuth: "shared",
+      piProvider: "openrouter",
+      piModel: "recursive/flint-v1.0:free",
+    });
+    const saved = loadPiConfig(file);
+    assert.deepEqual(saved, {
+      install: "global",
+      auth: "shared",
+      provider: "openrouter",
+      model: "recursive/flint-v1.0:free",
+    });
+    saveAgentFlags(file, { cursor: true, claude: false, pi: true });
+    assert.equal(loadPiConfig(file).model, "recursive/flint-v1.0:free");
+    assert.equal(effectivePiAuth(saved), "shared");
+    assert.equal(effectivePiAuth(saved, "user"), "user");
+    assert.equal(piSetupAllowed(saved, true, true, "user"), true);
+    assert.equal(piSetupAllowed(saved, true, true, "shared"), false);
+    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared"), true);
+    assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, piModel: "bad model" }));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

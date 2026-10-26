@@ -92,6 +92,10 @@ export function AdminView({
   const [fileEditor, setFileEditor] = useState(session.fileEditor ?? true);
   const [fileDownload, setFileDownload] = useState(session.fileDownloadOffered ?? false);
   const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
+  const [piInstall, setPiInstall] = useState<"user" | "global">("user");
+  const [piAuth, setPiAuth] = useState<"user" | "shared">("user");
+  const [piProvider, setPiProvider] = useState("");
+  const [piModel, setPiModel] = useState("");
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
@@ -154,6 +158,10 @@ export function AdminView({
       setFileEditor(body.fileEditor ?? true);
       setFileDownload(body.fileDownload ?? false);
       setFileUpload(body.fileUpload ?? false);
+      setPiInstall(body.piInstall === "global" ? "global" : "user");
+      setPiAuth(body.piAuth === "shared" ? "shared" : "user");
+      setPiProvider(body.piProvider ?? "");
+      setPiModel(body.piModel ?? "");
       const first = body.agents.find((agent) => agent.available);
       setAgentTab(first?.id ?? "+");
     }).catch((err) => setError(message(err)));
@@ -214,7 +222,12 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
-      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload);
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, {
+        piInstall,
+        piAuth,
+        piProvider: piProvider.trim(),
+        piModel: piModel.trim(),
+      });
       onAgents(
         savedAgents.agents,
         savedAgents.rawTerminal ?? rawTerminal,
@@ -520,7 +533,37 @@ export function AdminView({
                     <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
                   )}
                   {selectedAgent.id === "pi" ? (
-                    <p className="muted">Pi does not report modes or models.</p>
+                    <>
+                      <p className="muted">Pi does not report modes or models. These choices are saved with the agents.</p>
+                      <label>
+                        Install
+                        <select aria-label="Pi install" value={piInstall} onChange={(event) => setPiInstall(event.target.value as "user" | "global")}>
+                          <option value="user">Each person</option>
+                          <option value="global">Everyone</option>
+                        </select>
+                      </label>
+                      {piInstall === "global" && (
+                        <label>
+                          Login
+                          <select aria-label="Pi login" value={piAuth} onChange={(event) => setPiAuth(event.target.value as "user" | "shared")}>
+                            <option value="user">Each person</option>
+                            <option value="shared">Shared</option>
+                          </select>
+                        </label>
+                      )}
+                      {piInstall === "global" && (
+                        <p className="muted">Each person keeps ~/.pi/agent/auth.json. Shared uses one auth.json unless a person overrides it. After saving, run sudo /usr/local/lib/engineroom/agents/setup_pi.sh --global. Switching back to each person leaves that install and /etc/systemd/system/engineroom-runner@.service.d/pi.conf in place until you remove them.</p>
+                      )}
+                      <label>
+                        Provider
+                        <input aria-label="Pi provider" value={piProvider} onChange={(event) => setPiProvider(event.target.value)} placeholder="openrouter" />
+                      </label>
+                      <label>
+                        Model
+                        <input aria-label="Pi model" value={piModel} onChange={(event) => setPiModel(event.target.value)} placeholder="recursive/flint-v1.0:free" />
+                      </label>
+                      <p className="muted">Provider and model are written to Pi's settings.json when setup runs. Saving here stores them. Run setup again to apply a later change.</p>
+                    </>
                   ) : (
                     <AgentOptions
                       label={selectedAgent.label}
@@ -683,6 +726,8 @@ export function AdminView({
                   globalFileDownload={fileDownload}
                   globalFileUpload={fileUpload}
                   globalProjectCreate={session.projectCreate}
+                  piInstall={piInstall}
+                  piAuthDefault={piAuth}
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
@@ -722,6 +767,8 @@ function PersonPanel({
   globalFileDownload,
   globalFileUpload,
   globalProjectCreate,
+  piInstall,
+  piAuthDefault,
   agentOptions,
   agentNames,
   catalog,
@@ -741,6 +788,8 @@ function PersonPanel({
   globalFileDownload: boolean;
   globalFileUpload: boolean;
   globalProjectCreate: boolean;
+  piInstall: "user" | "global";
+  piAuthDefault: "user" | "shared";
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
@@ -959,6 +1008,26 @@ function PersonPanel({
           ))}
         </div>
         {globalAgents.length === 0 && <p className="muted">Turn on at least one agent above before assigning any.</p>}
+        {piInstall === "global" && policy.agents.includes("pi") && (
+          <label>
+            Pi login
+            <select
+              aria-label="Pi login for this person"
+              value={policy.piAuth ?? ""}
+              onChange={(event) => {
+                const value = event.target.value;
+                const next = { ...policy };
+                if (value === "user" || value === "shared") next.piAuth = value;
+                else delete next.piAuth;
+                setPolicy(next);
+              }}
+            >
+              <option value="">Site default ({piAuthDefault === "shared" ? "shared login" : "their own login"})</option>
+              <option value="user">Their own login</option>
+              <option value="shared">Shared login</option>
+            </select>
+          </label>
+        )}
         {allowed.map((agent) => (
           <label key={agent}>
             {agentLabel(agent, agentNames)} path

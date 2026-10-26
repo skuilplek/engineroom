@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { AgentId, AgentOptionChoice, Settings, SettingsPatch, ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
-import { getSettings, saveSettings } from "../api.ts";
+import { getSettings, saveSettings, type Session } from "../api.ts";
 import { message } from "../format.ts";
+import { PiSetupNotice } from "./PiSetup.tsx";
 import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
 export function SettingsView({
@@ -10,15 +11,21 @@ export function SettingsView({
   agentCatalog,
   options,
   fileEditorAllowed = true,
+  piSetup = false,
+  piLoginHint = false,
   onTheme,
   onSaved,
+  onSession,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   fileEditorAllowed?: boolean;
+  piSetup?: boolean;
+  piLoginHint?: boolean;
   onTheme: (theme: ThemePreference) => void;
   onSaved: (theme: ThemePreference, filesReadOnly: boolean) => void;
+  onSession: (session: Session) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
@@ -142,6 +149,7 @@ export function SettingsView({
         })}
       </div>
       <h2>Defaults for new chats</h2>
+      {piSetup && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
       {agents.length === 0 ? (
         <p className="muted">No agents available</p>
       ) : (

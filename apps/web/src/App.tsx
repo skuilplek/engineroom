@@ -341,8 +341,11 @@ function Shell({
             agentCatalog={session.agentCatalog}
             options={session.options}
             fileEditorAllowed={session.fileEditor}
+            piSetup={session.piSetup}
+            piLoginHint={session.piLoginHint}
             onTheme={applyTheme}
             onSaved={(theme, filesReadOnly) => onSession({ ...session, theme, filesReadOnly })}
+            onSession={onSession}
           />
         )}
         {view === "admin" && session.admin && (
@@ -381,6 +384,9 @@ function Shell({
             filesOpen={filesEnabled ? filesOpen : undefined}
             onToggleFiles={filesEnabled ? toggleFiles : undefined}
             username={session.username}
+            piSetup={session.piSetup}
+            piLoginHint={session.piLoginHint}
+            onSession={onSession}
             onStarted={(chat, prompt) => {
               choseRef.current = true;
               remember(chat);

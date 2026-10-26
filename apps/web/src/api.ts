@@ -43,6 +43,8 @@ export interface Session {
   fileVisibility?: FileVisibility;
   projectCreate: boolean;
   agentCatalog?: { id: string; label: string }[];
+  piSetup?: boolean;
+  piLoginHint?: boolean;
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
 }
 
@@ -64,6 +66,10 @@ export interface AgentInventory {
   fileEditor?: boolean;
   fileDownload?: boolean;
   fileUpload?: boolean;
+  piInstall?: "user" | "global";
+  piAuth?: "user" | "shared";
+  piProvider?: string;
+  piModel?: string;
 }
 
 export interface Account {
@@ -400,6 +406,7 @@ export function saveAgents(
   fileEditor?: boolean,
   fileDownload?: boolean,
   fileUpload?: boolean,
+  pi?: { piInstall: "user" | "global"; piAuth: "user" | "shared"; piProvider: string; piModel: string },
 ) {
   return api<{
     agents: AgentId[];
@@ -410,10 +417,18 @@ export function saveAgents(
     fileDownload?: boolean;
     fileUpload?: boolean;
     agentCatalog?: { id: string; label: string }[];
+    piInstall?: "user" | "global";
+    piAuth?: "user" | "shared";
+    piProvider?: string;
+    piModel?: string;
   }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...pi }),
   });
+}
+
+export function setupPi() {
+  return api<Session>("/api/pi/setup", { method: "POST" });
 }
 
 export function cancelChat(id: string) {

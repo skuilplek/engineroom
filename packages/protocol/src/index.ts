@@ -230,6 +230,8 @@ export interface AgentOptionList {
   models: string[];
 }
 
+export type PiAuth = "user" | "shared";
+
 export interface UserPolicy {
   agents: AgentId[];
   binaries: Partial<Record<AgentId, string>>;
@@ -239,6 +241,8 @@ export interface UserPolicy {
   fileDownload: boolean;
   fileUpload: boolean;
   projectCreate: boolean;
+  /** Omitted means this person uses the site Pi login choice. */
+  piAuth?: PiAuth;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -356,6 +360,8 @@ export type RunnerRequest =
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
   | { id: string; type: "probe_agent"; agent: AgentId }
   | { id: string; type: "resolve_commands"; names: string[]; refresh?: boolean }
+  | { id: string; type: "put_pi_site"; install: "user" | "global"; auth: PiAuth }
+  | { id: string; type: "setup_pi"; provider: string; model: string; linkShared: boolean }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
@@ -645,6 +651,18 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         type: "resolve_commands",
         names: parseCommandNames(body.names),
         refresh: body.refresh === true,
+      };
+    case "put_pi_site":
+      if (body.install !== "user" && body.install !== "global") throw new Error("invalid pi install");
+      if (body.auth !== "user" && body.auth !== "shared") throw new Error("invalid pi auth");
+      return { id: body.id, type: "put_pi_site", install: body.install, auth: body.auth };
+    case "setup_pi":
+      return {
+        id: body.id,
+        type: "setup_pi",
+        provider: parsePiValue(body.provider, "pi provider"),
+        model: parsePiValue(body.model, "pi model"),
+        linkShared: body.linkShared === true,
       };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
@@ -1036,6 +1054,7 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   const fileUpload = body.fileUpload == null ? true : body.fileUpload;
   const projectCreate = body.projectCreate == null ? true : body.projectCreate;
   const options = parsePolicyOptions(body.options);
+  const piAuth = parsePiAuth(body.piAuth);
   return {
     agents,
     binaries: parsePolicyBinaries(body.binaries),
@@ -1045,8 +1064,23 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     fileDownload,
     fileUpload,
     projectCreate,
+    ...(piAuth ? { piAuth } : {}),
     ...(options ? { options } : {}),
   };
+}
+
+function parsePiAuth(value: unknown): PiAuth | undefined {
+  if (value == null || value === "") return undefined;
+  if (value === "user" || value === "shared") return value;
+  throw new Error("invalid pi auth");
+}
+
+export function parsePiValue(value: unknown, label: string): string {
+  if (value == null || value === "") return "";
+  if (typeof value !== "string" || value.length > 200 || !/^[A-Za-z0-9._:/-]+$/.test(value)) {
+    throw new Error(`invalid ${label}`);
+  }
+  return value;
 }
 
 export function parseOptionIds(value: unknown, label: string): string[] {

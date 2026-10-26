@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadRawTerminal, namesFor, offeredAgentIds, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, effectivePiAuth, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -66,6 +66,10 @@ interface RunnerCall {
   visibility?: FileVisibility;
   names?: string[];
   refresh?: boolean;
+  install?: "user" | "global";
+  auth?: "user" | "shared";
+  provider?: string;
+  linkShared?: boolean;
   name?: string;
   url?: string;
 }
@@ -173,6 +177,11 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await profile(user));
       return;
     }
+    if (url.pathname === "/api/pi/setup" && req.method === "POST") {
+      await setupPi(user);
+      sendJson(res, 200, await profile(user));
+      return;
+    }
     if (url.pathname.startsWith("/api/admin")) {
       await admin(req, res, url, user);
       return;
@@ -227,6 +236,8 @@ export function createHub(options: HubOptions) {
       theme: isTheme(settings.theme) ? settings.theme : "dark",
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
+      piSetup: access.piSetup,
+      piLoginHint: access.piLoginHint,
       fileVisibility: loadFileVisibility(reposFile),
       projectCreate: access.projectCreate,
       agentCatalog: namesFor(access.agents, agentsFile),
@@ -241,9 +252,13 @@ export function createHub(options: HubOptions) {
     fileDownload: boolean;
     fileUpload: boolean;
     projectCreate: boolean;
+    piSetup: boolean;
+    piLoginHint: boolean;
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
+    const pi = loadPiConfig(agentsFile);
+    await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth }).catch(() => undefined);
     const listed = await visibleAgents(user, refresh);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
@@ -260,6 +275,8 @@ export function createHub(options: HubOptions) {
       for (const [name, found] of resolved) resolvedOverrides.set(name, found);
     }
     const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides);
+    const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth);
+    const piLoginHint = pi.install === "global" && effectivePiAuth(pi, policy.piAuth) === "user" && piSetup;
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
     for (const agent of agents) {
       const config = stored[agent];
@@ -274,8 +291,26 @@ export function createHub(options: HubOptions) {
       fileDownload: fileManager && loadFileDownload(agentsFile) && policy.fileDownload,
       fileUpload: fileManager && loadFileUpload(agentsFile) && policy.fileUpload,
       projectCreate: loadProjectCreate(reposFile) && policy.projectCreate,
+      piSetup,
+      piLoginHint,
       options: optionMap,
     };
+  }
+
+  async function setupPi(user: LinuxUser) {
+    const pi = loadPiConfig(agentsFile);
+    const flags = loadAgentFlags(agentsFile);
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    if (!piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth)) {
+      throw new Error("invalid pi setup");
+    }
+    await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth });
+    await call(user, {
+      type: "setup_pi",
+      provider: pi.provider,
+      model: pi.model,
+      linkShared: pi.install === "global",
+    });
   }
 
   async function assertCreateMode(user: LinuxUser, agent: AgentId, mode: string) {
@@ -404,6 +439,7 @@ export function createHub(options: HubOptions) {
         fileDownload: loadFileDownload(agentsFile),
         fileUpload: loadFileUpload(agentsFile),
         agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
+        ...piPayload(agentsFile),
       });
       return;
     }
@@ -959,6 +995,7 @@ export function createHub(options: HubOptions) {
       fileEditor: loadFileEditor(agentsFile),
       fileDownload: loadFileDownload(agentsFile),
       fileUpload: loadFileUpload(agentsFile),
+      ...piPayload(agentsFile),
     };
   }
 
@@ -1185,6 +1222,11 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
   if (Buffer.isBuffer(data)) return new Uint8Array(data);
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   return new Uint8Array(Buffer.concat(data));
+}
+
+function piPayload(file: string) {
+  const pi = loadPiConfig(file);
+  return { piInstall: pi.install, piAuth: pi.auth, piProvider: pi.provider, piModel: pi.model };
 }
 
 function statusFor(message: string): number {

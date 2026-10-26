@@ -27,6 +27,8 @@ export async function callRunner(
   const socket = await openRunnerSocket(link, username, uid);
   const timeoutMs = request.type === "send"
     ? 30 * 60 * 1000
+    : request.type === "setup_pi"
+      ? 5 * 60 * 1000
     : request.type === "sync_repositories"
       ? 150_000
       : request.type === "download_repo_file" || request.type === "upload_repo_file"

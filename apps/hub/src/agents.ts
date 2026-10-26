@@ -9,8 +9,10 @@ import {
   isBuiltinAgent,
   parseAgentCommand,
   parseAgentLabel,
+  parsePiValue,
   type AgentDefinition,
   type AgentId,
+  type PiAuth,
 } from "@engineroom/protocol";
 import { findCommand, SYSTEM_COMMAND_DIRS } from "./overview.ts";
 
@@ -200,6 +202,7 @@ export function saveAgentFlags(
     if (typeof record[agent.id] === "boolean") next[agent.id] = Boolean(parsed[agent.id]);
   }
   if (!Object.values(next).some(Boolean)) throw new Error("at least one agent must stay on");
+  const pi = piFieldsFromBody(record, loadPiConfig(file));
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
@@ -218,6 +221,10 @@ export function saveAgentFlags(
     fileEditor: editor,
     fileDownload: download,
     fileUpload: upload,
+    piInstall: pi.install,
+    piAuth: pi.auth,
+    piProvider: pi.provider,
+    piModel: pi.model,
     appName: loadAppName(file),
     customAgents: custom.map((agent) => ({ ...agent, enabled: Boolean(next[agent.id]) })),
   });
@@ -317,6 +324,61 @@ export function usableAgentIds(
     const override = overrides[agent];
     return Boolean(override && resolvedOverrides.has(override));
   });
+}
+
+export interface PiSiteConfig {
+  install: "user" | "global";
+  auth: PiAuth;
+  provider: string;
+  model: string;
+}
+
+export function loadPiConfig(file: string): PiSiteConfig {
+  const fallback: PiSiteConfig = { install: "user", auth: "user", provider: "", model: "" };
+  if (!file) return fallback;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    return {
+      install: parsed.piInstall === "global" ? "global" : "user",
+      auth: parsed.piAuth === "shared" ? "shared" : "user",
+      provider: typeof parsed.piProvider === "string" ? quietPiValue(parsed.piProvider) : "",
+      model: typeof parsed.piModel === "string" ? quietPiValue(parsed.piModel) : "",
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function piFieldsFromBody(body: unknown, current: PiSiteConfig): PiSiteConfig {
+  if (!body || typeof body !== "object") return current;
+  const record = body as Record<string, unknown>;
+  const next = { ...current };
+  if (record.piInstall != null) {
+    if (record.piInstall !== "user" && record.piInstall !== "global") throw new Error("invalid pi install");
+    next.install = record.piInstall;
+  }
+  if (record.piAuth != null) {
+    if (record.piAuth !== "user" && record.piAuth !== "shared") throw new Error("invalid pi auth");
+    next.auth = record.piAuth;
+  }
+  if (record.piProvider != null) next.provider = parsePiValue(record.piProvider, "pi provider");
+  if (record.piModel != null) next.model = parsePiValue(record.piModel, "pi model");
+  return next;
+}
+
+export function effectivePiAuth(site: PiSiteConfig, personal?: string): PiAuth {
+  if (site.install !== "global") return "user";
+  if (personal === "user" || personal === "shared") return personal;
+  return site.auth;
+}
+
+export function piSetupAllowed(site: PiSiteConfig, enabled: boolean, allowed: boolean, personal?: string): boolean {
+  if (!enabled || !allowed) return false;
+  return effectivePiAuth(site, personal) === "user";
+}
+
+function quietPiValue(value: string): string {
+  return /^[A-Za-z0-9._:/-]*$/.test(value) && value.length <= 200 ? value : "";
 }
 
 export function namesFor(ids: AgentId[], file: string): { id: string; label: string }[] {

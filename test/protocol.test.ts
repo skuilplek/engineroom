@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -189,6 +189,12 @@ test("child env takes ~/.env values except identity and loader variables", async
     assert.equal(env.LISTEN_FDS, undefined);
     assert.equal(env.ANTHROPIC_API_KEY, "secret");
     assert.equal(env.CUSTOM, "1");
+    const dir = path.join(home, ".engineroom");
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "pi-site.json"), JSON.stringify({ install: "global", auth: "shared" }));
+    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, "/usr/local/share/pi/agent");
+    await writeFile(path.join(dir, "policy.json"), JSON.stringify({ piAuth: "user" }));
+    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, undefined);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -197,7 +203,12 @@ test("child env takes ~/.env values except identity and loader variables", async
 test("policy options stay optional and narrow the offered catalog", () => {
   const inherited = parseUserPolicy({ agents: ["cursor"], rawTerminal: true });
   assert.equal(inherited.options, undefined);
+  assert.equal(inherited.piAuth, undefined);
   assert.equal(inherited.fileManager, true);
+  const ownLogin = parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "user" });
+  assert.equal(ownLogin.piAuth, "user");
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "" }).piAuth, undefined);
+  assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "both" }));
   const narrowed = parseUserPolicy({
     agents: ["cursor"],
     rawTerminal: false,
@@ -232,6 +243,11 @@ test("policy options stay optional and narrow the offered catalog", () => {
   const resolved = parseRunnerRequest({ id: "4", type: "resolve_commands", names: ["agent", "agent", "/usr/local/bin/codex"] });
   if (resolved.type === "resolve_commands") assert.deepEqual(resolved.names, ["agent", "/usr/local/bin/codex"]);
   assert.throws(() => parseRunnerRequest({ id: "5", type: "resolve_commands", names: [] }));
+  const site = parseRunnerRequest({ id: "6", type: "put_pi_site", install: "global", auth: "shared" });
+  if (site.type === "put_pi_site") assert.equal(site.auth, "shared");
+  const setup = parseRunnerRequest({ id: "7", type: "setup_pi", provider: "openrouter", model: "recursive/flint-v1.0:free", linkShared: true });
+  if (setup.type === "setup_pi") assert.equal(setup.model, "recursive/flint-v1.0:free");
+  assert.throws(() => parseRunnerRequest({ id: "8", type: "setup_pi", provider: "bad provider", model: "ok" }));
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

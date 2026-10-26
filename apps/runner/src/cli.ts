@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
@@ -56,7 +56,32 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
   delete env.LISTEN_FDS;
   delete env.LISTEN_PID;
   delete env.LISTEN_FDNAMES;
+  applyPiAgentDir(env, home);
   return env;
+}
+
+const SHARED_PI_DIR = "/usr/local/share/pi/agent";
+
+function applyPiAgentDir(env: NodeJS.ProcessEnv, home: string): void {
+  const site = readJson(path.join(home, ".engineroom", "pi-site.json"));
+  if (!site) return;
+  const install = site.install === "global" ? "global" : site.install === "user" ? "user" : "";
+  if (!install) return;
+  let auth = site.auth === "shared" ? "shared" : "user";
+  const policy = readJson(path.join(home, ".engineroom", "policy.json"));
+  if (policy?.piAuth === "user" || policy?.piAuth === "shared") auth = policy.piAuth;
+  if (install === "global" && auth === "shared") env.PI_CODING_AGENT_DIR = SHARED_PI_DIR;
+  else delete env.PI_CODING_AGENT_DIR;
+}
+
+function readJson(file: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 export function rememberedLoginDirs(home: string): string[] {

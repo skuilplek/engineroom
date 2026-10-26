@@ -1,5 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, chmod, unlink } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rename, rm, chmod, unlink, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -316,6 +317,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return probeAgent(request.agent);
       case "resolve_commands":
         return resolveCommands(request.names, request.refresh === true);
+      case "put_pi_site":
+        return putPiSite(request.install, request.auth);
+      case "setup_pi":
+        return runPiSetup(request.provider, request.model, request.linkShared);
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -383,6 +388,42 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   }
 
   let commandPathAt = 0;
+
+  async function putPiSite(install: "user" | "global", auth: "user" | "shared") {
+    const root = path.join(home, ".engineroom");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const file = path.join(root, "pi-site.json");
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile(tmp, `${JSON.stringify({ install, auth })}\n`, { mode: 0o600 });
+    await rename(tmp, file);
+    return { ok: true };
+  }
+
+  async function runPiSetup(provider: string, model: string, linkShared: boolean) {
+    const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../agents/setup_pi.sh");
+    const args: string[] = [];
+    if (linkShared) args.push("--link-shared");
+    if (provider && model) args.push("--provider", provider, "--model", model);
+    const stderr = await new Promise<string>((resolve, reject) => {
+      let output = "";
+      const child = spawn(script, args, {
+        cwd: home,
+        env: childEnv(process.env, home),
+        timeout: 5 * 60 * 1000,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        output = `${output}${chunk}`.slice(-4000);
+      });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code === 0) resolve("");
+        else reject(new Error(output.trim().split("\n").slice(-8).join("\n") || "pi setup failed"));
+      });
+    });
+    return { ok: true, stderr };
+  }
 
   async function resolveCommands(names: string[], refresh: boolean) {
     // Login asks for a fresh read. Later checks in the same moment reuse it.
