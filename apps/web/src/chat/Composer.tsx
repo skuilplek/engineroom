@@ -177,18 +177,20 @@ export function Composer({
           }}
         />
         <div className="composer-controls">
-          {children}
-          {modes.length > 0 && (
-            <select aria-label="Mode" value={mode} onChange={(event) => onMode?.(event.target.value)}>
-              {modes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          )}
-          {models.length > 0 && (
-            <select aria-label="Model" value={model} onChange={(event) => onModel?.(event.target.value)}>
-              {model && !models.some((item) => item.id === model) && <option value={model}>{model}</option>}
-              {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          )}
+          <div className="composer-choices">
+            {children}
+            {modes.length > 0 && (
+              <select aria-label="Mode" value={mode} onChange={(event) => onMode?.(event.target.value)}>
+                {modes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            )}
+            {models.length > 0 && (
+              <select aria-label="Model" value={model} onChange={(event) => onModel?.(event.target.value)}>
+                {model && !models.some((item) => item.id === model) && <option value={model}>{model}</option>}
+                {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            )}
+          </div>
           <button className="send" type="submit" disabled={disabled} aria-label="Send">
             <IconArrow />
           </button>
