@@ -58,7 +58,10 @@ npm run build:web
 install -d -m 0755 /usr/local/lib /usr/local/share/engineroom
 rm -rf /usr/local/lib/engineroom
 mkdir -p /usr/local/lib/engineroom
-tar -C "$root" --exclude .git --exclude apps/web/dist -cf - . | tar -C /usr/local/lib/engineroom -xf -
+tar -C "$root" --exclude .git --exclude .engineroom --exclude apps/web/dist -cf - . | tar -C /usr/local/lib/engineroom -xf -
+# A checkout created with a private umask leaves source mode 600. Runners
+# execute this tree as ordinary users and exit if they cannot read it.
+chmod -R a+rX /usr/local/lib/engineroom
 rm -rf /usr/local/share/engineroom/web
 cp -a apps/web/dist /usr/local/share/engineroom/web
 chown -R engineroom:engineroom /var/lib/engineroom

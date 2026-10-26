@@ -92,6 +92,15 @@ mapfile -t runners < <(systemctl list-units --type=service --state=active --no-l
 if [[ ${#runners[@]} -gt 0 ]]; then
   systemctl restart "${runners[@]}"
 fi
+mapfile -t failed_sockets < <(systemctl list-units --type=socket --state=failed --no-legend 'engineroom-runner@*' | awk '{print $1}')
+if [[ ${#failed_sockets[@]} -gt 0 ]]; then
+  failed_services=()
+  for socket in "${failed_sockets[@]}"; do
+    failed_services+=("${socket%.socket}.service")
+  done
+  systemctl reset-failed "${failed_sockets[@]}" "${failed_services[@]}"
+  systemctl start "${failed_sockets[@]}"
+fi
 
 echo "Waiting for the hub..."
 for _ in $(seq 1 20); do

@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 export interface RunnerLink {
   socketDir: string;
   ctlPath?: string;
+  startUser?: (username: string) => Promise<void>;
 }
 
 export async function callRunner(
@@ -188,13 +189,28 @@ export async function streamRunnerFile(
 export async function openRunnerSocket(link: RunnerLink, username: string, uid: number): Promise<Socket> {
   const sock = socketPathForUser(link.socketDir, username);
   await ensureSocket(link, sock, username);
+  try {
+    return await connectChecked(sock, uid);
+  } catch (error) {
+    // A crashed runner leaves the socket file in place. systemd then answers
+    // connect with ECONNREFUSED until the unit is started again.
+    if (!connectionRefused(error) || !canStart(link)) throw error;
+    await ensureSocket(link, sock, username, true);
+    return await connectChecked(sock, uid);
+  }
+}
+
+async function connectChecked(sock: string, uid: number): Promise<Socket> {
   const info = await stat(sock);
   const socket = await new Promise<Socket>((resolve, reject) => {
     const client = connect(sock, () => {
       client.setNoDelay(true);
       resolve(client);
     });
-    client.once("error", reject);
+    client.once("error", (error) => {
+      client.destroy();
+      reject(error);
+    });
   });
   try {
     const peer = peerCredentials(socket);
@@ -208,21 +224,37 @@ export async function openRunnerSocket(link: RunnerLink, username: string, uid: 
   return socket;
 }
 
+function connectionRefused(error: unknown): boolean {
+  return !!error && typeof error === "object" && (error as { code?: unknown }).code === "ECONNREFUSED";
+}
+
+function canStart(link: RunnerLink): boolean {
+  return Boolean(link.startUser || link.ctlPath);
+}
+
 export function socketIdentityOk(ownerUid: number, peerUid: number, expectedUid: number): boolean {
   if (ownerUid !== expectedUid) return false;
   // uid 0 is systemd while it still owns a socket-activated listener.
   return peerUid === expectedUid || peerUid === 0;
 }
 
-async function ensureSocket(link: RunnerLink, sock: string, username: string) {
-  if (await exists(sock)) return;
-  if (!link.ctlPath) throw new Error("runner is not running");
-  await execFileAsync("sudo", ["-n", link.ctlPath, "start", username], { timeout: 20_000 });
+async function ensureSocket(link: RunnerLink, sock: string, username: string, force = false) {
+  if (!force && await exists(sock)) return;
+  await startUserRunner(link, username);
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await exists(sock)) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error("runner socket did not appear");
+}
+
+async function startUserRunner(link: RunnerLink, username: string) {
+  if (link.startUser) {
+    await link.startUser(username);
+    return;
+  }
+  if (!link.ctlPath) throw new Error("runner is not running");
+  await execFileAsync("sudo", ["-n", link.ctlPath, "start", username], { timeout: 20_000 });
 }
 
 async function exists(file: string): Promise<boolean> {
