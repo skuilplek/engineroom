@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { ServerResponse } from "node:http";
 import { stat } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { promisify } from "node:util";
@@ -76,6 +77,110 @@ export async function callRunner(
     });
     socket.on("error", (error) => fail(error));
     socket.on("end", () => fail(new Error("runner closed the connection")));
+    socket.write(`${JSON.stringify(request)}\n`);
+  });
+}
+
+export async function streamRunnerFile(
+  link: RunnerLink,
+  username: string,
+  uid: number,
+  request: RunnerRequest,
+  begin: (meta: { filename: string; size: number }) => ServerResponse,
+): Promise<void> {
+  const socket = await openRunnerSocket(link, username, uid);
+  const timeoutMs = 10 * 60 * 1000;
+  await new Promise<void>((resolve, reject) => {
+    let buf = Buffer.alloc(0);
+    let header: { filename: string; size: number } | undefined;
+    let remaining = 0;
+    let settled = false;
+    let output: ServerResponse | undefined;
+    const timer = setTimeout(() => fail(new Error("runner timed out")), timeoutMs);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (output && !output.writableEnded) output.destroy();
+      reject(error);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.end();
+      output?.end();
+      resolve();
+    };
+    const take = (chunk: Buffer) => {
+      if (!output) return;
+      const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+      remaining -= slice.length;
+      if (slice.length > 0 && !output.write(slice)) socket.pause();
+      if (chunk.length > slice.length) {
+        fail(new Error("runner sent too much"));
+        return;
+      }
+      if (remaining === 0) finish();
+    };
+    socket.on("data", (chunk: Buffer) => {
+      if (header) {
+        take(chunk);
+        return;
+      }
+      buf = Buffer.concat([buf, chunk]);
+      const index = buf.indexOf(0x0a);
+      if (index < 0) {
+        if (buf.length > 1024 * 1024) fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      let message: RunnerResponse;
+      try {
+        message = JSON.parse(buf.subarray(0, index).toString("utf8")) as RunnerResponse;
+      } catch {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      if (message.id !== request.id) return;
+      if (message.type === "error") {
+        fail(new Error(message.error || "runner error"));
+        return;
+      }
+      if (message.type !== "ok" || !message.result || typeof message.result !== "object") {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      const result = message.result as { filename?: unknown; size?: unknown };
+      if (typeof result.filename !== "string" || !Number.isInteger(result.size) || Number(result.size) < 0) {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      header = { filename: result.filename, size: Number(result.size) };
+      remaining = header.size;
+      try {
+        output = begin(header);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error("runner error"));
+        return;
+      }
+      output.on("drain", () => socket.resume());
+      output.on("error", (error) => fail(error));
+      const rest = buf.subarray(index + 1);
+      buf = Buffer.alloc(0);
+      if (remaining === 0) {
+        finish();
+        return;
+      }
+      if (rest.length > 0) take(rest);
+    });
+    socket.on("error", (error) => fail(error));
+    socket.on("end", () => {
+      if (!settled) fail(new Error("runner closed the connection"));
+    });
+    socket.on("close", () => {
+      if (!settled) fail(new Error("runner closed the connection"));
+    });
     socket.write(`${JSON.stringify(request)}\n`);
   });
 }

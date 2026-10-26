@@ -4,6 +4,7 @@ import { createRepository, listChats, listRepositories, login, logout, me, type 
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
+import { clearProjectDownload, saveProjectDownload, useProjectDownload } from "./chat/projectDownload.ts";
 import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { message, strip } from "./format.ts";
@@ -120,6 +121,7 @@ function Shell({
   const consumedRef = useRef<string | null>(null);
   const restoredRef = useRef(false);
   const choseRef = useRef(false);
+  const deliveredDownload = useRef<string | null>(null);
   const usernameRef = useRef(session.username);
   const homeRef = useRef(session.home);
   const reposRef = useRef<RepositoryEntry[]>([]);
@@ -231,6 +233,17 @@ function Shell({
   }, [repos, session.home, target]);
 
   const selectedRepo = repos.find((repo) => strip(repo.path) === strip(target));
+  const downloadJob = useProjectDownload();
+  const onDownloadPage = Boolean(
+    downloadJob && view === "start" && selectedRepo && strip(downloadJob.workspace) === strip(selectedRepo.path),
+  );
+  useEffect(() => {
+    if (!downloadJob || downloadJob.phase !== "ready" || !onDownloadPage || !downloadJob.id) return;
+    if (deliveredDownload.current === downloadJob.id) return;
+    deliveredDownload.current = downloadJob.id;
+    saveProjectDownload(downloadJob.id, downloadJob.filename);
+    clearProjectDownload();
+  }, [downloadJob, onDownloadPage]);
   const filesEnabled = session.fileManager;
   const showFileManager = filesEnabled && (view === "chat" || view === "start") && Boolean(selectedRepo);
 
@@ -330,6 +343,7 @@ function Shell({
         }}
         onLogout={() => {
           stopAgentSocket();
+          clearProjectDownload();
           logout().finally(onLogout);
         }}
         onCreateProject={createProject}
@@ -390,6 +404,7 @@ function Shell({
             piSetup={session.piSetup}
             onSession={onSession}
             projectCreate={Boolean(session.projectCreate)}
+            projectDownloads={Boolean(session.projectDownloads)}
             onReposChanged={refreshRepos}
             onBranchChanged={bumpFilesRefresh}
             onStarted={(chat, prompt) => {
@@ -448,6 +463,30 @@ function Shell({
           onToggleExpanded={toggleFilesExpanded}
           onClose={toggleFiles}
         />
+      )}
+      {downloadJob && downloadJob.phase !== "creating" && !onDownloadPage && (
+        <div className="download-popup" role="dialog" aria-labelledby="download-popup-title">
+          {downloadJob.phase === "ready" ? (
+            <>
+              <p id="download-popup-title">The project download is ready.</p>
+              <div className="actions">
+                <button className="ghost" type="button" onClick={clearProjectDownload}>Dismiss</button>
+                <button className="primary" type="button" onClick={() => {
+                  saveProjectDownload(downloadJob.id, downloadJob.filename);
+                  clearProjectDownload();
+                }}>Download</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p id="download-popup-title">The project zip could not be created.</p>
+              {downloadJob.error && <p className="muted">{downloadJob.error}</p>}
+              <div className="actions">
+                <button className="ghost" type="button" onClick={clearProjectDownload}>Dismiss</button>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

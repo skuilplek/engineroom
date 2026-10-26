@@ -107,6 +107,7 @@ export function AdminView({
   const [repoUrl, setRepoUrl] = useState("");
   const [repoFolder, setRepoFolder] = useState("Sites");
   const [projectCreate, setProjectCreate] = useState(session.projectCreate);
+  const [projectDownloads, setProjectDownloads] = useState(Boolean(session.projectDownloads));
   const [fileVisibility, setFileVisibility] = useState<FileVisibility>(() => ({
     ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY),
   }));
@@ -147,6 +148,7 @@ export function AdminView({
       setRepoFolder(body.directory);
       if (body.visibility) setFileVisibility(body.visibility);
       if (typeof body.projectCreate === "boolean") setProjectCreate(body.projectCreate);
+      if (typeof body.projectDownloads === "boolean") setProjectDownloads(body.projectDownloads);
     }).catch((err) => setError(message(err)));
     listAdminAgents().then((body) => {
       setInventory(body.agents);
@@ -330,10 +332,11 @@ export function AdminView({
     setError("");
     setSaved("");
     try {
-      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility, projectCreate);
+      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility, projectCreate, projectDownloads);
       setRepoFolder(savedFolder.directory);
       if (savedFolder.visibility) setFileVisibility(savedFolder.visibility);
       setProjectCreate(savedFolder.projectCreate);
+      setProjectDownloads(savedFolder.projectDownloads);
       onAccess();
       setSaved("Repository folder saved");
     } catch (err) {
@@ -626,6 +629,11 @@ export function AdminView({
               Allow users to create projects
             </label>
             <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off.</p>
+            <label className="check">
+              <input type="checkbox" checked={projectDownloads} onChange={() => setProjectDownloads((value) => !value)} />
+              Allow project downloads
+            </label>
+            <p className="muted">When this is on, a person can download a project as a zip from the new chat page.</p>
             <h3>File manager visibility</h3>
             <p className="muted">Choose which repository files are visible in the right-hand file manager. Hidden dotfiles, gitignored files, and .git/ are hidden by default.</p>
             <div className="admin-checks">

@@ -43,6 +43,7 @@ export interface Session {
   theme: ThemePreference;
   fileVisibility?: FileVisibility;
   projectCreate: boolean;
+  projectDownloads: boolean;
   agentCatalog?: { id: string; label: string }[];
   piSetup?: boolean;
   piLoginHint?: boolean;
@@ -217,6 +218,29 @@ export function deleteRepoEntry(workspace: string, filePath: string) {
   );
 }
 
+export interface ProjectArchive {
+  id: string;
+  filename: string;
+  status: "creating" | "ready" | "failed";
+  error?: string;
+  size?: number;
+}
+
+export function startProjectArchive(workspace: string) {
+  return api<ProjectArchive>("/api/repositories/archive", {
+    method: "POST",
+    body: JSON.stringify({ workspace }),
+  });
+}
+
+export function projectArchiveStatus(id: string) {
+  return api<ProjectArchive>(`/api/repositories/archive?id=${encodeURIComponent(id)}`);
+}
+
+export function projectArchiveDownloadUrl(id: string) {
+  return `/api/repositories/archive/download?id=${encodeURIComponent(id)}`;
+}
+
 export async function downloadRepoFile(workspace: string, filePath: string): Promise<{ blob: Blob; name: string }> {
   const response = await fetch(
     `/api/repositories/file/download?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
@@ -274,16 +298,22 @@ export function listCatalog() {
 }
 
 export function getRepoDirectory() {
-  return api<{ directory: string; visibility: FileVisibility; projectCreate?: boolean }>("/api/admin/repository-folder");
+  return api<{ directory: string; visibility: FileVisibility; projectCreate?: boolean; projectDownloads?: boolean }>("/api/admin/repository-folder");
 }
 
-export function saveRepoDirectory(directory: string, visibility?: FileVisibility, projectCreate?: boolean) {
-  return api<{ directory: string; visibility: FileVisibility; projectCreate: boolean }>("/api/admin/repository-folder", {
+export function saveRepoDirectory(
+  directory: string,
+  visibility?: FileVisibility,
+  projectCreate?: boolean,
+  projectDownloads?: boolean,
+) {
+  return api<{ directory: string; visibility: FileVisibility; projectCreate: boolean; projectDownloads: boolean }>("/api/admin/repository-folder", {
     method: "PUT",
     body: JSON.stringify({
       directory,
       ...(visibility ? { visibility } : {}),
       ...(typeof projectCreate === "boolean" ? { projectCreate } : {}),
+      ...(typeof projectDownloads === "boolean" ? { projectDownloads } : {}),
     }),
   });
 }

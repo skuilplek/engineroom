@@ -570,3 +570,21 @@ test("branch names and queue indexes stay narrow", () => {
   assert.equal(switched.type, "git_switch");
 });
 
+test("project archive requests keep a workspace and an archive id", () => {
+  const started = parseRunnerRequest({
+    id: "a1",
+    type: "start_project_archive",
+    workspace: "  /home/alice/Sites/proj  ",
+  });
+  assert.equal(started.type, "start_project_archive");
+  if (started.type === "start_project_archive") assert.equal(started.workspace, "/home/alice/Sites/proj");
+  const archiveId = "11111111-1111-4111-8111-111111111111";
+  const status = parseRunnerRequest({ id: "a2", type: "project_archive_status", archiveId });
+  assert.equal(status.type, "project_archive_status");
+  if (status.type === "project_archive_status") assert.equal(status.archiveId, archiveId);
+  const read = parseRunnerRequest({ id: "a3", type: "read_project_archive", archiveId });
+  assert.equal(read.type, "read_project_archive");
+  assert.throws(() => parseRunnerRequest({ id: "a4", type: "read_project_archive", archiveId: "../tmp/app.zip" }));
+  assert.throws(() => parseRunnerRequest({ id: "a5", type: "start_project_archive", workspace: "   " }));
+});
+

@@ -8,12 +8,12 @@ import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accoun
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
-import { loadFileVisibility, loadProjectCreate, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
+import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { readUpload } from "./multipart.ts";
-import { callRunner, type RunnerLink } from "./runner-client.ts";
+import { callRunner, streamRunnerFile, type RunnerLink } from "./runner-client.ts";
 import { clearCookie, cookieValue, readSession, sessionCookie, signSession } from "./session.ts";
 
 export interface HubOptions {
@@ -73,6 +73,7 @@ interface RunnerCall {
   name?: string;
   url?: string;
   branch?: string;
+  archiveId?: string;
 }
 
 export function createHub(options: HubOptions) {
@@ -241,6 +242,7 @@ export function createHub(options: HubOptions) {
       piLoginHint: access.piLoginHint,
       fileVisibility: loadFileVisibility(reposFile),
       projectCreate: access.projectCreate,
+      projectDownloads: loadProjectDownloads(reposFile),
       agentCatalog: namesFor(access.agents, agentsFile),
     };
   }
@@ -370,6 +372,10 @@ export function createHub(options: HubOptions) {
     if (!access.projectCreate) throw new Error("project creation is not enabled");
   }
 
+  function assertProjectDownloads() {
+    if (!loadProjectDownloads(reposFile)) throw new Error("project download is not enabled");
+  }
+
   async function assertFileManager(user: LinuxUser) {
     const access = await loadAccess(user);
     if (!access.fileManager) throw new Error("file manager is not enabled");
@@ -496,18 +502,21 @@ export function createHub(options: HubOptions) {
         directory: loadRepoDirectory(reposFile),
         visibility: loadFileVisibility(reposFile),
         projectCreate: loadProjectCreate(reposFile),
+        projectDownloads: loadProjectDownloads(reposFile),
       });
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "PUT") {
-      const body = (await readJson(req)) as { directory?: unknown; visibility?: unknown; projectCreate?: unknown };
+      const body = (await readJson(req)) as { directory?: unknown; visibility?: unknown; projectCreate?: unknown; projectDownloads?: unknown };
       if (body.projectCreate != null && typeof body.projectCreate !== "boolean") throw new Error("invalid project creation");
+      if (body.projectDownloads != null && typeof body.projectDownloads !== "boolean") throw new Error("invalid project download");
       const nextVisibility = body.visibility != null ? parseFileVisibility(body.visibility) : undefined;
       const saved = saveRepoDirectory(
         reposFile,
         typeof body.directory === "string" ? body.directory : "",
         nextVisibility,
         typeof body.projectCreate === "boolean" ? body.projectCreate : undefined,
+        typeof body.projectDownloads === "boolean" ? body.projectDownloads : undefined,
       );
       sendJson(res, 200, saved);
       return;
@@ -676,6 +685,40 @@ export function createHub(options: HubOptions) {
         return;
       }
       throw new Error("invalid git action");
+    }
+    if (parts[1] === "repositories" && parts[2] === "archive" && parts[3] === "download" && parts.length === 4 && req.method === "GET") {
+      assertProjectDownloads();
+      const archiveId = (url.searchParams.get("id") || "").trim();
+      await streamRunnerFile(
+        options.link,
+        user.username,
+        user.uid,
+        { id: randomUUID(), type: "read_project_archive", archiveId },
+        (meta) => {
+          res.writeHead(200, {
+            "Content-Type": "application/zip",
+            "Content-Disposition": contentDisposition(meta.filename),
+            "Cache-Control": "no-store",
+            "Content-Length": meta.size,
+          });
+          return res;
+        },
+      );
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "archive" && parts.length === 3 && req.method === "GET") {
+      assertProjectDownloads();
+      const archiveId = (url.searchParams.get("id") || "").trim();
+      sendJson(res, 200, await call(user, { type: "project_archive_status", archiveId }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "archive" && parts.length === 3 && req.method === "POST") {
+      assertProjectDownloads();
+      const body = (await readJson(req)) as { workspace?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      sendJson(res, 200, await call(user, { type: "start_project_archive", workspace }));
+      return;
     }
     if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
       await assertFileManager(user);
@@ -940,6 +983,9 @@ export function createHub(options: HubOptions) {
       command.type === "delete_repo_entry" ||
       command.type === "download_repo_file" ||
       command.type === "upload_repo_file" ||
+      command.type === "start_project_archive" ||
+      command.type === "project_archive_status" ||
+      command.type === "read_project_archive" ||
       command.type === "git_status" ||
       command.type === "git_init" ||
       command.type === "git_switch"
@@ -1272,6 +1318,7 @@ function statusFor(message: string): number {
     message.includes("built-in agent")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
+  if (message.includes("not ready")) return 409;
   if (message.includes("already running")) return 409;
   return 500;
 }

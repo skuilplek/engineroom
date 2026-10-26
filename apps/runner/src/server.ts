@@ -21,6 +21,7 @@ import {
   type RunnerResponse,
   type StreamEvent,
 } from "@engineroom/protocol";
+import { ProjectArchives } from "./archive.ts";
 import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
@@ -94,6 +95,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   }
   const pty = options.pty ?? new PtyManager();
   const runs = new Map<string, RunState>();
+  const archives = new ProjectArchives();
   const bus = new ChatBus();
   const writer = new TranscriptWriter(home);
   const hubUser = options.hubUser ?? process.env.ENGINEROOM_HUB_USER ?? "engineroom";
@@ -130,6 +132,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         const result = beginTurn(request.chatId, request.prompt);
         write(socket, { id: request.id, type: "ok", result });
         socket.end();
+        return;
+      }
+      if (request.type === "read_project_archive") {
+        await archives.sendDownload(socket, request.id, request.archiveId);
         return;
       }
       const result = await dispatch(request);
@@ -373,6 +379,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           request.overwrite === true,
           request.visibility,
         );
+      case "start_project_archive":
+        return archives.start(home, request.workspace);
+      case "project_archive_status":
+        return archives.status(request.archiveId);
+      case "read_project_archive":
+        throw new Error("unsupported request");
       default:
         throw new Error("unsupported request");
     }

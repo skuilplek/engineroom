@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
+import { archiveDirectory, archiveFileName, archivePath, archiveUserHash } from "../apps/runner/src/archive.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
 import { createChat, getChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
@@ -792,5 +793,153 @@ function subscribe(socketPath: string): Promise<{
     });
     socket.on("error", reject);
     socket.write(`${JSON.stringify({ id: "sub", type: "subscribe" })}\n`);
+  });
+}
+
+test("a project archive is a zip in /tmp and does not follow symlinks", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-archive-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-archive-out-"));
+  const repo = path.join(home, "Sites", "proj");
+  const sock = path.join(home, "runner.sock");
+  const victim = path.join(home, "victim.txt");
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await mkdir(path.join(outside, "nested"), { recursive: true });
+  await writeFile(path.join(repo, "src", "note.txt"), "hello\n");
+  await writeFile(path.join(outside, "secret.txt"), "top-secret");
+  await writeFile(path.join(outside, "nested", "hidden.txt"), "hidden");
+  await writeFile(victim, "keep");
+  await symlink(path.join(outside, "secret.txt"), path.join(repo, "src", "escape.txt"));
+  await symlink(path.join(outside, "nested"), path.join(repo, "linked"));
+  await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+  await setEnabledRepositories(home, [repo]);
+  const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
+  const expectedName = archiveFileName("proj");
+  assert.notEqual(archiveDirectory("alice"), archiveDirectory("bob"));
+  assert.match(archiveUserHash("alice"), /^[0-9a-f]{64}$/);
+  await mkdir(archiveDirectory(), { recursive: true, mode: 0o700 });
+  const planted = archivePath(expectedName);
+  const created: string[] = [planted];
+  await symlink(victim, planted);
+  try {
+    const blocked = await rpc(sock, { id: "b1", type: "start_project_archive", workspace: repo });
+    const blockedJob = blocked.result as { id: string; filename: string; status: string };
+    assert.equal(blockedJob.status, "creating");
+    assert.equal(blockedJob.filename, expectedName);
+    const blockedStatus = await waitArchive(sock, blockedJob.id);
+    assert.equal(blockedStatus.status, "failed");
+    assert.match(blockedStatus.error || "", /not a regular file/);
+    assert.equal(await readFile(victim, "utf8"), "keep");
+    assert.equal((await lstat(planted)).isSymbolicLink(), true);
+    await rm(planted);
+
+    const started = await rpc(sock, { id: "z1", type: "start_project_archive", workspace: repo });
+    const job = started.result as { id: string; filename: string; status: string };
+    const again = await rpc(sock, { id: "z2", type: "start_project_archive", workspace: repo });
+    const second = again.result as { id: string; status: string };
+    if (second.status === "creating") assert.equal(second.id, job.id);
+    const ready = await waitArchive(sock, job.id);
+    assert.equal(ready.status, "ready");
+    const zipPath = archivePath(ready.filename);
+    created.push(zipPath);
+    assert.equal(path.dirname(zipPath), archiveDirectory());
+    assert.notEqual(path.dirname(zipPath), "/tmp");
+    const dirInfo = await lstat(archiveDirectory());
+    assert.equal(dirInfo.isDirectory(), true);
+    assert.equal(dirInfo.mode & 0o777, 0o700);
+    const info = await lstat(zipPath);
+    assert.equal(info.isSymbolicLink(), false);
+    assert.equal(info.isFile(), true);
+    assert.equal(info.mode & 0o777, 0o600);
+    assert.match(ready.filename, /^proj-\d{10}\.zip$/);
+    const downloaded = await rpcBytes(sock, { id: "z3", type: "read_project_archive", archiveId: job.id });
+    assert.equal(downloaded.result.filename, ready.filename);
+    assert.deepEqual(downloaded.body, await readFile(zipPath));
+    const { stdout } = await execFileAsync("python3", ["-c", ZIP_CHECK, zipPath, path.join(outside, "secret.txt")]);
+    assert.match(stdout, /NOTE hello/);
+    assert.match(stdout, /LINK_OK/);
+    assert.match(stdout, /MODE_LINK/);
+    assert.match(stdout, /HAS_GIT/);
+    assert.match(stdout, /NOT_EXPANDED/);
+    assert.equal(await readFile(path.join(outside, "secret.txt"), "utf8"), "top-secret");
+  } finally {
+    await runner.close();
+    for (const file of created) await rm(file, { force: true });
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+const ZIP_CHECK = `
+import zipfile, sys
+z = zipfile.ZipFile(sys.argv[1])
+names = set(z.namelist())
+note = z.read("src/note.txt").decode()
+link = z.read("src/escape.txt").decode()
+mode = z.getinfo("src/escape.txt").external_attr >> 16
+print("NOTE", note.strip())
+print("LINK_OK" if link == sys.argv[2] and "top-secret" not in link else "LINK_BAD " + link)
+print("MODE_LINK" if (mode & 0o170000) == 0o120000 else "MODE_BAD " + oct(mode))
+print("HAS_GIT" if any(name.startswith(".git/") for name in names) else "NO_GIT")
+print("NOT_EXPANDED" if not any(name.startswith("linked/") for name in names) else "EXPANDED")
+`;
+
+async function waitArchive(socketPath: string, archiveId: string): Promise<{ status: string; filename: string; error?: string; size?: number }> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const status = await rpc(socketPath, { id: `st${attempt}`, type: "project_archive_status", archiveId });
+    const body = status.result as { status: string; filename: string; error?: string; size?: number };
+    if (body.status === "ready" || body.status === "failed") return body;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("archive did not finish");
+}
+
+function rpcBytes(socketPath: string, request: Record<string, unknown>): Promise<{ result: { filename: string; size: number }; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(socketPath);
+    let received = Buffer.alloc(0);
+    const chunks: Buffer[] = [];
+    let header: { filename: string; size: number } | undefined;
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    const take = (chunk: Buffer) => {
+      if (!header) return;
+      chunks.push(chunk);
+      if (Buffer.concat(chunks).length >= header.size) {
+        settled = true;
+        socket.end();
+        resolve({ result: header, body: Buffer.concat(chunks).subarray(0, header.size) });
+      }
+    };
+    socket.on("data", (chunk: Buffer) => {
+      if (header) {
+        take(chunk);
+        return;
+      }
+      received = Buffer.concat([received, chunk]);
+      const index = received.indexOf(0x0a);
+      if (index < 0) return;
+      const message = JSON.parse(received.subarray(0, index).toString("utf8")) as { type?: string; error?: string; result?: { filename: string; size: number } };
+      if (message.type === "error") {
+        fail(new Error(message.error || "runner error"));
+        return;
+      }
+      header = message.result;
+      take(received.subarray(index + 1));
+    });
+    socket.on("error", fail);
+    socket.on("end", () => {
+      if (!settled) fail(new Error("runner closed"));
+    });
+    socket.write(`${JSON.stringify(request)}\n`);
   });
 }

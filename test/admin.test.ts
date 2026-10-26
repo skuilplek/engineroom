@@ -11,6 +11,7 @@ import type { LinuxUser } from "../apps/hub/src/auth.ts";
 import { createHub } from "../apps/hub/src/server.ts";
 import { AcpManager } from "../apps/runner/src/acp/manager.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
+import { archivePath } from "../apps/runner/src/archive.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
 import "./peercred-helper.ts";
@@ -1773,6 +1774,115 @@ test("an agent command in the person's home counts as installed", async () => {
   } finally {
     hub.close();
     await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the administrator controls project downloads", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-project-download-"));
+  const home = path.join(root, "alice");
+  const socketDir = path.join(root, "socks");
+  const reposFile = path.join(root, "repos.json");
+  const agentsFile = path.join(root, "agents.json");
+  const repo = path.join(home, "Sites", "app");
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(path.join(repo, "src", "note.txt"), "hello\n");
+  spawnSync("git", ["init", "-b", "main"], { cwd: repo });
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("project-download-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    reposFile,
+    lookup: (username) => (username === "alice" ? alice : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  let zipName = "";
+  try {
+    const login = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (login.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const before = (await (await fetch(`${base}/api/me`, { headers })).json()) as { projectDownloads: boolean };
+    assert.equal(before.projectDownloads, false);
+    const listed = (await (await fetch(`${base}/api/repositories`, { headers })).json()) as Array<{ path: string; name: string }>;
+    const project = listed.find((entry) => entry.name === "app");
+    assert.ok(project);
+    const blocked = await fetch(`${base}/api/repositories/archive`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: project!.path }),
+    });
+    assert.equal(blocked.status, 403);
+
+    const saved = await fetch(`${base}/api/admin/repository-folder`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ directory: "Sites", projectDownloads: true }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(((await saved.json()) as { projectDownloads: boolean }).projectDownloads, true);
+    const after = (await (await fetch(`${base}/api/me`, { headers })).json()) as { projectDownloads: boolean };
+    assert.equal(after.projectDownloads, true);
+
+    const started = await fetch(`${base}/api/repositories/archive`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: project!.path }),
+    });
+    assert.equal(started.status, 200);
+    const job = (await started.json()) as { id: string; filename: string; status: string };
+    assert.equal(job.status, "creating");
+    assert.match(job.filename, /^app-\d{10}\.zip$/);
+    zipName = job.filename;
+    let finished: { status: string; error?: string; filename: string } | undefined;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const status = await fetch(`${base}/api/repositories/archive?id=${encodeURIComponent(job.id)}`, { headers });
+      assert.equal(status.status, 200);
+      finished = (await status.json()) as { status: string; error?: string; filename: string };
+      if (finished.status !== "creating") break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(finished?.status, "ready", finished?.error);
+    const download = await fetch(`${base}/api/repositories/archive/download?id=${encodeURIComponent(job.id)}`, { headers });
+    assert.equal(download.status, 200);
+    assert.match(download.headers.get("content-disposition") || "", /app-/);
+    const bytes = Buffer.from(await download.arrayBuffer());
+    assert.equal(bytes.subarray(0, 2).toString(), "PK");
+    assert.equal(bytes.length > 22, true);
+  } finally {
+    hub.close();
+    await runner.close();
+    if (zipName) await rm(archivePath(zipName), { force: true });
     await rm(root, { recursive: true, force: true });
   }
 });

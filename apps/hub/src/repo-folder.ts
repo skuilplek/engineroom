@@ -29,6 +29,16 @@ export function loadProjectCreate(file: string): boolean {
   }
 }
 
+export function loadProjectDownloads(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { projectDownloads?: unknown };
+    return parsed.projectDownloads === true;
+  } catch {
+    return false;
+  }
+}
+
 export function loadFileVisibility(file: string): FileVisibility {
   if (!file) return { ...DEFAULT_FILE_VISIBILITY };
   try {
@@ -47,17 +57,19 @@ export function saveRepoDirectory(
   directory: string,
   visibility?: FileVisibility,
   projectCreate?: boolean,
-): { directory: string; visibility: FileVisibility; projectCreate: boolean } {
+  projectDownloads?: boolean,
+): { directory: string; visibility: FileVisibility; projectCreate: boolean; projectDownloads: boolean } {
   if (!file) throw new Error("repository folder is not configured");
   const clean = assertRepoDirectory(directory);
   const nextVisibility = visibility ? parseFileVisibility(visibility) : loadFileVisibility(file);
   const nextCreate = typeof projectCreate === "boolean" ? projectCreate : loadProjectCreate(file);
+  const nextDownloads = typeof projectDownloads === "boolean" ? projectDownloads : loadProjectDownloads(file);
   const tmp = `${file}.${randomUUID()}.tmp`;
   writeFileSync(
     tmp,
-    `${JSON.stringify({ directory: clean, visibility: nextVisibility, projectCreate: nextCreate }, null, 2)}\n`,
+    `${JSON.stringify({ directory: clean, visibility: nextVisibility, projectCreate: nextCreate, projectDownloads: nextDownloads }, null, 2)}\n`,
     { mode: 0o644 },
   );
   renameSync(tmp, file);
-  return { directory: clean, visibility: nextVisibility, projectCreate: nextCreate };
+  return { directory: clean, visibility: nextVisibility, projectCreate: nextCreate, projectDownloads: nextDownloads };
 }

@@ -4,8 +4,9 @@ import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings, type Session } from "../api.ts";
 import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
-import { message } from "../format.ts";
+import { message, strip } from "../format.ts";
 import { Composer } from "./Composer.tsx";
+import { startProjectDownload, useProjectDownload } from "./projectDownload.ts";
 
 export function StartView({
   agents,
@@ -20,6 +21,7 @@ export function StartView({
   piSetup = false,
   onSession,
   projectCreate,
+  projectDownloads,
   onReposChanged,
   onBranchChanged,
 }: {
@@ -35,6 +37,7 @@ export function StartView({
   piSetup?: boolean;
   onSession?: (session: Session) => void;
   projectCreate: boolean;
+  projectDownloads: boolean;
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
 }) {
@@ -44,6 +47,8 @@ export function StartView({
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const download = useProjectDownload();
+  const downloadHere = Boolean(download && strip(download.workspace) === strip(workspace));
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -131,6 +136,20 @@ export function StartView({
         )}
       </Composer>
       <p className="context-line">{targetLabel}</p>
+      {projectDownloads && (
+        <div className="download-project">
+          {downloadHere && download?.phase === "creating" ? (
+            <p className="zip-progress" role="status">..creating project zip file..</p>
+          ) : (
+            <>
+              {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
+              <button className="primary" type="button" onClick={() => void startProjectDownload(workspace, targetLabel)}>
+                Download project
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

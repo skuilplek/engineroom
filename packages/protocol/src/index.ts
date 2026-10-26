@@ -391,7 +391,10 @@ export type RunnerRequest =
       contentBase64: string;
       overwrite?: boolean;
       visibility?: FileVisibility;
-    };
+    }
+  | { id: string; type: "start_project_archive"; workspace: string }
+  | { id: string; type: "project_archive_status"; archiveId: string }
+  | { id: string; type: "read_project_archive"; archiveId: string };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -476,6 +479,11 @@ export function assertChatId(value: unknown): string {
   if (typeof value !== "string" || !CHAT_ID_RE.test(value)) {
     throw new Error("invalid chat id");
   }
+  return value;
+}
+
+export function assertArchiveId(value: unknown): string {
+  if (typeof value !== "string" || !CHAT_ID_RE.test(value)) throw new Error("invalid archive");
   return value;
 }
 
@@ -803,6 +811,15 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }
+    case "start_project_archive": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      return { id: body.id, type: "start_project_archive", workspace: workspace.trim() };
+    }
+    case "project_archive_status":
+      return { id: body.id, type: "project_archive_status", archiveId: assertArchiveId(body.archiveId) };
+    case "read_project_archive":
+      return { id: body.id, type: "read_project_archive", archiveId: assertArchiveId(body.archiveId) };
     case "upload_repo_file": {
       const workspace = optionalString(body.workspace, "workspace", 4096);
       if (!workspace?.trim()) throw new Error("invalid workspace");
