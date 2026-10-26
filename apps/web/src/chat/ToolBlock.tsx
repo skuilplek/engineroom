@@ -1,5 +1,6 @@
 import type { CommandBlockStyle } from "@engineroom/protocol";
 import { DiffView } from "./Diff.tsx";
+import { LinkedText } from "./LinkedText.tsx";
 import { isTerminalTool, presentTool, type Block } from "./group.ts";
 
 type ToolBlockData = Extract<Block, { kind: "tool" }>;
@@ -10,15 +11,17 @@ export function ToolBlock({
   block,
   showRunning = false,
   style = "prompt",
+  onOpenFile,
 }: {
   block: ToolBlockData;
   showRunning?: boolean;
   style?: CommandBlockStyle;
+  onOpenFile?: (path: string) => void;
 }) {
   const shown = presentTool(block);
   const diff = block.content?.find((item) => item.type === "diff");
   const diffView = diff && diff.type === "diff"
-    ? <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} />
+    ? <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} onOpenFile={onOpenFile} />
     : null;
   const notes = (block.content ?? [])
     .filter((item) => item.type === "text" && item.text && !shown.body.includes(item.text))
@@ -26,7 +29,7 @@ export function ToolBlock({
     .join("\n\n");
   const body = [shown.body, notes].filter(Boolean).join("\n\n");
   const output = body
-    ? <pre>{body}</pre>
+    ? <pre><LinkedText text={body} onOpenFile={onOpenFile} /></pre>
     : showRunning && block.phase === "start"
       ? <pre className="pulse">running…</pre>
       : null;
@@ -59,7 +62,7 @@ export function ToolBlock({
         </summary>
         {hasBody ? (
           <div className="tool-terminal-body">
-            {commandRest ? <pre className="tool-terminal-command">{commandRest}</pre> : null}
+            {commandRest ? <pre className="tool-terminal-command"><LinkedText text={commandRest} onOpenFile={onOpenFile} /></pre> : null}
             {diffView}
             {output}
           </div>
@@ -78,7 +81,7 @@ export function ToolBlock({
       </summary>
       {hasBody ? (
         <div className="tool-prompt-body">
-          {commandRest ? <pre>{commandRest}</pre> : null}
+          {commandRest ? <pre><LinkedText text={commandRest} onOpenFile={onOpenFile} /></pre> : null}
           {diffView}
           {output}
         </div>

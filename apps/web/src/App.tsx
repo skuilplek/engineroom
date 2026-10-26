@@ -117,6 +117,7 @@ function Shell({
     }
   });
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
+  const [fileOpenRequest, setFileOpenRequest] = useState<{ id: number; path: string } | null>(null);
   const openingRef = useRef<{ id: string; prompt: string } | null>(null);
   const consumedRef = useRef<string | null>(null);
   const restoredRef = useRef(false);
@@ -167,6 +168,16 @@ function Shell({
 
   const bumpFilesRefresh = useCallback(() => {
     setFilesRefreshKey((current) => current + 1);
+  }, []);
+
+  const openAgentFile = useCallback((filePath: string) => {
+    setFilesOpen(true);
+    try {
+      localStorage.setItem("engineroom.filesOpen", "1");
+    } catch {
+      /* ignore storage failure */
+    }
+    setFileOpenRequest((current) => ({ id: (current?.id ?? 0) + 1, path: filePath }));
   }, []);
 
   const refreshRepos = useCallback(() => {
@@ -471,6 +482,7 @@ function Shell({
             commandBlockStyle={session.commandBlockStyle}
             projectCreate={Boolean(session.projectCreate)}
             onReposChanged={refreshRepos}
+            onOpenFile={showFileManager ? openAgentFile : undefined}
           />
         )}
       </section>
@@ -484,6 +496,7 @@ function Shell({
           canDownload={canDownloadFiles}
           canUpload={canUploadFiles}
           refreshKey={filesRefreshKey}
+          openRequest={fileOpenRequest}
           onToggleExpanded={toggleFilesExpanded}
           onClose={toggleFiles}
         />

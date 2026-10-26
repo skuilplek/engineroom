@@ -962,6 +962,24 @@ textarea { resize: vertical; }
   color: var(--muted);
   white-space: pre-wrap;
 }
+.file-path-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.file-path-link:hover {
+  text-decoration-color: var(--ink);
+}
 .tool-prompt .pulse { color: var(--muted); }
 .status, .thinking { color: var(--muted); }
 .thinking {

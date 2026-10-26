@@ -42,6 +42,7 @@ import {
   discardRepositoryChange,
   downloadRepositoryFile,
   listRepositoryFiles,
+  readHomeFile,
   readRepositoryFile,
   renameRepositoryEntry,
   stageRepositoryChange,
@@ -387,6 +388,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listRepositoryFiles(home, request.workspace, request.visibility);
       case "read_repo_file":
         return readRepositoryFile(home, request.workspace, request.path, request.visibility);
+      case "read_home_file":
+        return readHomeFile(home, request.path);
       case "write_repo_file":
         return writeRepositoryFile(home, request.workspace, request.path, request.content, request.visibility);
       case "create_repo_entry":

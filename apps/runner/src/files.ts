@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  assertAbsoluteFilePath,
   assertRepoRelativePath,
   DEFAULT_FILE_VISIBILITY,
   isInsidePath,
@@ -207,6 +208,42 @@ export async function readRepositoryFile(
     ...(oldContent != null ? { oldContent } : {}),
     binary,
     truncated,
+    size,
+  };
+}
+
+export async function readHomeFile(home: string, rawPath: string): Promise<RepoFileContent> {
+  const requested = assertAbsoluteFilePath(rawPath);
+  const homeReal = await realpath(home);
+  let resolved: string;
+  try {
+    resolved = await realpath(requested);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("file not found");
+    throw error;
+  }
+  if (!isInsidePath(homeReal, resolved) || resolved === homeReal) throw new Error("invalid file path");
+  const info = await stat(resolved);
+  if (!info.isFile()) throw new Error("not a regular file");
+  const size = info.size;
+  const toRead = Math.min(size, MAX_PREVIEW_BYTES);
+  let content = "";
+  let binary = false;
+  const handle = await open(resolved, "r");
+  try {
+    const buf = Buffer.alloc(toRead);
+    const { bytesRead } = await handle.read(buf, 0, toRead, 0);
+    const slice = buf.subarray(0, bytesRead);
+    if (isBinaryBuffer(slice)) binary = true;
+    else content = slice.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+  return {
+    path: requested,
+    content,
+    binary,
+    truncated: size > MAX_PREVIEW_BYTES,
     size,
   };
 }

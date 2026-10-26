@@ -408,6 +408,7 @@ export type RunnerRequest =
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
+  | { id: string; type: "read_home_file"; path: string }
   | { id: string; type: "write_repo_file"; workspace: string; path: string; content: string; visibility?: FileVisibility }
   | { id: string; type: "create_repo_entry"; workspace: string; path: string; kind: "file" | "dir"; content?: string; visibility?: FileVisibility }
   | { id: string; type: "rename_repo_entry"; workspace: string; path: string; newPath: string; visibility?: FileVisibility }
@@ -808,6 +809,8 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }
+    case "read_home_file":
+      return { id: body.id, type: "read_home_file", path: assertAbsoluteFilePath(body.path) };
     case "write_repo_file": {
       const workspace = optionalString(body.workspace, "workspace", 4096);
       if (!workspace?.trim()) throw new Error("invalid workspace");
@@ -960,6 +963,26 @@ export function parseCommitMessage(value: unknown): string {
   const message = value.trim();
   if (!message || message.length > MAX_COMMIT_MESSAGE) throw new Error("invalid commit message");
   return message;
+}
+
+export function assertAbsoluteFilePath(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid file path");
+  const trimmed = value.trim();
+  if (
+    !trimmed.startsWith("/") ||
+    trimmed.length > 4096 ||
+    trimmed.includes("\0") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\n")
+  ) {
+    throw new Error("invalid file path");
+  }
+  const parts = trimmed.split("/");
+  if (parts.length < 3) throw new Error("invalid file path");
+  for (const part of parts.slice(1)) {
+    if (!part || part === "." || part === "..") throw new Error("invalid file path");
+  }
+  return parts.join("/");
 }
 
 export function assertRepoRelativePath(value: unknown): string {

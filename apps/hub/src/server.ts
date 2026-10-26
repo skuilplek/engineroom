@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
@@ -770,6 +770,12 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "start_project_archive", workspace }));
       return;
     }
+    if (parts[1] === "files" && parts[2] === "preview" && parts.length === 3 && req.method === "GET") {
+      await assertFileManager(user);
+      const filePath = assertAbsoluteFilePath(url.searchParams.get("path") || "");
+      sendJson(res, 200, await call(user, { type: "read_home_file", path: filePath }));
+      return;
+    }
     if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
       await assertFileManager(user);
       const workspace = (url.searchParams.get("workspace") || "").trim();
@@ -1029,6 +1035,7 @@ export function createHub(options: HubOptions) {
       command.type === "probe_agent" ||
       command.type === "list_repo_files" ||
       command.type === "read_repo_file" ||
+      command.type === "read_home_file" ||
       command.type === "write_repo_file" ||
       command.type === "create_repo_entry" ||
       command.type === "rename_repo_entry" ||

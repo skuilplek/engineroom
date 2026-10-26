@@ -545,6 +545,21 @@ test("repository file requests validate relative paths and visibility flags", as
     }),
   );
 
+  const { assertAbsoluteFilePath } = await import("@engineroom/protocol");
+  const homeRead = parseRunnerRequest({
+    id: "12b",
+    type: "read_home_file",
+    path: "/home/alice/.cursor/plans/Prompt file attachments.plan.md",
+  });
+  assert.equal(homeRead.type, "read_home_file");
+  if (homeRead.type === "read_home_file") {
+    assert.equal(homeRead.path, "/home/alice/.cursor/plans/Prompt file attachments.plan.md");
+  }
+  assert.equal(assertAbsoluteFilePath(" /home/alice/notes.md "), "/home/alice/notes.md");
+  assert.throws(() => assertAbsoluteFilePath("notes.md"));
+  assert.throws(() => assertAbsoluteFilePath("/home/alice/../etc/passwd"));
+  assert.throws(() => parseRunnerRequest({ id: "12c", type: "read_home_file", path: "src/app.ts" }));
+
   const writeReq = parseRunnerRequest({
     id: "13",
     type: "write_repo_file",

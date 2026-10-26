@@ -1,8 +1,24 @@
-export function DiffView({ path, oldText = "", newText = "" }: { path: string; oldText?: string; newText?: string }) {
+import { FileTokenButton } from "./LinkedText.tsx";
+
+export function DiffView({
+  path,
+  oldText = "",
+  newText = "",
+  onOpenFile,
+}: {
+  path: string;
+  oldText?: string;
+  newText?: string;
+  onOpenFile?: (path: string) => void;
+}) {
   const rows = lineDiff(oldText, newText);
   return (
     <div className="diff">
-      <div className="diff-path">{path}</div>
+      <div className="diff-path">
+        <FileTokenButton token={path} onOpenFile={onOpenFile} allowBare>
+          {path}
+        </FileTokenButton>
+      </div>
       <pre>
         {rows.map((row, index) => (
           <div className={`diff-line ${row.kind}`} key={index}>

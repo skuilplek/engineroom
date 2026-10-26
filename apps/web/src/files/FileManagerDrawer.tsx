@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry } from "@engineroom/protocol";
-import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readRepoFile, renameRepoEntry, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
+import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readHomeFile, readRepoFile, renameRepoEntry, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
+import { classifyOpenedPath } from "../chat/filePaths.ts";
 import { DiffView } from "../chat/Diff.tsx";
 import { message } from "../format.ts";
 import {
@@ -44,6 +45,7 @@ export function FileManagerDrawer({
   canDownload = false,
   canUpload = false,
   refreshKey,
+  openRequest,
   onToggleExpanded,
   onClose,
 }: {
@@ -55,6 +57,7 @@ export function FileManagerDrawer({
   canDownload?: boolean;
   canUpload?: boolean;
   refreshKey?: number;
+  openRequest?: { id: number; path: string } | null;
   onToggleExpanded?: () => void;
   onClose: () => void;
 }) {
@@ -67,6 +70,7 @@ export function FileManagerDrawer({
   const [error, setError] = useState("");
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [externalPath, setExternalPath] = useState<string | null>(null);
   const [selectedDir, setSelectedDir] = useState<string>("");
   const [preview, setPreview] = useState<RepoFileContent | null>(null);
   const [draftContent, setDraftContent] = useState("");
@@ -89,9 +93,11 @@ export function FileManagerDrawer({
   const uploadInput = useRef<HTMLInputElement>(null);
   const forceCodePath = useRef<string | null>(null);
   const autoModeFor = useRef<string | null>(null);
+  const seenOpen = useRef(0);
 
   const isDirty = Boolean(preview && !preview.binary && draftContent !== preview.content);
-  const isEditable = Boolean(canEdit && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
+  const isEditable = Boolean(canEdit && !externalPath && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
+  const viewingPath = externalPath || selectedPath;
 
   const loadFiles = useCallback(async (ws: string) => {
     if (!ws) return;
@@ -111,6 +117,7 @@ export function FileManagerDrawer({
 
   useEffect(() => {
     setSelectedPath(null);
+    setExternalPath(null);
     setSelectedDir("");
     setPreview(null);
     setDraftContent("");
@@ -224,15 +231,16 @@ export function FileManagerDrawer({
   }
 
   function selectFile(filePath: string, mode?: "code") {
-    if (selectedPath === filePath && !expanded && mode !== "code") {
+    if (selectedPath === filePath && !externalPath && !expanded && mode !== "code") {
       setSelectedPath(null);
       return;
     }
-    if (selectedPath !== filePath && isDirty) {
+    if ((selectedPath !== filePath || externalPath) && isDirty) {
       if (!window.confirm("Discard unsaved changes to the current file?")) {
         return;
       }
     }
+    setExternalPath(null);
     if (mode === "code") {
       forceCodePath.current = filePath;
       setPreviewMode("code");
@@ -245,6 +253,58 @@ export function FileManagerDrawer({
     setRenamingPath(null);
     setConfirmDeletePath(null);
   }
+
+  useEffect(() => {
+    if (!open || !externalPath) return;
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreviewError("");
+    setPreview(null);
+    setDraftContent("");
+    readHomeFile(externalPath)
+      .then((content) => {
+        if (cancelled) return;
+        setPreview(content);
+        setDraftContent(content.content);
+        setPreviewMode("code");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPreview(null);
+        setDraftContent("");
+        setPreviewError(message(err));
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, externalPath]);
+
+  useEffect(() => {
+    if (!open || !openRequest || openRequest.id === seenOpen.current) return;
+    seenOpen.current = openRequest.id;
+    const target = classifyOpenedPath(workspace, openRequest.path);
+    if (!target) return;
+    if (target.kind === "home") {
+      if (isDirty && !window.confirm("Discard unsaved changes to the current file?")) return;
+      setSelectedPath(null);
+      setSelectedDir("");
+      setPreview(null);
+      setDraftContent("");
+      setPreviewError("");
+      setPreviewMode("code");
+      setRenamingPath(null);
+      setConfirmDeletePath(null);
+      setExternalPath(target.path);
+      setTab("files");
+      return;
+    }
+    setTab("files");
+    expandAncestors(target.path);
+    selectFile(target.path, "code");
+  }, [open, openRequest, workspace]);
 
   async function refreshAfterGit(clearedPath?: string) {
     if (clearedPath && selectedPath === clearedPath) {
@@ -338,7 +398,7 @@ export function FileManagerDrawer({
   }
 
   async function handleSave() {
-    if (!workspace || !preview || !canEdit || !isDirty || saving) return;
+    if (!workspace || !preview || !canEdit || !isDirty || saving || externalPath) return;
     setSaving(true);
     setPreviewError("");
     try {
@@ -863,16 +923,17 @@ export function FileManagerDrawer({
           )}
         </div>
 
-        {(selectedPath || expanded) && (
-          <section className="file-preview" aria-label={selectedPath ? `File ${selectedPath}` : "File editor"}>
-            {selectedPath ? (
+        {(selectedPath || externalPath || expanded) && (
+          <section className="file-preview" aria-label={viewingPath ? `File ${viewingPath}` : "File editor"}>
+            {viewingPath ? (
               <>
                 <header className="file-preview-head">
                   <div className="file-preview-meta">
-                    <strong title={selectedPath}>
-                      {selectedPath}
+                    <strong title={viewingPath}>
+                      {viewingPath}
                       {isDirty && <span className="unsaved-dot" title="Unsaved changes"> ●</span>}
                     </strong>
+                    {externalPath && <span className="muted">Outside this repository</span>}
                     {preview && !preview.binary && (
                       <span className="muted">
                         {formatSize(preview.size)}
@@ -881,7 +942,7 @@ export function FileManagerDrawer({
                     )}
                   </div>
                   <div className="file-preview-actions">
-                    {canEdit && preview && !preview.binary && !preview.truncated && previewMode === "code" && (
+                    {canEdit && !externalPath && preview && !preview.binary && !preview.truncated && previewMode === "code" && (
                       <>
                         {isDirty && (
                           <button
@@ -938,6 +999,9 @@ export function FileManagerDrawer({
                       onClick={() => {
                         if (isDirty && !window.confirm("Discard unsaved changes to this file?")) return;
                         setSelectedPath(null);
+                        setExternalPath(null);
+                        setPreview(null);
+                        setDraftContent("");
                       }}
                     >
                       ✕

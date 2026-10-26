@@ -30,6 +30,7 @@ export function ChatView({
   commandBlockStyle = "prompt",
   projectCreate,
   onReposChanged,
+  onOpenFile,
 }: {
   chatId: string;
   home: string;
@@ -47,6 +48,7 @@ export function ChatView({
   commandBlockStyle?: CommandBlockStyle;
   projectCreate: boolean;
   onReposChanged?: () => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
   const [prompt, setPrompt] = useState("");
@@ -200,7 +202,7 @@ export function ChatView({
                 if (block.role === "user") return <div className="bubble user" key={index}>{block.text}</div>;
                 return (
                   <div className="bubble assistant" key={index}>
-                    <Markdown text={block.text} streaming={last && live.running} />
+                    <Markdown text={block.text} streaming={last && live.running} onOpenFile={onOpenFile} />
                     <CopyResponse text={block.text} />
                   </div>
                 );
@@ -213,7 +215,7 @@ export function ChatView({
                   </details>
                 );
               }
-              if (block.kind === "tool") return <ToolBlock key={index} block={block} showRunning style={commandBlockStyle} />;
+              if (block.kind === "tool") return <ToolBlock key={index} block={block} showRunning style={commandBlockStyle} onOpenFile={onOpenFile} />;
               if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
               return <p className="status" key={index}>{block.text}</p>;
             })}

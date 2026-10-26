@@ -356,6 +356,29 @@ test("the control wrapper refuses names outside the login group", async () => {
   await assert.rejects(execFileAsync(script, ["start", "serveradmin"]));
 });
 
+test("home file preview reads a plan outside the repository and rejects escapes", async () => {
+  const { readHomeFile } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-home-file-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-home-file-out-"));
+  const plan = path.join(home, ".cursor", "plans", "Prompt file attachments-c99d43bc.plan.md");
+  await mkdir(path.dirname(plan), { recursive: true });
+  await writeFile(plan, "# Prompt photos\n");
+  await writeFile(path.join(outside, "secret.txt"), "nope");
+  await symlink(path.join(outside, "secret.txt"), path.join(home, "escape.txt"));
+  try {
+    const content = await readHomeFile(home, plan);
+    assert.equal(content.content, "# Prompt photos\n");
+    assert.equal(content.path, plan);
+    assert.equal(content.binary, false);
+    await assert.rejects(() => readHomeFile(home, path.join(outside, "secret.txt")), /invalid file path/);
+    await assert.rejects(() => readHomeFile(home, path.join(home, "escape.txt")), /invalid file path/);
+    await assert.rejects(() => readHomeFile(home, path.join(home, "missing.md")), /file not found/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("repository file listing and reading enforce visibility, gitignore, and symlink safety", async () => {
   const { listRepositoryFiles, readRepositoryFile } = await import("../apps/runner/src/files.ts");
   const home = await mkdtemp(path.join(tmpdir(), "er-files-"));

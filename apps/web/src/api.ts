@@ -238,6 +238,10 @@ export function readRepoFile(workspace: string, filePath: string) {
   );
 }
 
+export function readHomeFile(filePath: string) {
+  return api<RepoFileContent>(`/api/files/preview?path=${encodeURIComponent(filePath)}`);
+}
+
 export function writeRepoFile(workspace: string, filePath: string, content: string) {
   return api<RepoFileContent>("/api/repositories/file", {
     method: "PUT",
