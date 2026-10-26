@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
@@ -73,6 +73,8 @@ interface RunnerCall {
   name?: string;
   url?: string;
   branch?: string;
+  message?: string;
+  stageVisible?: boolean;
   archiveId?: string;
   archived?: boolean;
 }
@@ -691,7 +693,14 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "repositories" && parts[2] === "git" && parts.length === 3 && req.method === "POST") {
-      const body = (await readJson(req)) as { workspace?: unknown; action?: unknown; branch?: unknown };
+      const body = (await readJson(req)) as {
+        workspace?: unknown;
+        action?: unknown;
+        branch?: unknown;
+        path?: unknown;
+        message?: unknown;
+        stageVisible?: unknown;
+      };
       const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
       if (!workspace) throw new Error("invalid workspace");
       if (body.action === "init") {
@@ -701,6 +710,27 @@ export function createHub(options: HubOptions) {
       }
       if (body.action === "switch") {
         sendJson(res, 200, await call(user, { type: "git_switch", workspace, branch: assertBranchName(body.branch) }));
+        return;
+      }
+      if (body.action === "stage" || body.action === "unstage" || body.action === "discard") {
+        await assertFileEditorAllowed(user);
+        const filePath = assertRepoRelativePath(body.path);
+        const visibility = loadFileVisibility(reposFile);
+        const type = body.action === "stage" ? "git_stage" : body.action === "unstage" ? "git_unstage" : "git_discard";
+        sendJson(res, 200, await call(user, { type, workspace, path: filePath, visibility }));
+        return;
+      }
+      if (body.action === "commit") {
+        await assertFileEditorAllowed(user);
+        const message = parseCommitMessage(body.message);
+        const visibility = loadFileVisibility(reposFile);
+        sendJson(res, 200, await call(user, {
+          type: "git_commit",
+          workspace,
+          message,
+          ...(body.stageVisible === true ? { stageVisible: true } : {}),
+          visibility,
+        }));
         return;
       }
       throw new Error("invalid git action");
@@ -1009,7 +1039,11 @@ export function createHub(options: HubOptions) {
       command.type === "read_project_archive" ||
       command.type === "git_status" ||
       command.type === "git_init" ||
-      command.type === "git_switch"
+      command.type === "git_switch" ||
+      command.type === "git_stage" ||
+      command.type === "git_unstage" ||
+      command.type === "git_discard" ||
+      command.type === "git_commit"
     ) {
       throw new Error("unknown request");
     }
@@ -1337,7 +1371,12 @@ function statusFor(message: string): number {
     message.includes("too large") ||
     message.includes("cannot edit binary") ||
     message.includes("already exists") ||
-    message.includes("built-in agent")
+    message.includes("built-in agent") ||
+    message.includes("nothing to commit") ||
+    message.includes("not a visible change") ||
+    message.includes("no unstaged") ||
+    message.includes("not staged") ||
+    message.includes("not a git repository")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
   if (message.includes("not ready")) return 409;

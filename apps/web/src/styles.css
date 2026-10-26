@@ -1634,6 +1634,108 @@ details summary { cursor: pointer; color: var(--soft); }
   flex: none;
   padding-left: 4px;
 }
+.commit-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.commit-box input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.commit-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.commit-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.change-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.change-section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.change-section-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+}
+.change-section-side {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.change-section-actions,
+.change-row-actions {
+  display: none;
+  align-items: center;
+  flex: none;
+}
+.change-section-head:hover .change-section-actions,
+.change-section-head:focus-within .change-section-actions,
+.change-row:hover .change-row-actions,
+.change-row:focus-within .change-row-actions,
+.change-row.active .change-row-actions {
+  display: flex;
+}
+.change-row {
+  gap: 2px;
+  padding-right: 6px;
+}
+.change-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+.change-row .git-status {
+  margin-left: 0;
+}
+.change-action {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  border-radius: 4px;
+}
+.change-action:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--hover);
+}
 .git-dot {
   margin-left: auto;
   width: 6px;

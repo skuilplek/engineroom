@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry } from "@engineroom/protocol";
-import { ApiError, createRepoEntry, deleteRepoEntry, downloadRepoFile, listRepoFiles, readRepoFile, renameRepoEntry, uploadRepoFiles, writeRepoFile } from "../api.ts";
+import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readRepoFile, renameRepoEntry, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
 import { DiffView } from "../chat/Diff.tsx";
 import { message } from "../format.ts";
 import {
   IconBranch,
+  IconCheck,
   IconChevron,
   IconDownload,
   IconEdit,
   IconExpand,
   IconFile,
   IconFolder,
+  IconMinus,
   IconNewFile,
   IconNewFolder,
   IconPanelRight,
+  IconPlus,
   IconRefresh,
   IconTrash,
+  IconUndo,
   IconUpload,
 } from "../icons.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
@@ -78,7 +82,13 @@ export function FileManagerDrawer({
   const [renameInput, setRenameInput] = useState("");
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [stagedOpen, setStagedOpen] = useState(true);
+  const [unstagedOpen, setUnstagedOpen] = useState(true);
+  const [contentRefresh, setContentRefresh] = useState(0);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const forceCodePath = useRef<string | null>(null);
+  const autoModeFor = useRef<string | null>(null);
 
   const isDirty = Boolean(preview && !preview.binary && draftContent !== preview.content);
   const isEditable = Boolean(canEdit && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
@@ -110,6 +120,11 @@ export function FileManagerDrawer({
     setCreateKind(null);
     setRenamingPath(null);
     setConfirmDeletePath(null);
+    setCommitMessage("");
+    setStagedOpen(true);
+    setUnstagedOpen(true);
+    autoModeFor.current = null;
+    forceCodePath.current = null;
   }, [workspace]);
 
   useEffect(() => {
@@ -127,10 +142,14 @@ export function FileManagerDrawer({
         if (cancelled) return;
         setPreview(content);
         setDraftContent(content.content);
-        if (content.oldContent != null && tab === "changes") {
-          setPreviewMode("diff");
-        } else {
+        const modeKey = `${selectedPath}:${tab}`;
+        if (forceCodePath.current === selectedPath) {
+          forceCodePath.current = null;
+          autoModeFor.current = modeKey;
           setPreviewMode("code");
+        } else if (autoModeFor.current !== modeKey) {
+          autoModeFor.current = modeKey;
+          setPreviewMode(content.oldContent != null && tab === "changes" ? "diff" : "code");
         }
       })
       .catch((err) => {
@@ -145,7 +164,7 @@ export function FileManagerDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, workspace, selectedPath, refreshKey, tab]);
+  }, [open, workspace, selectedPath, refreshKey, tab, contentRefresh]);
 
   const changeMap = useMemo(() => {
     const map = new Map<string, RepoChangeStatus>();
@@ -177,6 +196,9 @@ export function FileManagerDrawer({
     return changes.filter((item) => item.path.toLowerCase().includes(needle));
   }, [changes, filter]);
 
+  const stagedChanges = useMemo(() => filteredChanges.filter((item) => item.staged), [filteredChanges]);
+  const unstagedChanges = useMemo(() => filteredChanges.filter((item) => item.unstaged), [filteredChanges]);
+
   const tree = useMemo(() => buildTree(filteredFiles, changeMap), [filteredFiles, changeMap]);
 
   function expandAncestors(targetPath: string) {
@@ -201,8 +223,8 @@ export function FileManagerDrawer({
     });
   }
 
-  function selectFile(filePath: string) {
-    if (selectedPath === filePath && !expanded) {
+  function selectFile(filePath: string, mode?: "code") {
+    if (selectedPath === filePath && !expanded && mode !== "code") {
       setSelectedPath(null);
       return;
     }
@@ -211,11 +233,108 @@ export function FileManagerDrawer({
         return;
       }
     }
+    if (mode === "code") {
+      forceCodePath.current = filePath;
+      setPreviewMode("code");
+    } else {
+      forceCodePath.current = null;
+    }
     const parent = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
     setSelectedDir(parent);
     setSelectedPath(filePath);
     setRenamingPath(null);
     setConfirmDeletePath(null);
+  }
+
+  async function refreshAfterGit(clearedPath?: string) {
+    if (clearedPath && selectedPath === clearedPath) {
+      setSelectedPath(null);
+      setPreview(null);
+      setDraftContent("");
+    }
+    await loadFiles(workspace);
+    setContentRefresh((value) => value + 1);
+  }
+
+  async function runGitAction(action: "stage" | "unstage" | "discard", filePath: string) {
+    if (!canEdit || actionBusy) return;
+    const item = changes.find((entry) => entry.path === filePath);
+    if (action === "discard") {
+      const untracked = item?.worktreeStatus === "?" || item?.status === "?";
+      const prompt = untracked ? `Delete untracked file ${filePath}?` : `Discard changes to ${filePath}?`;
+      if (!window.confirm(prompt)) return;
+    }
+    setActionBusy(true);
+    setError("");
+    try {
+      if (action === "stage") await stageRepoChange(workspace, filePath);
+      else if (action === "unstage") await unstageRepoChange(workspace, filePath);
+      else await discardRepoChange(workspace, filePath);
+      const untracked = item?.worktreeStatus === "?" || item?.status === "?";
+      await refreshAfterGit(action === "discard" && untracked ? filePath : undefined);
+    } catch (err) {
+      await loadFiles(workspace);
+      setError(message(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function runGitActionAll(action: "stage" | "unstage" | "discard", items: RepoChangeEntry[]) {
+    if (!canEdit || actionBusy || items.length === 0) return;
+    if (action === "discard") {
+      const untracked = items.some((item) => item.worktreeStatus === "?" || item.status === "?");
+      const noun = items.length === 1 ? "1 file" : `${items.length} files`;
+      const prompt = untracked
+        ? `Discard changes to ${noun}? Untracked files will be deleted.`
+        : `Discard changes to ${noun}?`;
+      if (!window.confirm(prompt)) return;
+    }
+    setActionBusy(true);
+    setError("");
+    try {
+      for (const item of items) {
+        if (action === "stage") await stageRepoChange(workspace, item.path);
+        else if (action === "unstage") await unstageRepoChange(workspace, item.path);
+        else await discardRepoChange(workspace, item.path);
+      }
+      const removed = action === "discard" ? items.find((item) => item.path === selectedPath && (item.worktreeStatus === "?" || item.status === "?")) : undefined;
+      await refreshAfterGit(removed?.path);
+    } catch (err) {
+      await loadFiles(workspace);
+      setContentRefresh((value) => value + 1);
+      setError(message(err));
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function submitCommit() {
+    const text = commitMessage.trim();
+    if (!canEdit || !text || actionBusy || changes.length === 0) return;
+    const stagedCount = changes.filter((item) => item.staged).length;
+    const unstagedCount = changes.filter((item) => item.unstaged).length;
+    if (stagedCount === 0 && unstagedCount === 0) return;
+    if (isDirty && !window.confirm("Unsaved edits are not included. Commit the saved files anyway?")) return;
+    let stageVisible = false;
+    if (stagedCount === 0) {
+      const noun = unstagedCount === 1 ? "1 visible change" : `${unstagedCount} visible changes`;
+      if (!window.confirm(`No staged changes. Stage ${noun} and commit them?`)) return;
+      stageVisible = true;
+    }
+    setActionBusy(true);
+    setError("");
+    try {
+      await commitRepoChanges(workspace, text, stageVisible);
+      setCommitMessage("");
+      await refreshAfterGit();
+    } catch (err) {
+      await loadFiles(workspace);
+      setContentRefresh((value) => value + 1);
+      setError(message(err));
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   async function handleSave() {
@@ -549,6 +668,32 @@ export function FileManagerDrawer({
         )}
       </div>
 
+      {tab === "changes" && canEdit && (
+        <form
+          className="commit-box"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitCommit();
+          }}
+        >
+          <input
+            value={commitMessage}
+            placeholder="Message"
+            aria-label="Commit message"
+            disabled={actionBusy}
+            onChange={(event) => setCommitMessage(event.target.value)}
+          />
+          <button
+            className="commit-btn"
+            type="submit"
+            disabled={actionBusy || !commitMessage.trim() || !changes.some((item) => item.staged || item.unstaged)}
+          >
+            <IconCheck />
+            <span>Commit</span>
+          </button>
+        </form>
+      )}
+
       {createKind && canEdit && (
         <form className="file-inline-form" onSubmit={(e) => void submitCreate(e)}>
           <span className="file-inline-label">{createKind === "file" ? "New file:" : "New folder:"}</span>
@@ -634,28 +779,88 @@ export function FileManagerDrawer({
             <p className="muted file-empty">{isFiltering ? "No matching changes." : "Working tree is clean."}</p>
           )}
 
-          {tab === "changes" &&
-            filteredChanges.map((item) => {
-              const name = item.path.split("/").pop() || item.path;
-              const dir = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
-              const active = selectedPath === item.path;
-              return (
+          {tab === "changes" && stagedChanges.length > 0 && (
+            <ChangeSection
+              title="Staged Changes"
+              open={stagedOpen}
+              count={stagedChanges.length}
+              onToggle={() => setStagedOpen((value) => !value)}
+              actions={canEdit ? (
                 <button
-                  key={item.path}
-                  className={active ? "file-row change-row active" : "file-row change-row"}
+                  className="change-action"
                   type="button"
-                  onClick={() => selectFile(item.path)}
-                  title={item.path}
+                  title="Unstage all changes"
+                  aria-label="Unstage all changes"
+                  disabled={actionBusy}
+                  onClick={() => void runGitActionAll("unstage", stagedChanges)}
                 >
-                  <IconFile />
-                  <span className="file-name">{name}</span>
-                  {dir && <span className="file-dir">{dir}</span>}
-                  <span className={`git-status status-${statusKey(item.status)}`} title={statusLabel(item.status)}>
-                    {item.status === "?" ? "U" : item.status}
-                  </span>
+                  <IconMinus />
                 </button>
-              );
-            })}
+              ) : null}
+            >
+              {stagedChanges.map((item) => (
+                <ChangeRow
+                  key={`staged:${item.path}`}
+                  item={item}
+                  side="staged"
+                  active={selectedPath === item.path}
+                  canEdit={canEdit}
+                  busy={actionBusy}
+                  onOpen={() => selectFile(item.path)}
+                  onOpenFile={() => selectFile(item.path, "code")}
+                  onUnstage={() => void runGitAction("unstage", item.path)}
+                />
+              ))}
+            </ChangeSection>
+          )}
+
+          {tab === "changes" && unstagedChanges.length > 0 && (
+            <ChangeSection
+              title="Changes"
+              open={unstagedOpen}
+              count={unstagedChanges.length}
+              onToggle={() => setUnstagedOpen((value) => !value)}
+              actions={canEdit ? (
+                <>
+                  <button
+                    className="change-action"
+                    type="button"
+                    title="Discard all changes"
+                    aria-label="Discard all changes"
+                    disabled={actionBusy}
+                    onClick={() => void runGitActionAll("discard", unstagedChanges)}
+                  >
+                    <IconUndo />
+                  </button>
+                  <button
+                    className="change-action"
+                    type="button"
+                    title="Stage all changes"
+                    aria-label="Stage all changes"
+                    disabled={actionBusy}
+                    onClick={() => void runGitActionAll("stage", unstagedChanges)}
+                  >
+                    <IconPlus />
+                  </button>
+                </>
+              ) : null}
+            >
+              {unstagedChanges.map((item) => (
+                <ChangeRow
+                  key={`unstaged:${item.path}`}
+                  item={item}
+                  side="unstaged"
+                  active={selectedPath === item.path}
+                  canEdit={canEdit}
+                  busy={actionBusy}
+                  onOpen={() => selectFile(item.path)}
+                  onOpenFile={() => selectFile(item.path, "code")}
+                  onDiscard={() => void runGitAction("discard", item.path)}
+                  onStage={() => void runGitAction("stage", item.path)}
+                />
+              ))}
+            </ChangeSection>
+          )}
         </div>
 
         {(selectedPath || expanded) && (
@@ -768,6 +973,119 @@ export function FileManagerDrawer({
         )}
       </div>
     </aside>
+  );
+}
+
+function ChangeSection({
+  title,
+  open,
+  count,
+  onToggle,
+  actions,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  count: number;
+  onToggle: () => void;
+  actions: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="change-section">
+      <div className="change-section-head">
+        <button className="change-section-toggle" type="button" aria-expanded={open} onClick={onToggle}>
+          <IconChevron open={open} />
+          <span>{title}</span>
+        </button>
+        <span className="change-section-side">
+          {actions && <span className="change-section-actions">{actions}</span>}
+          <span className="file-badge">{count}</span>
+        </span>
+      </div>
+      {open && children}
+    </section>
+  );
+}
+
+function ChangeRow({
+  item,
+  side,
+  active,
+  canEdit,
+  busy,
+  onOpen,
+  onOpenFile,
+  onStage,
+  onUnstage,
+  onDiscard,
+}: {
+  item: RepoChangeEntry;
+  side: "staged" | "unstaged";
+  active: boolean;
+  canEdit: boolean;
+  busy: boolean;
+  onOpen: () => void;
+  onOpenFile: () => void;
+  onStage?: () => void;
+  onUnstage?: () => void;
+  onDiscard?: () => void;
+}) {
+  const name = item.path.split("/").pop() || item.path;
+  const dir = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
+  const status = side === "staged" ? item.indexStatus ?? item.status : item.worktreeStatus ?? item.status;
+  return (
+    <div className={active ? "file-row change-row active" : "file-row change-row"} role="treeitem" aria-selected={active}>
+      <button className="change-row-main" type="button" title={item.path} onClick={onOpen}>
+        <IconFile />
+        <span className="file-name">{name}</span>
+        {dir && <span className="file-dir">{dir}</span>}
+      </button>
+      <span className="change-row-actions">
+        <button className="change-action" type="button" title="Open file" aria-label={`Open ${item.path}`} onClick={onOpenFile}>
+          <IconFile />
+        </button>
+        {canEdit && side === "unstaged" && (
+          <button
+            className="change-action"
+            type="button"
+            title="Discard changes"
+            aria-label={`Discard changes to ${item.path}`}
+            disabled={busy}
+            onClick={onDiscard}
+          >
+            <IconUndo />
+          </button>
+        )}
+        {canEdit && side === "unstaged" && (
+          <button
+            className="change-action"
+            type="button"
+            title="Stage changes"
+            aria-label={`Stage ${item.path}`}
+            disabled={busy}
+            onClick={onStage}
+          >
+            <IconPlus />
+          </button>
+        )}
+        {canEdit && side === "staged" && (
+          <button
+            className="change-action"
+            type="button"
+            title="Unstage changes"
+            aria-label={`Unstage ${item.path}`}
+            disabled={busy}
+            onClick={onUnstage}
+          >
+            <IconMinus />
+          </button>
+        )}
+      </span>
+      <span className={`git-status status-${statusKey(status)}`} title={statusLabel(status)}>
+        {status === "?" ? "U" : status}
+      </span>
+    </div>
   );
 }
 

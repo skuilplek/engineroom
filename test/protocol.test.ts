@@ -674,3 +674,67 @@ test("repository archive and delete requests keep a workspace and a folder name"
   assert.throws(() => parseRunnerRequest({ id: "r5", type: "set_repository_archived", workspace: "   ", archived: false }));
 });
 
+test("git change requests keep paths inside the repo and reject an empty commit", () => {
+  const staged = parseRunnerRequest({
+    id: "g1",
+    type: "git_stage",
+    workspace: "/home/alice/Sites/proj",
+    path: " src/app.ts ",
+  });
+  assert.equal(staged.type, "git_stage");
+  if (staged.type === "git_stage") assert.equal(staged.path, "src/app.ts");
+  const unstaged = parseRunnerRequest({
+    id: "g2",
+    type: "git_unstage",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+  });
+  assert.equal(unstaged.type, "git_unstage");
+  const discarded = parseRunnerRequest({
+    id: "g3",
+    type: "git_discard",
+    workspace: "/home/alice/Sites/proj",
+    path: "src/app.ts",
+  });
+  assert.equal(discarded.type, "git_discard");
+  assert.throws(() => parseRunnerRequest({
+    id: "g4",
+    type: "git_stage",
+    workspace: "/home/alice/Sites/proj",
+    path: "../secret",
+  }));
+  assert.throws(() => parseRunnerRequest({
+    id: "g5",
+    type: "git_commit",
+    workspace: "/home/alice/Sites/proj",
+    message: "   ",
+  }));
+  assert.throws(() => parseRunnerRequest({
+    id: "g6",
+    type: "git_commit",
+    workspace: "/home/alice/Sites/proj",
+    message: "has\0null",
+  }));
+  const committed = parseRunnerRequest({
+    id: "g7",
+    type: "git_commit",
+    workspace: "  /home/alice/Sites/proj  ",
+    message: "  ship it  ",
+    stageVisible: true,
+  });
+  assert.equal(committed.type, "git_commit");
+  if (committed.type === "git_commit") {
+    assert.equal(committed.workspace, "/home/alice/Sites/proj");
+    assert.equal(committed.message, "ship it");
+    assert.equal(committed.stageVisible, true);
+  }
+  const plain = parseRunnerRequest({
+    id: "g8",
+    type: "git_commit",
+    workspace: "/home/alice/Sites/proj",
+    message: "ship it",
+    stageVisible: false,
+  });
+  if (plain.type === "git_commit") assert.equal(plain.stageVisible, undefined);
+});
+

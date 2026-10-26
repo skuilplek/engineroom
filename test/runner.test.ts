@@ -397,10 +397,17 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
       ["src", "src/index.ts", "src/new.ts"],
     );
     assert.deepEqual(
-      defaultResult.changes.map((item) => ({ path: item.path, status: item.status })),
+      defaultResult.changes.map((item) => ({
+        path: item.path,
+        status: item.status,
+        staged: item.staged,
+        unstaged: item.unstaged,
+        indexStatus: item.indexStatus,
+        worktreeStatus: item.worktreeStatus,
+      })),
       [
-        { path: "src/index.ts", status: "M" },
-        { path: "src/new.ts", status: "?" },
+        { path: "src/index.ts", status: "M", staged: false, unstaged: true, indexStatus: undefined, worktreeStatus: "M" },
+        { path: "src/new.ts", status: "?", staged: false, unstaged: true, indexStatus: undefined, worktreeStatus: "?" },
       ],
     );
 
@@ -871,6 +878,107 @@ test("a project archive is a zip in /tmp and does not follow symlinks", async ()
     for (const file of created) await rm(file, { force: true });
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("stage, unstage, discard, and commit keep hidden files out of the index", async () => {
+  const {
+    commitRepositoryChanges,
+    discardRepositoryChange,
+    listRepositoryFiles,
+    stageRepositoryChange,
+    unstageRepositoryChange,
+  } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-git-change-"));
+  const repo = path.join(home, "Sites", "proj");
+  const visibility = { showHidden: false, showGitignored: false, showGitDir: false };
+  const revealed = { showHidden: true, showGitignored: true, showGitDir: false };
+  await mkdir(repo, { recursive: true });
+  try {
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.email", "alice@example.com"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "Alice"], { cwd: repo });
+    await writeFile(path.join(repo, "kept.ts"), "one\n");
+    await writeFile(path.join(repo, "dirty.ts"), "base\n");
+    await execFileAsync("git", ["add", "kept.ts", "dirty.ts"], { cwd: repo });
+    await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+
+    await writeFile(path.join(repo, "kept.ts"), "two\n");
+    await execFileAsync("git", ["add", "kept.ts"], { cwd: repo });
+    await writeFile(path.join(repo, "kept.ts"), "three\n");
+    await writeFile(path.join(repo, "dirty.ts"), "edited\n");
+    await writeFile(path.join(repo, "added.ts"), "new\n");
+    await execFileAsync("git", ["add", "added.ts"], { cwd: repo });
+    await writeFile(path.join(repo, "fresh.ts"), "untracked\n");
+    await writeFile(path.join(repo, ".env"), "SECRET=1\n");
+    await setEnabledRepositories(home, [repo]);
+
+    const listed = await listRepositoryFiles(home, repo, visibility);
+    const byPath = new Map(listed.changes.map((item) => [item.path, item]));
+    assert.equal(byPath.get("kept.ts")?.staged, true);
+    assert.equal(byPath.get("kept.ts")?.unstaged, true);
+    assert.equal(byPath.get("kept.ts")?.indexStatus, "M");
+    assert.equal(byPath.get("kept.ts")?.worktreeStatus, "M");
+    assert.equal(byPath.get("dirty.ts")?.staged, false);
+    assert.equal(byPath.get("dirty.ts")?.unstaged, true);
+    assert.equal(byPath.get("dirty.ts")?.indexStatus, undefined);
+    assert.equal(byPath.get("dirty.ts")?.worktreeStatus, "M");
+    assert.equal(byPath.get("added.ts")?.staged, true);
+    assert.equal(byPath.get("added.ts")?.unstaged, false);
+    assert.equal(byPath.get("added.ts")?.indexStatus, "A");
+    assert.equal(byPath.get("fresh.ts")?.staged, false);
+    assert.equal(byPath.get("fresh.ts")?.worktreeStatus, "?");
+    assert.equal(byPath.has(".env"), false);
+
+    await assert.rejects(() => stageRepositoryChange(home, repo, ".env", visibility), /hidden by policy/);
+    await assert.rejects(() => stageRepositoryChange(home, repo, "../secret", visibility), /invalid file path/);
+
+    await discardRepositoryChange(home, repo, "kept.ts", visibility);
+    assert.equal(await readFile(path.join(repo, "kept.ts"), "utf8"), "two\n");
+    const kept = (await listRepositoryFiles(home, repo, visibility)).changes.find((item) => item.path === "kept.ts");
+    assert.equal(kept?.staged, true);
+    assert.equal(kept?.unstaged, false);
+    assert.equal(kept?.indexStatus, "M");
+
+    await discardRepositoryChange(home, repo, "fresh.ts", visibility);
+    await assert.rejects(() => readFile(path.join(repo, "fresh.ts"), "utf8"));
+    const afterDelete = await listRepositoryFiles(home, repo, visibility);
+    assert.equal(afterDelete.changes.some((item) => item.path === "fresh.ts"), false);
+    assert.equal(afterDelete.changes.some((item) => item.path === "dirty.ts"), true);
+
+    await stageRepositoryChange(home, repo, "dirty.ts", visibility);
+    const stagedDirty = (await listRepositoryFiles(home, repo, visibility)).changes.find((item) => item.path === "dirty.ts");
+    assert.equal(stagedDirty?.staged, true);
+    assert.equal(stagedDirty?.unstaged, false);
+
+    await unstageRepositoryChange(home, repo, "added.ts", visibility);
+    const unstagedAdded = (await listRepositoryFiles(home, repo, visibility)).changes.find((item) => item.path === "added.ts");
+    assert.equal(unstagedAdded?.staged, false);
+    assert.equal(unstagedAdded?.worktreeStatus, "?");
+
+    await commitRepositoryChanges(home, repo, "save the edit", true, visibility);
+    const saved = await execFileAsync("git", ["log", "-1", "--format=%s"], { cwd: repo });
+    assert.equal(saved.stdout.trim(), "save the edit");
+    const afterCommit = await listRepositoryFiles(home, repo, visibility);
+    assert.equal(afterCommit.changes.some((item) => item.path === "kept.ts"), false);
+    assert.equal(afterCommit.changes.some((item) => item.path === "dirty.ts"), false);
+    assert.equal(afterCommit.changes.find((item) => item.path === "added.ts")?.worktreeStatus, "?");
+    assert.equal(
+      (await listRepositoryFiles(home, repo, revealed)).changes.some((item) => item.path === ".env"),
+      true,
+    );
+
+    await commitRepositoryChanges(home, repo, "add the new file", true, visibility);
+    const added = await execFileAsync("git", ["log", "-1", "--format=%s"], { cwd: repo });
+    assert.equal(added.stdout.trim(), "add the new file");
+    assert.equal((await listRepositoryFiles(home, repo, visibility)).changes.length, 0);
+    assert.equal(
+      (await listRepositoryFiles(home, repo, revealed)).changes.some((item) => item.path === ".env"),
+      true,
+    );
+    await assert.rejects(() => commitRepositoryChanges(home, repo, "again", false, visibility), /nothing to commit/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 

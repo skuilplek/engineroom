@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   assertRepoRelativePath,
@@ -17,6 +17,7 @@ import {
   type RepoFilesResult,
 } from "@engineroom/protocol";
 import { resolveRepoWorkspace } from "./store.ts";
+import { isGitRepository } from "./workspace.ts";
 
 const MAX_FILES = 5000;
 const MAX_DEPTH = 16;
@@ -585,11 +586,17 @@ async function readGitStatus(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
     }
     const status = classifyStatus(x, y);
+    const staged = x !== " " && x !== "?" && x !== "!";
+    const unstaged = y !== " " && y !== "!";
+    const indexStatus = staged ? porcelainStatus(x) : undefined;
+    const worktreeStatus = unstaged ? porcelainStatus(y) : undefined;
     rawChanges.push({
       path: cleanPath,
       status,
-      staged: x !== " " && x !== "?" && x !== "!",
-      unstaged: y !== " " && y !== "!",
+      staged,
+      unstaged,
+      ...(indexStatus ? { indexStatus } : {}),
+      ...(worktreeStatus ? { worktreeStatus } : {}),
     });
   }
 
@@ -618,6 +625,27 @@ function parseBranchHeader(header: string): string {
   return trimmed;
 }
 
+function porcelainStatus(letter: string): RepoChangeStatus | undefined {
+  switch (letter) {
+    case " ":
+    case "!":
+      return undefined;
+    case "?":
+      return "?";
+    case "A":
+    case "C":
+      return "A";
+    case "D":
+      return "D";
+    case "R":
+      return "R";
+    case "U":
+      return "U";
+    default:
+      return "M";
+  }
+}
+
 function classifyStatus(x: string, y: string): RepoChangeStatus {
   if (x === "?" || y === "?") return "?";
   if (x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D")) return "U";
@@ -625,6 +653,111 @@ function classifyStatus(x: string, y: string): RepoChangeStatus {
   if (x === "A" || y === "A") return "A";
   if (x === "R" || y === "R") return "R";
   return "M";
+}
+
+async function visibleChange(
+  repoReal: string,
+  relPath: string,
+  visibility: FileVisibility,
+): Promise<RepoChangeEntry> {
+  const { changes } = await readGitStatus(repoReal, visibility);
+  const entry = changes.find((item) => item.path === relPath);
+  if (!entry) throw new Error("file is not a visible change");
+  return entry;
+}
+
+export async function stageRepositoryChange(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  if (!(await isGitRepository(repoReal))) throw new Error("not a git repository");
+  const { relPath } = await assertEditablePath(repoReal, rawPath, visibility);
+  const entry = await visibleChange(repoReal, relPath, visibility);
+  if (!entry.unstaged) throw new Error("file has no unstaged changes");
+  await runGitChecked(repoReal, ["add", "--", relPath]);
+  return { path: relPath };
+}
+
+export async function unstageRepositoryChange(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  if (!(await isGitRepository(repoReal))) throw new Error("not a git repository");
+  const { relPath } = await assertEditablePath(repoReal, rawPath, visibility);
+  const entry = await visibleChange(repoReal, relPath, visibility);
+  if (!entry.staged) throw new Error("file is not staged");
+  await runGitChecked(repoReal, ["restore", "--staged", "--", relPath]);
+  return { path: relPath };
+}
+
+export async function discardRepositoryChange(
+  home: string,
+  workspace: string,
+  rawPath: string,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ path: string }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  if (!(await isGitRepository(repoReal))) throw new Error("not a git repository");
+  const { relPath } = await assertEditablePath(repoReal, rawPath, visibility);
+  const entry = await visibleChange(repoReal, relPath, visibility);
+  if (!entry.unstaged) throw new Error("file has no unstaged changes");
+  if (entry.worktreeStatus === "?" || entry.status === "?") {
+    await deleteUntrackedFile(repoReal, relPath);
+    return { path: relPath };
+  }
+  await runGitChecked(repoReal, ["restore", "--worktree", "--", relPath]);
+  return { path: relPath };
+}
+
+async function deleteUntrackedFile(repoReal: string, relPath: string): Promise<void> {
+  const candidate = path.resolve(repoReal, relPath);
+  if (!isInsidePath(repoReal, candidate) || candidate === repoReal) throw new Error("invalid file path");
+  let info;
+  try {
+    info = await lstat(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("file not found");
+    throw error;
+  }
+  if (info.isSymbolicLink()) {
+    await unlink(candidate);
+    return;
+  }
+  if (!info.isFile()) throw new Error("not a regular file");
+  const resolved = await realpath(candidate);
+  if (!isInsidePath(repoReal, resolved) || resolved === repoReal) throw new Error("invalid file path");
+  await unlink(resolved);
+}
+
+export async function commitRepositoryChanges(
+  home: string,
+  workspace: string,
+  message: string,
+  stageVisible = false,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<{ ok: true }> {
+  const repoReal = await resolveRepoWorkspace(home, workspace);
+  if (!(await isGitRepository(repoReal))) throw new Error("not a git repository");
+  const trimmed = message.trim();
+  if (!trimmed) throw new Error("invalid commit message");
+  const { changes } = await readGitStatus(repoReal, visibility);
+  const staged = changes.some((item) => item.staged);
+  if (!staged) {
+    if (!stageVisible) throw new Error("nothing to commit");
+    const unstaged = changes.filter((item) => item.unstaged);
+    if (unstaged.length === 0) throw new Error("nothing to commit");
+    for (const item of unstaged) {
+      await runGitChecked(repoReal, ["add", "--", item.path]);
+    }
+  }
+  await runGitChecked(repoReal, ["commit", "-F", "-"], `${trimmed}\n`);
+  return { ok: true };
 }
 
 async function readHeadContent(
@@ -700,4 +833,54 @@ function runGit(
       child.stdin.end();
     }
   });
+}
+
+function runGitChecked(cwd: string, args: string[], stdinText?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "git",
+      ["-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", ...args],
+      {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_LITERAL_PATHSPECS: "1",
+        },
+      },
+    );
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("git timed out"));
+    }, 30_000);
+    child.stdout.on("data", () => undefined);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-2_000);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(cleanGitError(stderr)));
+    });
+    if (stdinText != null) child.stdin.end(stdinText);
+    else child.stdin.end();
+  });
+}
+
+function cleanGitError(stderr: string): string {
+  const line = stderr
+    .split("\n")
+    .map((item) => item.replace(/^fatal:\s*/i, "").trim())
+    .filter((item) => item && !item.startsWith("hint:"))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line.slice(0, 500) || "git failed";
 }

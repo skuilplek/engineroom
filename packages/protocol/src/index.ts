@@ -183,6 +183,10 @@ export interface RepoChangeEntry {
   status: RepoChangeStatus;
   staged: boolean;
   unstaged: boolean;
+  /** Index letter when the file is staged. */
+  indexStatus?: RepoChangeStatus;
+  /** Worktree letter when the file has unstaged changes. Untracked files use "?". */
+  worktreeStatus?: RepoChangeStatus;
 }
 
 export interface RepoFilesResult {
@@ -369,6 +373,17 @@ export type RunnerRequest =
   | { id: string; type: "git_status"; workspace: string }
   | { id: string; type: "git_init"; workspace: string }
   | { id: string; type: "git_switch"; workspace: string; branch: string }
+  | { id: string; type: "git_stage"; workspace: string; path: string; visibility?: FileVisibility }
+  | { id: string; type: "git_unstage"; workspace: string; path: string; visibility?: FileVisibility }
+  | { id: string; type: "git_discard"; workspace: string; path: string; visibility?: FileVisibility }
+  | {
+      id: string;
+      type: "git_commit";
+      workspace: string;
+      message: string;
+      stageVisible?: boolean;
+      visibility?: FileVisibility;
+    }
   | { id: string; type: "pty_open"; chatId: string; cols: number; rows: number }
   | { id: string; type: "pty_input"; chatId: string; data: string }
   | { id: string; type: "pty_resize"; chatId: string; cols: number; rows: number }
@@ -721,6 +736,25 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         workspace: requiredWorkspace(body.workspace),
         branch: assertBranchName(body.branch),
       };
+    case "git_stage":
+    case "git_unstage":
+    case "git_discard":
+      return {
+        id: body.id,
+        type: body.type,
+        workspace: requiredWorkspace(body.workspace),
+        path: assertRepoRelativePath(body.path),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    case "git_commit":
+      return {
+        id: body.id,
+        type: "git_commit",
+        workspace: requiredWorkspace(body.workspace),
+        message: parseCommitMessage(body.message),
+        ...(body.stageVisible === true ? { stageVisible: true } : {}),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
     case "pty_open":
     case "pty_resize":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), cols: parseDim(body.cols), rows: parseDim(body.rows) };
@@ -906,6 +940,15 @@ export function parseTransferBase64(value: unknown): string {
   if (cleaned.length > maxChars) throw new Error("file is too large");
   if (cleaned.length > 0 && !/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) throw new Error("invalid file content");
   return cleaned;
+}
+
+const MAX_COMMIT_MESSAGE = 50_000;
+
+export function parseCommitMessage(value: unknown): string {
+  if (typeof value !== "string" || value.includes("\0")) throw new Error("invalid commit message");
+  const message = value.trim();
+  if (!message || message.length > MAX_COMMIT_MESSAGE) throw new Error("invalid commit message");
+  return message;
 }
 
 export function assertRepoRelativePath(value: unknown): string {

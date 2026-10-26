@@ -36,12 +36,16 @@ import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
 import { createRepository, loadGrants, syncGrantedRepositories, type CloneRepository } from "./repos.ts";
 import {
+  commitRepositoryChanges,
   createRepositoryEntry,
   deleteRepositoryEntry,
+  discardRepositoryChange,
   downloadRepositoryFile,
   listRepositoryFiles,
   readRepositoryFile,
   renameRepositoryEntry,
+  stageRepositoryChange,
+  unstageRepositoryChange,
   uploadRepositoryFile,
   writeRepositoryFile,
 } from "./files.ts";
@@ -356,6 +360,20 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return gitInitWorkspace(home, request.workspace);
       case "git_switch":
         return gitSwitch(home, request.workspace, request.branch);
+      case "git_stage":
+        return stageRepositoryChange(home, request.workspace, request.path, request.visibility);
+      case "git_unstage":
+        return unstageRepositoryChange(home, request.workspace, request.path, request.visibility);
+      case "git_discard":
+        return discardRepositoryChange(home, request.workspace, request.path, request.visibility);
+      case "git_commit":
+        return commitRepositoryChanges(
+          home,
+          request.workspace,
+          request.message,
+          request.stageVisible === true,
+          request.visibility,
+        );
       case "list_sessions":
         return listSessions(request.agent);
       case "import_session":

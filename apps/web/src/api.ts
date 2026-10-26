@@ -195,6 +195,37 @@ export function switchGitBranch(workspace: string, branch: string) {
   });
 }
 
+export function stageRepoChange(workspace: string, filePath: string) {
+  return gitFileAction(workspace, "stage", filePath);
+}
+
+export function unstageRepoChange(workspace: string, filePath: string) {
+  return gitFileAction(workspace, "unstage", filePath);
+}
+
+export function discardRepoChange(workspace: string, filePath: string) {
+  return gitFileAction(workspace, "discard", filePath);
+}
+
+export function commitRepoChanges(workspace: string, message: string, stageVisible = false) {
+  return api<{ ok: true }>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace,
+      action: "commit",
+      message,
+      ...(stageVisible ? { stageVisible: true } : {}),
+    }),
+  });
+}
+
+function gitFileAction(workspace: string, action: "stage" | "unstage" | "discard", filePath: string) {
+  return api<{ path: string }>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action, path: filePath }),
+  });
+}
+
 export function listRepoFiles(workspace: string) {
   return api<RepoFilesResult>(`/api/repositories/files?workspace=${encodeURIComponent(workspace)}`);
 }
