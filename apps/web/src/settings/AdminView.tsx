@@ -48,6 +48,7 @@ import {
 } from "../api.ts";
 import { groupTranscript } from "../chat/group.ts";
 import { ToolBlock } from "../chat/ToolBlock.tsx";
+import { CopyResponse } from "../chat/CopyResponse.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
 import { message, relativeTime } from "../format.ts";
 
@@ -1338,7 +1339,12 @@ function UserConversations({
                 {detail && blocks.map((block, index) => {
                   if (block.kind === "text") {
                     if (block.role === "user") return <div className="bubble user" key={index}>{block.text}</div>;
-                    return <div className="bubble assistant" key={index}><Markdown text={block.text} /></div>;
+                    return (
+                      <div className="bubble assistant" key={index}>
+                        <Markdown text={block.text} />
+                        <CopyResponse text={block.text} />
+                      </div>
+                    );
                   }
                   if (block.kind === "thinking") {
                     return (

@@ -8,6 +8,7 @@ import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { groupTranscript } from "./group.ts";
 import { ToolBlock } from "./ToolBlock.tsx";
+import { CopyResponse } from "./CopyResponse.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { usePromptHeight } from "./promptHeight.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
@@ -192,7 +193,12 @@ export function ChatView({
               const last = index === blocks.length - 1;
               if (block.kind === "text") {
                 if (block.role === "user") return <div className="bubble user" key={index}>{block.text}</div>;
-                return <div className="bubble assistant" key={index}><Markdown text={block.text} streaming={last && live.running} /></div>;
+                return (
+                  <div className="bubble assistant" key={index}>
+                    <Markdown text={block.text} streaming={last && live.running} />
+                    <CopyResponse text={block.text} />
+                  </div>
+                );
               }
               if (block.kind === "thinking") {
                 return (
