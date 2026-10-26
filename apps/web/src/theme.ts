@@ -90,6 +90,20 @@ export const THEME_CATALOG: readonly ThemeDescriptor[] = [
       border: "#00d1e0",
     },
   },
+  {
+    id: "pi",
+    name: "Pi",
+    tagline: "Moonstone serif, Departure Mono, tidal blue",
+    tier: "elaborate",
+    swatches: {
+      bg: "#0d1116",
+      sidebar: "#161d27",
+      panel: "#212730",
+      accent: "#6a9fcc",
+      ink: "#ebe7e4",
+      border: "#495059",
+    },
+  },
 ];
 
 export function normalizeTheme(value: unknown): ThemePreference {

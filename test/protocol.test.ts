@@ -314,7 +314,7 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(next.defaultModel, "sonnet");
   assert.equal(next.binaries.claude, undefined);
   assert.equal(next.theme, "dark");
-  assert.deepEqual(THEMES, ["dark", "light", "haxor", "midnight", "engine"]);
+  assert.deepEqual(THEMES, ["dark", "light", "haxor", "midnight", "engine", "pi"]);
   for (const theme of THEMES) {
     assert.equal(isTheme(theme), true);
     assert.equal(parseSettingsPatch({ theme }).theme, theme);
