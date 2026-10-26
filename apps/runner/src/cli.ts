@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, lstat, open, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
@@ -169,6 +169,8 @@ function runPathProbe(home: string, base: NodeJS.ProcessEnv, shell: string, args
   });
 }
 
+const PI_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
 export async function resolveBinary(
   override: string | undefined,
   names: string[],
@@ -177,21 +179,131 @@ export async function resolveBinary(
   if (override) {
     if (!path.isAbsolute(override)) throw new Error("binary override must be an absolute path");
     await access(override, constants.X_OK);
-    return override;
+    return chooseExecutable(override, env.HOME);
   }
   const dirs = (env.PATH || "").split(":").filter(Boolean);
+  let missingVersion: string | undefined;
   for (const dir of dirs) {
     for (const name of names) {
       const full = path.join(dir, name);
       try {
         await access(full, constants.X_OK);
-        return full;
       } catch {
         continue;
       }
+      try {
+        return await chooseExecutable(full, env.HOME);
+      } catch (error) {
+        if (!(error instanceof MissingPiVersion)) throw error;
+        missingVersion = error.versionFile;
+      }
     }
   }
+  if (missingVersion) throw new MissingPiVersion(missingVersion);
   throw new Error(`could not find ${names.join(" or ")} on PATH`);
+}
+
+class MissingPiVersion extends Error {
+  readonly versionFile: string;
+
+  constructor(versionFile: string) {
+    super(`Could not read managed Pi version from ${versionFile}.`);
+    this.name = "MissingPiVersion";
+    this.versionFile = versionFile;
+  }
+}
+
+async function chooseExecutable(candidate: string, home: string | undefined): Promise<string> {
+  if (path.basename(candidate) !== "pi") return candidate;
+  const release = await managedPiRelease(candidate, home);
+  return release ?? candidate;
+}
+
+async function managedPiRelease(candidate: string, home: string | undefined): Promise<string | null> {
+  let text = "";
+  try {
+    text = await readHead(candidate);
+  } catch {
+    return null;
+  }
+  if (!text.includes("Could not read managed Pi version")) return null;
+  const derived = await managedInstallRoot(candidate);
+  const roots = [derived];
+  if (home) {
+    for (const extra of [path.join(home, ".pi", "agent", "install"), path.join(home, ".local", "install")]) {
+      if (!roots.includes(extra)) roots.push(extra);
+    }
+  }
+  for (const root of roots) {
+    const bin = await releaseBinary(root);
+    if (bin) return bin;
+  }
+  throw new MissingPiVersion(path.join(derived, "current-version"));
+}
+
+async function readHead(file: string): Promise<string> {
+  const handle = await open(file, "r");
+  try {
+    const buf = Buffer.alloc(4096);
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function managedInstallRoot(launcher: string): Promise<string> {
+  let current = path.resolve(launcher);
+  for (let hop = 0; hop < 8; hop += 1) {
+    const info = await lstat(current);
+    if (!info.isSymbolicLink()) break;
+    const target = await readlink(current);
+    current = path.resolve(path.dirname(current), target);
+  }
+  return path.join(path.dirname(path.dirname(current)), "install");
+}
+
+async function releaseBinary(installRoot: string): Promise<string | null> {
+  const selected = await readVersion(path.join(installRoot, "current-version"));
+  if (selected) {
+    const bin = await executableRelease(installRoot, selected);
+    if (bin) return bin;
+  }
+  let names: string[] = [];
+  try {
+    names = await readdir(path.join(installRoot, "releases"));
+  } catch {
+    return null;
+  }
+  const versions = names.filter((name) => PI_VERSION_RE.test(name)).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  for (const version of versions.reverse()) {
+    if (version === selected) continue;
+    const bin = await executableRelease(installRoot, version);
+    if (bin) return bin;
+  }
+  return null;
+}
+
+async function readVersion(file: string): Promise<string> {
+  try {
+    const version = (await readFile(file, "utf8")).split(/\r?\n/, 1)[0]?.trim() ?? "";
+    return PI_VERSION_RE.test(version) ? version : "";
+  } catch {
+    return "";
+  }
+}
+
+async function executableRelease(installRoot: string, version: string): Promise<string | null> {
+  const bin = path.join(installRoot, "releases", version, "node_modules", ".bin", "pi");
+  try {
+    await access(bin, constants.X_OK);
+    const root = await realpath(installRoot);
+    const resolved = await realpath(bin);
+    if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return null;
+    return bin;
+  } catch {
+    return null;
+  }
 }
 
 export function binaryNames(agent: AgentId, catalog: readonly { id: string; binary: string }[] = []): string[] {

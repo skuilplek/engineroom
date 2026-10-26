@@ -30,7 +30,7 @@ import {
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
-import { childEnv, claudeArgs, cursorArgs, parseLoginPath, piArgs } from "../apps/runner/src/cli.ts";
+import { childEnv, claudeArgs, cursorArgs, parseLoginPath, piArgs, resolveBinary } from "../apps/runner/src/cli.ts";
 import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
@@ -196,6 +196,48 @@ test("child env takes ~/.env values except identity and loader variables", async
     assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, "/usr/local/share/pi/agent");
     await writeFile(path.join(dir, "policy.json"), JSON.stringify({ piAuth: "user" }));
     assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, undefined);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a managed Pi launcher without current-version runs the installed release", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-pi-launch-"));
+  const binDir = path.join(home, ".local", "bin");
+  const install = path.join(home, ".local", "install");
+  const older = path.join(install, "releases", "1.2.0", "node_modules", ".bin", "pi");
+  const releaseBin = path.join(install, "releases", "1.4.0", "node_modules", ".bin", "pi");
+  const plainDir = path.join(home, "plain");
+  const plain = path.join(plainDir, "pi");
+  const launcher = `#!/bin/sh
+pi_current_file="$HOME/.local/install/current-version"
+if ! IFS= read -r pi_current_version < "$pi_current_file"; then
+  printf 'Could not read managed Pi version from %s.\\n' "$pi_current_file" >&2
+  exit 1
+fi
+`;
+  try {
+    await mkdir(path.dirname(older), { recursive: true });
+    await mkdir(path.dirname(releaseBin), { recursive: true });
+    await writeFile(older, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await writeFile(releaseBin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await mkdir(binDir, { recursive: true });
+    await writeFile(path.join(binDir, "pi"), launcher, { mode: 0o755 });
+    const resolved = await resolveBinary(undefined, ["pi"], { HOME: home, PATH: binDir });
+    assert.equal(resolved, releaseBin);
+    await writeFile(path.join(install, "current-version"), "1.2.0\n");
+    const pinned = await resolveBinary(undefined, ["pi"], { HOME: home, PATH: binDir });
+    assert.equal(pinned, older);
+
+    await rm(install, { recursive: true, force: true });
+    await mkdir(plainDir, { recursive: true });
+    await writeFile(plain, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const fallback = await resolveBinary(undefined, ["pi"], { HOME: home, PATH: `${binDir}:${plainDir}` });
+    assert.equal(fallback, plain);
+    await assert.rejects(
+      () => resolveBinary(undefined, ["pi"], { HOME: home, PATH: binDir }),
+      /Could not read managed Pi version from/,
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }
