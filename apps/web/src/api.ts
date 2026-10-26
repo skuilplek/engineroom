@@ -10,6 +10,7 @@ import type {
   RepoFileContent,
   RepoFilesResult,
   RepositoryEntry,
+  CommandBlockStyle,
   Settings,
   SettingsPatch,
   ThemePreference,
@@ -42,6 +43,7 @@ export interface Session {
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;
+  commandBlockStyle?: CommandBlockStyle;
   fileVisibility?: FileVisibility;
   projectCreate: boolean;
   projectDownloads: boolean;

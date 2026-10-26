@@ -8,6 +8,7 @@ import {
   cleanModel,
   DEFAULT_SETTINGS,
   isAgentId,
+  isCommandBlockStyle,
   isTheme,
   parseVisibleChats,
   type AgentId,
@@ -49,6 +50,7 @@ export async function loadSettings(home: string): Promise<Settings> {
       patch.permission = parsed.permission;
     }
     if (isTheme(parsed.theme)) patch.theme = parsed.theme;
+    if (isCommandBlockStyle(parsed.commandBlockStyle)) patch.commandBlockStyle = parsed.commandBlockStyle;
     if (typeof parsed.filesReadOnly === "boolean") patch.filesReadOnly = parsed.filesReadOnly;
     if (typeof parsed.visibleChats === "number") {
       try {

@@ -53,12 +53,21 @@ export function isTheme(value: unknown): value is ThemePreference {
   return typeof value === "string" && (THEMES as readonly string[]).includes(value);
 }
 
+export const COMMAND_BLOCK_STYLES = ["prompt", "window"] as const;
+
+export type CommandBlockStyle = (typeof COMMAND_BLOCK_STYLES)[number];
+
+export function isCommandBlockStyle(value: unknown): value is CommandBlockStyle {
+  return typeof value === "string" && (COMMAND_BLOCK_STYLES as readonly string[]).includes(value);
+}
+
 export interface Settings {
   defaultAgent: AgentId;
   defaultModel: string;
   binaries: Partial<Record<AgentId, string>>;
   permission: PermissionPolicy;
   theme: ThemePreference;
+  commandBlockStyle: CommandBlockStyle;
   filesReadOnly?: boolean;
   visibleChats: number;
   lockedBinaries?: AgentId[];
@@ -70,6 +79,7 @@ export interface SettingsPatch {
   binaries?: Partial<Record<AgentId, string | null>>;
   permission?: PermissionPolicy;
   theme?: ThemePreference;
+  commandBlockStyle?: CommandBlockStyle;
   filesReadOnly?: boolean;
   visibleChats?: number;
 }
@@ -427,6 +437,7 @@ export const DEFAULT_SETTINGS: Settings = {
   binaries: {},
   permission: "ask",
   theme: "dark",
+  commandBlockStyle: "prompt",
   filesReadOnly: false,
   visibleChats: 5,
 };
@@ -1352,6 +1363,10 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     if (!isTheme(body.theme)) throw new Error("invalid theme");
     patch.theme = body.theme;
   }
+  if (body.commandBlockStyle != null) {
+    if (!isCommandBlockStyle(body.commandBlockStyle)) throw new Error("invalid commandBlockStyle");
+    patch.commandBlockStyle = body.commandBlockStyle;
+  }
   if (body.filesReadOnly != null) {
     if (typeof body.filesReadOnly !== "boolean") throw new Error("invalid filesReadOnly");
     patch.filesReadOnly = body.filesReadOnly;
@@ -1384,6 +1399,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     binaries: { ...current.binaries },
     permission: patch.permission ?? current.permission ?? "ask",
     theme: patch.theme ?? current.theme ?? "dark",
+    commandBlockStyle: patch.commandBlockStyle ?? current.commandBlockStyle ?? "prompt",
     filesReadOnly: patch.filesReadOnly ?? current.filesReadOnly ?? false,
     visibleChats: patch.visibleChats ?? current.visibleChats ?? 5,
   };

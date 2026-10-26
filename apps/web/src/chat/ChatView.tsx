@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { RepositoryEntry, StreamEvent } from "@engineroom/protocol";
+import type { CommandBlockStyle, RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { workspaceLabel } from "../format.ts";
@@ -27,6 +27,7 @@ export function ChatView({
   onFilesChanged,
   onUnavailable,
   username,
+  commandBlockStyle = "prompt",
   projectCreate,
   onReposChanged,
 }: {
@@ -43,6 +44,7 @@ export function ChatView({
   onFilesChanged?: () => void;
   onUnavailable: () => void;
   username: string;
+  commandBlockStyle?: CommandBlockStyle;
   projectCreate: boolean;
   onReposChanged?: () => void;
 }) {
@@ -211,7 +213,7 @@ export function ChatView({
                   </details>
                 );
               }
-              if (block.kind === "tool") return <ToolBlock key={index} block={block} showRunning />;
+              if (block.kind === "tool") return <ToolBlock key={index} block={block} showRunning style={commandBlockStyle} />;
               if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
               return <p className="status" key={index}>{block.text}</p>;
             })}

@@ -11,6 +11,7 @@ import {
   type ChatMeta,
   type EnvEntry,
   type FileVisibility,
+  type CommandBlockStyle,
   type Settings,
   type UserPolicy,
 } from "@engineroom/protocol";
@@ -741,6 +742,7 @@ export function AdminView({
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
+                  commandBlockStyle={session.commandBlockStyle ?? "prompt"}
                   busy={busy}
                   onBusy={setBusy}
                   onError={setError}
@@ -782,6 +784,7 @@ function PersonPanel({
   agentOptions,
   agentNames,
   catalog,
+  commandBlockStyle,
   busy,
   onBusy,
   onError,
@@ -803,6 +806,7 @@ function PersonPanel({
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
+  commandBlockStyle: CommandBlockStyle;
   busy: boolean;
   onBusy: (value: boolean) => void;
   onError: (value: string) => void;
@@ -994,7 +998,7 @@ function PersonPanel({
     return (
       <div className="person-panel" aria-busy="true">
         <h2>{username}</h2>
-        <UserConversations username={username} agentNames={agentNames} />
+        <UserConversations username={username} agentNames={agentNames} commandBlockStyle={commandBlockStyle} />
         <p className="muted">Loading {username}…</p>
         <div className="admin-skeleton wide" />
         <div className="admin-skeleton" />
@@ -1006,7 +1010,7 @@ function PersonPanel({
   return (
     <div className="person-panel">
       <h2>{username}</h2>
-      <UserConversations username={username} agentNames={agentNames} />
+      <UserConversations username={username} agentNames={agentNames} commandBlockStyle={commandBlockStyle} />
       <form onSubmit={(event) => void saveAccess(event)}>
         <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
@@ -1245,9 +1249,11 @@ function PersonPanel({
 function UserConversations({
   username,
   agentNames,
+  commandBlockStyle,
 }: {
   username: string;
   agentNames?: AgentName[];
+  commandBlockStyle: CommandBlockStyle;
 }) {
   const [chats, setChats] = useState<ChatMeta[] | null>(null);
   const [error, setError] = useState("");
@@ -1363,7 +1369,7 @@ function UserConversations({
                       </details>
                     );
                   }
-                  if (block.kind === "tool") return <ToolBlock key={index} block={block} />;
+                  if (block.kind === "tool") return <ToolBlock key={index} block={block} style={commandBlockStyle} />;
                   if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
                   return <p className="status" key={index}>{block.text}</p>;
                 })}

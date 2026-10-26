@@ -381,7 +381,7 @@ function Shell({
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
             onTheme={applyTheme}
-            onSaved={(theme, filesReadOnly, visibleChats) => onSession({ ...session, theme, filesReadOnly, visibleChats })}
+            onSaved={(theme, filesReadOnly, visibleChats, commandBlockStyle) => onSession({ ...session, theme, filesReadOnly, visibleChats, commandBlockStyle })}
             onSession={onSession}
           />
         )}
@@ -468,6 +468,7 @@ function Shell({
             onFilesChanged={bumpFilesRefresh}
             onUnavailable={leaveMissingChat}
             username={session.username}
+            commandBlockStyle={session.commandBlockStyle}
             projectCreate={Boolean(session.projectCreate)}
             onReposChanged={refreshRepos}
           />

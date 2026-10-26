@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AgentId, AgentOptionChoice, Settings, SettingsPatch, ThemePreference } from "@engineroom/protocol";
+import { isCommandBlockStyle, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { getSettings, saveSettings, type Session } from "../api.ts";
 import { message } from "../format.ts";
@@ -22,7 +22,7 @@ export function SettingsView({
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
   onTheme: (theme: ThemePreference) => void;
-  onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number) => void;
+  onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number, commandBlockStyle: CommandBlockStyle) => void;
   onSession: (session: Session) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -41,6 +41,7 @@ export function SettingsView({
         defaultModel,
         permission: next.permission || "ask",
         theme: normalizeTheme(next.theme),
+        commandBlockStyle: normalizeCommandBlockStyle(next.commandBlockStyle),
         visibleChats: normalizeVisibleChats(next.visibleChats),
       });
     }).catch((err) => setError(message(err)));
@@ -55,8 +56,14 @@ export function SettingsView({
     try {
       const savedSettings = await saveSettings(settingsPayload(settings, agents));
       const nextTheme = normalizeTheme(savedSettings.theme);
-      setSettings({ ...savedSettings, theme: nextTheme, visibleChats: normalizeVisibleChats(savedSettings.visibleChats) });
-      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly), normalizeVisibleChats(savedSettings.visibleChats));
+      const commandBlockStyle = normalizeCommandBlockStyle(savedSettings.commandBlockStyle);
+      setSettings({
+        ...savedSettings,
+        theme: nextTheme,
+        commandBlockStyle,
+        visibleChats: normalizeVisibleChats(savedSettings.visibleChats),
+      });
+      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly), normalizeVisibleChats(savedSettings.visibleChats), commandBlockStyle);
       setSaved("Saved");
     } catch (err) {
       setError(message(err));
@@ -143,6 +150,29 @@ export function SettingsView({
                 </div>
                 <span className="theme-tagline">{item.tagline}</span>
               </div>
+            </button>
+          );
+        })}
+      </div>
+      <h3>Command blocks</h3>
+      <p className="muted">Choose how tool commands appear in chat.</p>
+      <div className="command-style-grid" role="radiogroup" aria-label="Command blocks">
+        {COMMAND_STYLES.map((item) => {
+          const selected = settings.commandBlockStyle === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={selected ? "command-style-card active" : "command-style-card"}
+              onClick={() => setSettings({ ...settings, commandBlockStyle: item.id })}
+            >
+              {item.id === "prompt" ? <PromptPreview /> : <WindowPreview />}
+              <span className="command-style-name">
+                <strong>{item.name}</strong>
+                {item.id === "prompt" ? <span className="theme-badge">Default</span> : null}
+              </span>
             </button>
           );
         })}
@@ -242,6 +272,40 @@ export function SettingsView({
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
   );
+}
+
+const COMMAND_STYLES: { id: CommandBlockStyle; name: string }[] = [
+  { id: "prompt", name: "Prompt" },
+  { id: "window", name: "Window" },
+];
+
+function PromptPreview() {
+  return (
+    <span className="command-preview command-preview-prompt" aria-hidden="true">
+      <span className="command-preview-head"><span>&gt;_</span> git status</span>
+      <span className="command-preview-out">clean</span>
+    </span>
+  );
+}
+
+function WindowPreview() {
+  return (
+    <span className="command-preview command-preview-window" aria-hidden="true">
+      <span className="command-preview-bar">
+        <span className="command-preview-lights">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="command-preview-title">terminal</span>
+      </span>
+      <span className="command-preview-out">$ git status</span>
+    </span>
+  );
+}
+
+function normalizeCommandBlockStyle(value: unknown): CommandBlockStyle {
+  return isCommandBlockStyle(value) ? value : "prompt";
 }
 
 function normalizeVisibleChats(value: number): number {

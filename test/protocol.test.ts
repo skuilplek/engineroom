@@ -10,6 +10,7 @@ import {
   assertBranchName,
   assertGitUrl,
   DEFAULT_SETTINGS,
+  isCommandBlockStyle,
   isInsidePath,
   isTheme,
   loginAllowed,
@@ -335,6 +336,16 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.throws(() => parseSettingsPatch({ visibleChats: 101 }), /invalid visibleChats/);
   assert.throws(() => parseSettingsPatch({ visibleChats: 1.5 }), /invalid visibleChats/);
   assert.throws(() => parseSettingsPatch({ visibleChats: "5" }), /invalid visibleChats/);
+  assert.equal(next.commandBlockStyle, "prompt");
+  assert.equal(isCommandBlockStyle("prompt"), true);
+  assert.equal(isCommandBlockStyle("window"), true);
+  assert.equal(isCommandBlockStyle("card"), false);
+  assert.equal(parseSettingsPatch({ commandBlockStyle: "window" }).commandBlockStyle, "window");
+  assert.equal(parseSettingsPatch({ commandBlockStyle: "prompt" }).commandBlockStyle, "prompt");
+  assert.equal(applySettings(next, { commandBlockStyle: "window" }).commandBlockStyle, "window");
+  assert.equal(applySettings(applySettings(next, { commandBlockStyle: "window" }), { theme: "light" }).commandBlockStyle, "window");
+  assert.throws(() => parseSettingsPatch({ commandBlockStyle: "card" }), /invalid commandBlockStyle/);
+  assert.throws(() => parseSettingsPatch({ commandBlockStyle: "" }), /invalid commandBlockStyle/);
 });
 
 test("session cookies are signed and expire", () => {
