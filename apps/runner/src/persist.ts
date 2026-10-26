@@ -113,23 +113,29 @@ function toEntry(event: StreamEvent, seq: number): TranscriptEntry | null {
 
 export function toolContentOf(value: unknown): ToolContent[] | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const content = (value as { content?: unknown }).content;
+  const content = Array.isArray(value) ? value : (value as { content?: unknown }).content;
   if (!Array.isArray(content)) return undefined;
   const items: ToolContent[] = [];
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const block = item as Record<string, unknown>;
-    if (block.type === "text" && typeof block.text === "string") items.push({ type: "text", text: block.text });
-    else if (block.type === "diff" && typeof block.path === "string") {
-      items.push({
-        type: "diff",
-        path: block.path,
-        oldText: typeof block.oldText === "string" ? block.oldText : undefined,
-        newText: typeof block.newText === "string" ? block.newText : undefined,
-      });
-    } else if (block.type === "terminal" && typeof block.terminalId === "string") {
-      items.push({ type: "terminal", terminalId: block.terminalId });
-    }
-  }
+  for (const item of content) collectToolContent(item, items);
   return items.length ? items : undefined;
+}
+
+function collectToolContent(item: unknown, items: ToolContent[]) {
+  if (!item || typeof item !== "object") return;
+  const block = item as Record<string, unknown>;
+  if (block.type === "content") {
+    collectToolContent(block.content, items);
+    return;
+  }
+  if (block.type === "text" && typeof block.text === "string") items.push({ type: "text", text: block.text });
+  else if (block.type === "diff" && typeof block.path === "string") {
+    items.push({
+      type: "diff",
+      path: block.path,
+      oldText: typeof block.oldText === "string" ? block.oldText : undefined,
+      newText: typeof block.newText === "string" ? block.newText : undefined,
+    });
+  } else if (block.type === "terminal" && typeof block.terminalId === "string") {
+    items.push({ type: "terminal", terminalId: block.terminalId });
+  }
 }

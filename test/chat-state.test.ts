@@ -46,6 +46,33 @@ test("a late snapshot keeps agent text that already arrived", () => {
   assert.equal(live.entries.some((entry) => entry.kind === "text" && entry.text === "answer"), true);
 });
 
+test("tool updates keep nested result text and file locations", () => {
+  assert.deepEqual(
+    mapUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-1",
+      status: "completed",
+      kind: "search",
+      title: "Find `**/*.log`",
+      content: [{ type: "content", content: { type: "text", text: "a.log\nb.log" } }],
+      locations: [{ path: "a.log" }, { path: "b.log" }],
+    }),
+    [{
+      type: "tool",
+      id: "call-1",
+      name: "Find `**/*.log`",
+      phase: "done",
+      input: undefined,
+      output: "a.log\nb.log",
+      toolKind: "search",
+      title: "Find `**/*.log`",
+      status: "completed",
+      locations: ["a.log", "b.log"],
+      content: [{ type: "text", text: "a.log\nb.log" }],
+    }],
+  );
+});
+
 test("agent text chunks accept a list of blocks", () => {
   assert.deepEqual(
     mapUpdate({

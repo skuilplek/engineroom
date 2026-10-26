@@ -6,8 +6,8 @@ import { workspaceLabel } from "../format.ts";
 import { isMissingChat } from "./missingChat.ts";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
-import { DiffView } from "./Diff.tsx";
-import { groupTranscript, presentTool } from "./group.ts";
+import { groupTranscript } from "./group.ts";
+import { ToolBlock } from "./ToolBlock.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { usePromptHeight } from "./promptHeight.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
@@ -202,17 +202,7 @@ export function ChatView({
                   </details>
                 );
               }
-              if (block.kind === "tool") {
-                const shown = presentTool(block);
-                const diff = block.content?.find((item) => item.type === "diff");
-                return (
-                  <div className="tool" key={index}>
-                    <div>{shown.title}</div>
-                    {diff && diff.type === "diff" ? <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} /> : null}
-                    {shown.body ? <pre>{shown.body}</pre> : block.phase === "start" ? <pre className="pulse">running…</pre> : null}
-                  </div>
-                );
-              }
+              if (block.kind === "tool") return <ToolBlock key={index} block={block} showRunning />;
               if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
               return <p className="status" key={index}>{block.text}</p>;
             })}

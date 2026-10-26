@@ -46,8 +46,8 @@ import {
   type AdminAgent,
   type Session,
 } from "../api.ts";
-import { DiffView } from "../chat/Diff.tsx";
-import { groupTranscript, presentTool } from "../chat/group.ts";
+import { groupTranscript } from "../chat/group.ts";
+import { ToolBlock } from "../chat/ToolBlock.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
 import { message, relativeTime } from "../format.ts";
 
@@ -1348,17 +1348,7 @@ function UserConversations({
                       </details>
                     );
                   }
-                  if (block.kind === "tool") {
-                    const shown = presentTool(block);
-                    const diff = block.content?.find((item) => item.type === "diff");
-                    return (
-                      <div className="tool" key={index}>
-                        <div>{shown.title}</div>
-                        {diff && diff.type === "diff" ? <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} /> : null}
-                        {shown.body ? <pre>{shown.body}</pre> : null}
-                      </div>
-                    );
-                  }
+                  if (block.kind === "tool") return <ToolBlock key={index} block={block} />;
                   if (block.kind === "error") return <p className="alert" key={index} role="alert">{block.text}</p>;
                   return <p className="status" key={index}>{block.text}</p>;
                 })}

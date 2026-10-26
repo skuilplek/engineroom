@@ -46,7 +46,7 @@ function toolEvent(body: Record<string, unknown>, phase: "start" | "done" | "err
         .map((item) => (item && typeof item === "object" && typeof (item as { path?: unknown }).path === "string" ? (item as { path: string }).path : ""))
         .filter(Boolean)
     : undefined;
-  const output = outputText(body.rawOutput);
+  const output = outputText(body.rawOutput) || outputText(body.content) || locationText(body.locations);
   const content = toolContentOf(body) ?? toolContentOf(body.rawOutput) ?? diffContent(body.rawOutput);
   return {
     type: "tool",
@@ -80,15 +80,35 @@ function textOf(value: unknown): string {
 }
 
 function outputText(value: unknown): string {
-  if (typeof value === "string") return clip(value);
+  const text = visibleText(value);
+  return text ? clip(text) : "";
+}
+
+function visibleText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(visibleText).filter(Boolean).join("\n");
   if (!value || typeof value !== "object") return "";
   const record = value as Record<string, unknown>;
-  if (typeof record.content === "string") return clip(record.content);
-  if (typeof record.stdout === "string") return clip(record.stdout);
-  if (typeof record.output === "string") return clip(record.output);
-  const nested = record.success ?? record.result ?? record.error;
-  if (nested && nested !== value) return outputText(nested);
+  if (typeof record.text === "string" && record.text) return record.text;
+  if (typeof record.interleavedOutput === "string" && record.interleavedOutput) return record.interleavedOutput;
+  if (typeof record.stdout === "string" || typeof record.stderr === "string") {
+    const combined = [record.stdout, record.stderr].filter((part) => typeof part === "string" && part).join("");
+    if (combined) return combined;
+  }
+  if (typeof record.output === "string" && record.output) return record.output;
+  if (typeof record.content === "string" && record.content) return record.content;
+  if (typeof record.path === "string" && (record.type === "resource_link" || record.type === "location")) return record.path;
+  const nested = record.content ?? record.success ?? record.result ?? record.error ?? record.value;
+  if (nested != null && nested !== value) return visibleText(nested);
   return "";
+}
+
+function locationText(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((item) => (item && typeof item === "object" && typeof (item as { path?: unknown }).path === "string" ? (item as { path: string }).path : ""))
+    .filter(Boolean)
+    .join("\n");
 }
 
 function diffContent(value: unknown): ToolContent[] | undefined {

@@ -56,11 +56,30 @@ export function groupTranscript(entries: TranscriptEntry[]): Block[] {
   return blocks;
 }
 
-export function presentTool(block: { name: string; phase: string; input?: string; output?: string }): { title: string; body: string } {
+const TERMINAL_KINDS = new Set(["execute", "shell"]);
+const TERMINAL_NAMES = new Set(["bash", "sh", "shell", "zsh", "fish", "terminal", "execute", "cmd"]);
+
+export function isTerminalTool(block: { name: string; toolKind?: string }): boolean {
+  const kind = block.toolKind?.trim().toLowerCase() ?? "";
+  if (TERMINAL_KINDS.has(kind)) return true;
+  return TERMINAL_NAMES.has(block.name.trim().toLowerCase());
+}
+
+export function presentTool(block: { name: string; phase: string; input?: string; output?: string }): { title: string; body: string; command: string } {
+  const command = terminalCommand(block.input);
   const action = readableField(block.input, ["command", "cmd", "globPattern", "glob_pattern", "pattern", "path", "file_path", "query", "url", "targetDirectory", "target_directory"]);
   const body = readableOutput(block.output);
   const title = action ? `${block.name} · ${action}` : `${block.name} · ${block.phase}`;
-  return { title: title.length > 180 ? `${title.slice(0, 179)}…` : title, body };
+  return { title: title.length > 180 ? `${title.slice(0, 179)}…` : title, body, command };
+}
+
+function terminalCommand(value?: string): string {
+  const record = parseRecord(value);
+  if (!record) return clipView(value?.trim() ?? "");
+  for (const key of ["command", "cmd"]) {
+    if (typeof record[key] === "string" && record[key]) return clipView(record[key] as string);
+  }
+  return "";
 }
 
 function readableOutput(value?: string): string {
