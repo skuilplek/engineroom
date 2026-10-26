@@ -45,7 +45,7 @@ export const CHAT_ID_RE =
 
 export type PermissionPolicy = "ask" | "allow" | "edits";
 
-export const THEMES = ["dark", "light", "haxor", "midnight", "engine", "pi"] as const;
+export const THEMES = ["dark", "light", "haxor", "midnight", "engine", "pi", "nes", "psone", "win98", "winxp", "win7", "dos", "dawn", "system", "sims"] as const;
 
 export type ThemePreference = (typeof THEMES)[number];
 

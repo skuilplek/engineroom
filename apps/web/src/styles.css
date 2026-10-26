@@ -302,6 +302,420 @@
   scrollbar-color: rgba(47, 95, 138, 0.45) transparent;
 }
 
+[data-theme="nes"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --term-bg: #000000;
+  --sidebar: #000000;
+  --panel: #0a0a0a;
+  --panel-2: #141414;
+  --line: #fcfcfc;
+  --line-strong: #f8d800;
+  --ink: #fcfcfc;
+  --muted: #a0a0a0;
+  --soft: #fcfcfc;
+  --green: #f83800;
+  --danger: #f83800;
+  --shadow: 4px 4px 0 #000;
+  --field: #000000;
+  --on-ink: #000000;
+  --danger-line: #f83800;
+  --raised: #0058f8;
+  --hover: #1a1a1a;
+  --active: #0058f8;
+  --sunken: #000000;
+  --tool: #000000;
+  --code: #000000;
+  --focus: #f8d800;
+  --focus-ring: #f8d800;
+  --send-border: #f8d800;
+  --diff-add: #58d854;
+  --placeholder: #808080;
+  --hover-panel: #f4f4f4;
+  --primary-hover: #ff6040;
+  --glow: transparent;
+  --glow-soft: transparent;
+  --shimmer: rgba(248, 216, 0, 0.2);
+  --tok-keyword: #f83800;
+  --tok-string: #f8d800;
+  --tok-comment: #888888;
+  --tok-number: #6aa6ff;
+  --tok-function: #58d854;
+  --tok-type: #f8d800;
+  --tok-operator: #fcfcfc;
+  --tok-property: #58d854;
+  --tok-punctuation: #fcfcfc;
+  font-family: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+[data-theme="psone"] {
+  color-scheme: dark;
+  --bg: #0a1c4a;
+  --term-bg: #06122e;
+  --sidebar: #071433;
+  --panel: #102456;
+  --panel-2: #16306e;
+  --line: #8a8a8a;
+  --line-strong: #ffffff;
+  --ink: #f2f2f2;
+  --muted: #9aa4c0;
+  --soft: #d8d8d8;
+  --green: #00a000;
+  --danger: #e10600;
+  --shadow: 4px 4px 0 #000;
+  --field: #081428;
+  --on-ink: #111111;
+  --danger-line: #e10600;
+  --raised: #1a3a8a;
+  --hover: #16306e;
+  --active: #1a3a8a;
+  --sunken: #081428;
+  --tool: #071433;
+  --code: #06122e;
+  --focus: #00c000;
+  --focus-ring: #00c000;
+  --send-border: #ffffff;
+  --diff-add: #3ddc6a;
+  --placeholder: #7d88a8;
+  --hover-panel: #d0d0d0;
+  --primary-hover: #ff4a42;
+  --glow: transparent;
+  --glow-soft: transparent;
+  --shimmer: rgba(255, 255, 255, 0.08);
+  --tok-keyword: #ff4d4d;
+  --tok-string: #d8d8d8;
+  --tok-comment: #7d88a8;
+  --tok-number: #7eb6ff;
+  --tok-function: #3ddc6a;
+  --tok-type: #f2f2f2;
+  --tok-operator: #ffffff;
+  --tok-property: #9ad0ff;
+  --tok-punctuation: #c6c6c6;
+  font-family: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+[data-theme="win98"] {
+  color-scheme: light;
+  --bg: #008080;
+  --term-bg: #000080;
+  --sidebar: #c0c0c0;
+  --panel: #c0c0c0;
+  --panel-2: #d4d0c8;
+  --line: #808080;
+  --line-strong: #000000;
+  --ink: #000000;
+  --muted: #404040;
+  --soft: #000000;
+  --green: #000080;
+  --danger: #800000;
+  --shadow: none;
+  --field: #ffffff;
+  --on-ink: #ffffff;
+  --danger-line: #800000;
+  --raised: #dfdfdf;
+  --hover: #bdbdbd;
+  --active: #000080;
+  --sunken: #ffffff;
+  --tool: #c0c0c0;
+  --code: #ffffff;
+  --focus: #000080;
+  --focus-ring: #000080;
+  --send-border: #000000;
+  --diff-add: #008000;
+  --placeholder: #808080;
+  --hover-panel: #d8d4cc;
+  --primary-hover: #0000a0;
+  --glow: transparent;
+  --glow-soft: transparent;
+  --shimmer: rgba(255, 255, 255, 0.35);
+  --tok-keyword: #000080;
+  --tok-string: #008000;
+  --tok-comment: #808080;
+  --tok-number: #800080;
+  --tok-function: #000080;
+  --tok-type: #800000;
+  --tok-operator: #000000;
+  --tok-property: #008080;
+  --tok-punctuation: #000000;
+  font-family: Tahoma, "MS Sans Serif", sans-serif;
+}
+
+[data-theme="winxp"] {
+  color-scheme: light;
+  --bg: #3a6ea5;
+  --term-bg: #ffffff;
+  --sidebar: #ece9d8;
+  --panel: #ece9d8;
+  --panel-2: #f6f4ec;
+  --line: #aca899;
+  --line-strong: #0054e3;
+  --ink: #1a1a1a;
+  --muted: #5c5a54;
+  --soft: #2a2a2a;
+  --green: #3c9a3c;
+  --danger: #c75050;
+  --shadow: 2px 2px 8px rgba(0, 0, 0, 0.28);
+  --field: #ffffff;
+  --on-ink: #ffffff;
+  --danger-line: #c75050;
+  --raised: #ffffff;
+  --hover: #d8d4c4;
+  --active: #3169c6;
+  --sunken: #f6f4ec;
+  --tool: #ffffff;
+  --code: #ffffff;
+  --focus: #0054e3;
+  --focus-ring: #0054e3;
+  --send-border: #003c9e;
+  --diff-add: #2f7d32;
+  --placeholder: #8a867c;
+  --hover-panel: #f3f1e4;
+  --primary-hover: #3f91f0;
+  --glow: rgba(0, 84, 227, 0.2);
+  --glow-soft: rgba(0, 84, 227, 0.1);
+  --shimmer: rgba(255, 255, 255, 0.45);
+  --tok-keyword: #0054e3;
+  --tok-string: #2f7d32;
+  --tok-comment: #808080;
+  --tok-number: #8a2be2;
+  --tok-function: #0054e3;
+  --tok-type: #8b4513;
+  --tok-operator: #1a1a1a;
+  --tok-property: #1a6b3c;
+  --tok-punctuation: #333333;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+}
+
+[data-theme="win7"] {
+  color-scheme: light;
+  --bg: #d7e4f2;
+  --term-bg: #f7fbff;
+  --sidebar: rgba(255, 255, 255, 0.62);
+  --panel: rgba(255, 255, 255, 0.78);
+  --panel-2: rgba(255, 255, 255, 0.9);
+  --line: rgba(120, 160, 190, 0.55);
+  --line-strong: #3399ff;
+  --ink: #1b1b1b;
+  --muted: #5b6570;
+  --soft: #2c333a;
+  --green: #3399ff;
+  --danger: #c42b1c;
+  --shadow: 0 8px 24px rgba(0, 40, 80, 0.16);
+  --field: rgba(255, 255, 255, 0.92);
+  --on-ink: #ffffff;
+  --danger-line: #e7b2ac;
+  --raised: rgba(255, 255, 255, 0.88);
+  --hover: rgba(51, 153, 255, 0.14);
+  --active: rgba(51, 153, 255, 0.22);
+  --sunken: rgba(255, 255, 255, 0.55);
+  --tool: rgba(255, 255, 255, 0.8);
+  --code: #f7fbff;
+  --focus: #3399ff;
+  --focus-ring: #3399ff;
+  --send-border: #1a7ad9;
+  --diff-add: #1a7a32;
+  --placeholder: #8a96a3;
+  --hover-panel: rgba(255, 255, 255, 0.94);
+  --primary-hover: #5cadff;
+  --glow: rgba(51, 153, 255, 0.22);
+  --glow-soft: rgba(51, 153, 255, 0.1);
+  --shimmer: rgba(255, 255, 255, 0.7);
+  --tok-keyword: #0057b8;
+  --tok-string: #1a7a32;
+  --tok-comment: #7d8b99;
+  --tok-number: #7a3e9d;
+  --tok-function: #0057b8;
+  --tok-type: #9a3412;
+  --tok-operator: #1b1b1b;
+  --tok-property: #0f6b4c;
+  --tok-punctuation: #3d4750;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+}
+
+[data-theme="dos"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --term-bg: #000000;
+  --sidebar: #000000;
+  --panel: #000000;
+  --panel-2: #0c0c0c;
+  --line: #ffb000;
+  --line-strong: #ffb000;
+  --ink: #ffb000;
+  --muted: #b07800;
+  --soft: #ffc64a;
+  --green: #ffb000;
+  --danger: #ff5500;
+  --shadow: none;
+  --field: #000000;
+  --on-ink: #000000;
+  --danger-line: #ff5500;
+  --raised: #1a1000;
+  --hover: #1a1000;
+  --active: #2a1800;
+  --sunken: #000000;
+  --tool: #000000;
+  --code: #000000;
+  --focus: #ffb000;
+  --focus-ring: #ffb000;
+  --send-border: #ffb000;
+  --diff-add: #ffd060;
+  --placeholder: #8a5a00;
+  --hover-panel: #140e00;
+  --primary-hover: #ffd060;
+  --glow: transparent;
+  --glow-soft: transparent;
+  --shimmer: transparent;
+  --tok-keyword: #ffd060;
+  --tok-string: #ffe0a0;
+  --tok-comment: #8a5a00;
+  --tok-number: #ffb000;
+  --tok-function: #ffe7b8;
+  --tok-type: #ffc64a;
+  --tok-operator: #ffb000;
+  --tok-property: #ffd060;
+  --tok-punctuation: #b07800;
+  font-family: "Departure Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+[data-theme="dawn"] {
+  color-scheme: light;
+  --bg: #070b18;
+  --term-bg: #100818;
+  --sidebar: #f6e7c1;
+  --panel: #fff6e4;
+  --panel-2: #fffaf0;
+  --line: #1a1a1a;
+  --line-strong: #000000;
+  --ink: #1c140e;
+  --muted: #6b5344;
+  --soft: #2a2118;
+  --green: #e07a3d;
+  --danger: #c44536;
+  --shadow: 4px 4px 0 #000;
+  --field: #fffaf0;
+  --on-ink: #1c140e;
+  --danger-line: #c44536;
+  --raised: #fff6e4;
+  --hover: #ead9b4;
+  --active: #1c140e;
+  --sunken: #efe2c4;
+  --tool: #fffaf0;
+  --code: #1a120c;
+  --focus: #e07a3d;
+  --focus-ring: #e07a3d;
+  --send-border: #1a1a1a;
+  --diff-add: #2f7d4a;
+  --placeholder: #8a7360;
+  --hover-panel: #fff6e4;
+  --primary-hover: #c9652e;
+  --glow: rgba(224, 122, 61, 0.2);
+  --glow-soft: rgba(224, 122, 61, 0.1);
+  --shimmer: rgba(255, 255, 255, 0.2);
+  --tok-keyword: #c44536;
+  --tok-string: #2f7d4a;
+  --tok-comment: #8a7360;
+  --tok-number: #e07a3d;
+  --tok-function: #1c4e8a;
+  --tok-type: #8a4b08;
+  --tok-operator: #1c140e;
+  --tok-property: #2f7d4a;
+  --tok-punctuation: #6b5344;
+  font-family: Tahoma, "MS Sans Serif", sans-serif;
+}
+
+[data-theme="system"] {
+  color-scheme: light;
+  --bg: #aaaaaa;
+  --term-bg: #ffffff;
+  --sidebar: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #eeeeee;
+  --line: #000000;
+  --line-strong: #000000;
+  --ink: #000000;
+  --muted: #333333;
+  --soft: #000000;
+  --green: #000000;
+  --danger: #000000;
+  --shadow: 1px 1px 0 #000;
+  --field: #ffffff;
+  --on-ink: #ffffff;
+  --danger-line: #000000;
+  --raised: #ffffff;
+  --hover: #d8d8d8;
+  --active: #000000;
+  --sunken: #ffffff;
+  --tool: #ffffff;
+  --code: #ffffff;
+  --focus: #000000;
+  --focus-ring: #000000;
+  --send-border: #000000;
+  --diff-add: #006400;
+  --placeholder: #666666;
+  --hover-panel: #f4f4f4;
+  --primary-hover: #222222;
+  --glow: transparent;
+  --glow-soft: transparent;
+  --shimmer: rgba(255, 255, 255, 0.4);
+  --tok-keyword: #000000;
+  --tok-string: #006400;
+  --tok-comment: #666666;
+  --tok-number: #000080;
+  --tok-function: #000000;
+  --tok-type: #000080;
+  --tok-operator: #000000;
+  --tok-property: #006400;
+  --tok-punctuation: #000000;
+  font-family: Tahoma, "MS Sans Serif", sans-serif;
+}
+
+[data-theme="sims"] {
+  color-scheme: light;
+  --bg: #7ec8e3;
+  --term-bg: #2a2118;
+  --sidebar: #3d8c40;
+  --panel: #f3e6c8;
+  --panel-2: #fff6e0;
+  --line: #6b3e26;
+  --line-strong: #4a2918;
+  --ink: #2c2416;
+  --muted: #6b5344;
+  --soft: #3a2a1c;
+  --green: #3d8c40;
+  --danger: #c44536;
+  --shadow: 0 6px 0 #6b3e26;
+  --field: #fffaf0;
+  --on-ink: #f4ffe8;
+  --danger-line: #c44536;
+  --raised: #fff6e0;
+  --hover: rgba(255, 255, 255, 0.28);
+  --active: #f3e6c8;
+  --sunken: #e7d7b4;
+  --tool: #fffaf0;
+  --code: #2a2118;
+  --focus: #3d8c40;
+  --focus-ring: #7ac943;
+  --send-border: #6b3e26;
+  --diff-add: #2f7d32;
+  --placeholder: #8a7360;
+  --hover-panel: #fff8ea;
+  --primary-hover: #5cb85c;
+  --glow: rgba(122, 201, 67, 0.28);
+  --glow-soft: rgba(61, 140, 64, 0.12);
+  --shimmer: rgba(255, 255, 255, 0.45);
+  --tok-keyword: #2f6e32;
+  --tok-string: #8a4b08;
+  --tok-comment: #8a7360;
+  --tok-number: #c44536;
+  --tok-function: #1c4e8a;
+  --tok-type: #6b3e26;
+  --tok-operator: #2c2416;
+  --tok-property: #2f7d32;
+  --tok-punctuation: #6b5344;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -2321,6 +2735,115 @@ details summary { cursor: pointer; color: var(--soft); }
   background-size: 8px 8px;
   pointer-events: none;
 }
+.theme-card-nes .theme-preview,
+.theme-card-nes .theme-preview-hud,
+.theme-card-psone .theme-preview,
+.theme-card-psone .theme-preview-hud,
+.theme-card-dos .theme-preview,
+.theme-card-dos .theme-preview-hud,
+.theme-card-win98 .theme-preview,
+.theme-card-win98 .theme-preview-hud,
+.theme-card-system .theme-preview,
+.theme-card-system .theme-preview-hud,
+.theme-card-dawn .theme-preview,
+.theme-card-dawn .theme-preview-hud {
+  border-radius: 0;
+}
+.theme-card-nes .theme-preview-dot,
+.theme-card-psone .theme-preview-dot,
+.theme-card-dos .theme-preview-dot,
+.theme-card-win98 .theme-preview-dot,
+.theme-card-system .theme-preview-dot,
+.theme-card-dawn .theme-preview-dot {
+  border-radius: 0;
+}
+.theme-card-nes .theme-preview::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: repeating-linear-gradient(90deg, #f83800 0 4px, #f8d800 4px 8px, #0058f8 8px 12px, #58d854 12px 16px);
+  pointer-events: none;
+}
+.theme-card-psone .theme-preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 2px);
+  pointer-events: none;
+}
+.theme-card-dos .theme-preview {
+  border-width: 3px;
+  border-style: double;
+}
+.theme-card-win98 .theme-preview::before,
+.theme-card-winxp .theme-preview::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 30%;
+  right: 0;
+  top: 0;
+  height: 7px;
+  pointer-events: none;
+}
+.theme-card-win98 .theme-preview::before {
+  background: linear-gradient(90deg, #000080, #1084d0);
+}
+.theme-card-winxp .theme-preview::before {
+  background: linear-gradient(180deg, #3c9bff, #0054e3);
+}
+.theme-card-winxp .theme-preview::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: linear-gradient(180deg, #67b34d, #3d7a32);
+  pointer-events: none;
+}
+.theme-card-win7 .theme-preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 46%);
+  pointer-events: none;
+}
+.theme-card-dawn .theme-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 12px 10px, #fff, transparent),
+    radial-gradient(1px 1px at 40px 28px, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 70px 14px, #f6e7c1, transparent),
+    radial-gradient(1px 1px at 90px 36px, #fff, transparent);
+  pointer-events: none;
+}
+.theme-card-system .theme-preview-hud {
+  position: relative;
+}
+.theme-card-system .theme-preview-hud::after,
+.theme-card-dawn .theme-preview-hud::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 3px;
+  height: 6px;
+  background: repeating-linear-gradient(#000 0 1px, #fff 1px 2px);
+  pointer-events: none;
+}
+.theme-card-sims .theme-preview-dot {
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+.theme-card-sims .theme-preview {
+  box-shadow: inset 0 -6px 0 #5ea84a;
+}
 .theme-preview-sidebar {
   border-right: 1px solid;
   padding: 7px 6px;
@@ -2915,5 +3438,531 @@ details summary { cursor: pointer; color: var(--soft); }
   background: var(--ink);
   color: var(--on-ink);
   border-color: var(--ink);
+}
+
+/* ============================================================
+   RETRO THEMES
+   Pixel, bevel, and desktop groups share a shape.
+   Each theme then paints its own surfaces.
+   ============================================================ */
+:is(
+  [data-theme="nes"],
+  [data-theme="psone"],
+  [data-theme="dos"],
+  [data-theme="win98"],
+  [data-theme="system"],
+  [data-theme="dawn"]
+) :is(h1, h2, h3) {
+  letter-spacing: 0;
+}
+:is(
+  [data-theme="nes"],
+  [data-theme="psone"],
+  [data-theme="dos"],
+  [data-theme="win98"],
+  [data-theme="system"],
+  [data-theme="dawn"]
+) :is(
+  button,
+  input,
+  select,
+  textarea,
+  .login-card,
+  .composer-card,
+  .home-card,
+  .bubble,
+  .tool,
+  .admin-pane,
+  .repo-line,
+  .chat-row,
+  .nav-item,
+  .theme-card,
+  .send,
+  .sidebar-toggle,
+  .theme-badge,
+  .markdown pre,
+  .permission
+) {
+  border-radius: 0;
+}
+:is([data-theme="winxp"], [data-theme="win7"]) :is(h1, h2, h3) {
+  letter-spacing: 0;
+}
+:is([data-theme="winxp"], [data-theme="win7"]) :is(
+  button,
+  input,
+  select,
+  textarea,
+  .login-card,
+  .composer-card,
+  .home-card,
+  .bubble,
+  .admin-pane,
+  .nav-item,
+  .theme-card,
+  .send,
+  .permission
+) {
+  border-radius: 4px;
+}
+
+[data-theme="nes"] .login-screen,
+[data-theme="nes"] .shell {
+  background: #000;
+}
+[data-theme="nes"] :is(.login-card, .composer-card, .home-card, .admin-pane) {
+  background: #fcfcfc;
+  color: #111;
+  border: 4px solid #000;
+  box-shadow: 4px 4px 0 #000;
+}
+[data-theme="nes"] :is(.login-card, .composer-card, .home-card, .admin-pane) :is(.muted, .eyebrow, .lede) {
+  color: #404040;
+}
+[data-theme="nes"] :is(input, select, textarea) {
+  background: #fff;
+  color: #111;
+  border: 4px solid #000;
+}
+[data-theme="nes"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #0058f8;
+  color: #fcfcfc;
+  box-shadow: inset 4px 0 0 #f8d800;
+}
+[data-theme="nes"] .primary,
+[data-theme="nes"] .send:not(:disabled) {
+  background: #f83800;
+  color: #fcfcfc;
+  border: 4px solid #000;
+  box-shadow: 4px 4px 0 #000;
+  font-weight: 700;
+}
+
+[data-theme="psone"] body,
+[data-theme="psone"] .login-screen,
+[data-theme="psone"] .shell {
+  background-color: #06122e;
+  background-image:
+    linear-gradient(180deg, rgba(16, 58, 150, 0.92), rgba(6, 18, 46, 0.96)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.14) 0 1px, transparent 1px 2px);
+  background-repeat: no-repeat, repeat;
+  background-position: 0 0;
+  background-size: auto, auto;
+}
+[data-theme="psone"] :is(.login-card, .composer-card, .home-card, .admin-pane) {
+  background: #c6c6c6;
+  color: #111;
+  border: 4px solid #111;
+  box-shadow: 4px 4px 0 #000;
+}
+[data-theme="psone"] :is(.login-card, .composer-card, .home-card, .admin-pane) :is(.muted, .eyebrow, .lede) {
+  color: #333;
+}
+[data-theme="psone"] .sidebar,
+[data-theme="psone"] .file-drawer {
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 3px),
+    #071433;
+  border-color: #8a8a8a;
+}
+[data-theme="psone"] :is(input, select, textarea) {
+  background: #efefef;
+  color: #111;
+  border: 4px solid #111;
+}
+[data-theme="psone"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #e8e8e8;
+  color: #111;
+  box-shadow: inset 4px 0 0 #e10600;
+}
+[data-theme="psone"] .primary,
+[data-theme="psone"] .send:not(:disabled) {
+  background: #e8e8e8;
+  color: #111;
+  border: 4px solid #111;
+  box-shadow: 4px 4px 0 #000, inset 0 -6px 0 #00c000;
+  font-weight: 700;
+}
+
+[data-theme="dos"] body,
+[data-theme="dos"] .login-screen,
+[data-theme="dos"] .shell {
+  background: #000;
+}
+[data-theme="dos"] :is(.sidebar, .file-drawer, .login-card, .composer-card, .home-card, .admin-pane, .topbar) {
+  background: #000;
+  border: 4px double #ffb000;
+  box-shadow: none;
+}
+[data-theme="dos"] :is(.app-brand, .eyebrow, .section-label, .section-toggle, .nav-item, .theme-badge) {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+[data-theme="dos"] :is(input, select, textarea) {
+  background: #000;
+  color: #ffb000;
+  border: 1px solid #ffb000;
+  box-shadow: none;
+}
+[data-theme="dos"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #ffb000;
+  color: #000;
+  box-shadow: none;
+}
+[data-theme="dos"] .primary,
+[data-theme="dos"] .send:not(:disabled) {
+  background: #ffb000;
+  color: #000;
+  border: 1px solid #ffb000;
+  box-shadow: none;
+  font-weight: 700;
+}
+
+[data-theme="win98"] body,
+[data-theme="win98"] .login-screen,
+[data-theme="win98"] .shell {
+  background: #008080;
+}
+[data-theme="win98"] :is(.sidebar, .file-drawer, .main, .login-card, .composer-card, .home-card, .admin-pane, .primary, .ghost, .danger, .send) {
+  background: #c0c0c0;
+  color: #000;
+  border: 2px solid #000;
+  border-color: #fff #000 #000 #fff;
+  box-shadow: inset 1px 1px 0 #dfdfdf, inset -1px -1px 0 #808080;
+}
+[data-theme="win98"] .topbar {
+  background: linear-gradient(90deg, #000080, #1084d0);
+  color: #fff;
+  border-bottom: 0;
+  box-shadow: none;
+}
+[data-theme="win98"] .topbar :is(h2, p, .muted) {
+  color: #fff;
+}
+[data-theme="win98"] :is(input, select, textarea) {
+  background: #fff;
+  color: #000;
+  border: 2px solid #000;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px 0 #000, inset -1px -1px 0 #dfdfdf;
+}
+[data-theme="win98"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #000080;
+  color: #fff;
+  box-shadow: none;
+}
+[data-theme="win98"] .primary,
+[data-theme="win98"] .send:not(:disabled) {
+  background: #c0c0c0;
+  color: #000;
+  font-weight: 700;
+}
+[data-theme="win98"] .danger {
+  color: #800000;
+}
+
+[data-theme="winxp"] body,
+[data-theme="winxp"] .login-screen,
+[data-theme="winxp"] .shell {
+  background: linear-gradient(180deg, #7db9e8 0%, #3a7ec2 46%, #5ea04a 46%, #3d7a32 100%);
+}
+[data-theme="winxp"] :is(.sidebar, .file-drawer, .main) {
+  background: #ece9d8;
+  color: #1a1a1a;
+  border: 1px solid #003c9e;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.28);
+}
+[data-theme="winxp"] .sidebar,
+[data-theme="winxp"] .file-drawer {
+  background:
+    linear-gradient(180deg, #0997ff, #0054e3) top / 100% 42px no-repeat,
+    #ece9d8;
+}
+[data-theme="winxp"] .app-brand {
+  color: #fff;
+}
+[data-theme="winxp"] .topbar {
+  background: linear-gradient(180deg, #0997ff 0%, #0058ee 14%, #1b61c1 55%, #3d95ff 100%);
+  color: #fff;
+  border-bottom: 1px solid #003c9e;
+  border-radius: 7px 7px 0 0;
+}
+[data-theme="winxp"] .topbar :is(h2, p, .muted) {
+  color: #fff;
+}
+[data-theme="winxp"] :is(.login-card, .composer-card, .home-card, .admin-pane) {
+  background: #ece9d8;
+  color: #1a1a1a;
+  border: 1px solid #0054e3;
+  border-radius: 8px;
+  box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.3);
+}
+[data-theme="winxp"] :is(input, select, textarea) {
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid #7f9db9;
+  border-radius: 3px;
+}
+[data-theme="winxp"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #3169c6;
+  color: #fff;
+}
+[data-theme="winxp"] .primary,
+[data-theme="winxp"] .send:not(:disabled) {
+  background: linear-gradient(180deg, #3c8dff, #0054e3);
+  color: #fff;
+  border: 1px solid #003c9e;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+[data-theme="win7"] body,
+[data-theme="win7"] .login-screen,
+[data-theme="win7"] .shell {
+  background:
+    radial-gradient(circle at 70% 0%, rgba(255, 255, 255, 0.7), transparent 42%),
+    linear-gradient(180deg, #c5dcf0 0%, #e7f2fb 48%, #d4e6f6 100%);
+}
+[data-theme="win7"] :is(.sidebar, .file-drawer, .login-card, .composer-card, .home-card, .admin-pane) {
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 40, 80, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+}
+[data-theme="win7"] .topbar {
+  background: linear-gradient(180deg, #f7fbff, #d6e9f8 48%, #c5dff3);
+  border-bottom: 1px solid #9ec3e0;
+  box-shadow: inset 0 1px 0 #fff;
+}
+[data-theme="win7"] :is(input, select, textarea) {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1b1b1b;
+  border: 1px solid #9ec3e0;
+  border-radius: 4px;
+}
+[data-theme="win7"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: rgba(51, 153, 255, 0.22);
+  color: #1b1b1b;
+  box-shadow: inset 0 0 0 1px rgba(51, 153, 255, 0.45);
+}
+[data-theme="win7"] .primary,
+[data-theme="win7"] .send:not(:disabled) {
+  background: linear-gradient(180deg, #6eb6ff, #1a7ad9);
+  color: #fff;
+  border: 1px solid #1464b8;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+[data-theme="dawn"] body,
+[data-theme="dawn"] .login-screen,
+[data-theme="dawn"] .shell {
+  background-color: #070b18;
+  background-image:
+    linear-gradient(#fff, #fff),
+    linear-gradient(#f6e7c1, #f6e7c1),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#f6e7c1, #f6e7c1),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#f6e7c1, #f6e7c1),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#f6e7c1, #f6e7c1),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#fff, #fff),
+    linear-gradient(#f6e7c1, #f6e7c1),
+    linear-gradient(#fff, #fff),
+    linear-gradient(180deg, #16224a, #070b18 72%);
+  background-size:
+    2px 2px, 2px 2px, 2px 2px, 2px 2px,
+    2px 2px, 2px 2px, 2px 2px, 2px 2px,
+    2px 2px, 2px 2px, 2px 2px, 2px 2px,
+    2px 2px, 2px 2px, 2px 2px, 2px 2px,
+    auto;
+  background-position:
+    80px 48px, 180px 120px, 280px 36px, 390px 170px,
+    520px 80px, 660px 40px, 790px 150px, 920px 70px,
+    1080px 130px, 1200px 50px, 70px 280px, 240px 360px,
+    430px 320px, 760px 300px, 980px 340px, 1140px 260px,
+    0 0;
+  background-repeat: no-repeat;
+}
+[data-theme="dawn"] .login-screen {
+  color: #f6e7c1;
+}
+[data-theme="dawn"] .login-screen > .muted {
+  color: #f6e7c1;
+}
+[data-theme="dawn"] :is(.sidebar, .file-drawer, .main, .login-card, .composer-card, .home-card, .admin-pane) {
+  background: #f6e7c1;
+  color: #1c140e;
+  border: 2px solid #111;
+  box-shadow: 5px 5px 0 #e07a3d;
+}
+[data-theme="dawn"] .topbar {
+  background:
+    linear-gradient(#f6e7c1, #f6e7c1) 8px 50% / calc(100% - 16px) 16px no-repeat,
+    repeating-linear-gradient(#111 0 1px, #f4efe4 1px 2px);
+  color: #111;
+  border-bottom: 2px solid #111;
+}
+[data-theme="dawn"] :is(input, select, textarea) {
+  background: #fffaf0;
+  color: #1c140e;
+  border: 2px solid #111;
+}
+[data-theme="dawn"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #1c140e;
+  color: #f6e7c1;
+}
+[data-theme="dawn"] .primary,
+[data-theme="dawn"] .send:not(:disabled) {
+  background: #e07a3d;
+  color: #1c140e;
+  border: 2px solid #111;
+  box-shadow: 3px 3px 0 #000;
+  font-weight: 700;
+}
+
+[data-theme="system"] body,
+[data-theme="system"] .login-screen,
+[data-theme="system"] .shell {
+  background: repeating-linear-gradient(0deg, #d0d0d0 0 2px, #8d8d8d 2px 4px);
+}
+[data-theme="system"] :is(.sidebar, .file-drawer, .main, .login-card, .composer-card, .home-card, .admin-pane) {
+  background: #fff;
+  color: #000;
+  border: 2px solid #000;
+  box-shadow: 2px 2px 0 #000;
+}
+[data-theme="system"] .topbar {
+  background:
+    linear-gradient(#fff, #fff) 6px 50% / calc(100% - 12px) 16px no-repeat,
+    repeating-linear-gradient(#000 0 1px, #fff 1px 2px);
+  color: #000;
+  border-bottom: 1px solid #000;
+}
+[data-theme="system"] :is(input, select, textarea) {
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #808080;
+}
+[data-theme="system"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #000;
+  color: #fff;
+}
+[data-theme="system"] .primary,
+[data-theme="system"] .send:not(:disabled) {
+  background: #000;
+  color: #fff;
+  border: 1px solid #000;
+  box-shadow: 1px 1px 0 #000;
+}
+
+[data-theme="sims"] :is(h1, h2, h3) {
+  letter-spacing: 0;
+}
+[data-theme="sims"] body,
+[data-theme="sims"] .login-screen,
+[data-theme="sims"] .shell {
+  background:
+    radial-gradient(circle at 82% 12%, #fff8d0 0 18px, #ffe08a 19px, transparent 23px),
+    linear-gradient(180deg, #8fd4ee 0%, #7ec8e3 58%, #b7e38a 58%, #4ea352 100%);
+}
+[data-theme="sims"] :is(.sidebar, .file-drawer) {
+  background: linear-gradient(180deg, #5cb85c, #2f7a34);
+  color: #f4ffe8;
+  border: 4px solid #6b3e26;
+  border-radius: 12px;
+  box-shadow: 0 6px 0 #4a2918;
+}
+[data-theme="sims"] .sidebar :is(.nav-item, .section-label, .section-toggle, .app-brand, .muted, .sign-out, .repo-name, .chat-title, .chat-time),
+[data-theme="sims"] .file-drawer :is(.nav-item, .section-label, .muted) {
+  color: #f4ffe8;
+}
+[data-theme="sims"] .app-brand::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  background: #7ac943;
+  border: 2px solid #1f5c24;
+  transform: rotate(45deg);
+  vertical-align: -1px;
+}
+[data-theme="sims"] .main {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(243, 230, 200, 0.94));
+  border: 4px solid #6b3e26;
+  border-radius: 16px;
+  box-shadow: 0 6px 0 #4a2918;
+}
+[data-theme="sims"] .topbar {
+  background: linear-gradient(180deg, #c4894a, #8a5a32);
+  color: #fff8ea;
+  border-bottom: 4px solid #4a2918;
+  border-radius: 12px 12px 0 0;
+}
+[data-theme="sims"] .topbar :is(h2, p, .muted) {
+  color: #fff8ea;
+}
+[data-theme="sims"] :is(.login-card, .composer-card, .home-card, .admin-pane) {
+  background: #f3e6c8;
+  color: #2c2416;
+  border: 4px solid #6b3e26;
+  border-radius: 14px;
+  box-shadow: 0 6px 0 #4a2918;
+}
+[data-theme="sims"] :is(button, input, select, textarea, .nav-item, .chat-row, .repo-line) {
+  border-radius: 10px;
+}
+[data-theme="sims"] :is(input, select, textarea) {
+  background: #fffaf0;
+  color: #2c2416;
+  border: 3px solid #6b3e26;
+}
+[data-theme="sims"] :is(.nav-item.active, .repo-line.active, .chat-row.active) {
+  background: #f3e6c8;
+  color: #2c2416;
+  box-shadow: inset 0 0 0 3px #6b3e26;
+}
+[data-theme="sims"] .primary,
+[data-theme="sims"] .send:not(:disabled) {
+  background: #3d8c40;
+  color: #f4ffe8;
+  border: 3px solid #6b3e26;
+  border-radius: 10px;
+  box-shadow: 0 3px 0 #4a2918;
+}
+
+@media (min-width: 801px) {
+  :is(
+    [data-theme="win98"],
+    [data-theme="winxp"],
+    [data-theme="dawn"],
+    [data-theme="system"],
+    [data-theme="sims"]
+  ) .shell {
+    height: 100dvh;
+    padding: 8px;
+    gap: 8px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  :is(
+    [data-theme="win98"],
+    [data-theme="winxp"],
+    [data-theme="dawn"],
+    [data-theme="system"],
+    [data-theme="sims"]
+  ) :is(.sidebar, .main, .file-drawer) {
+    height: auto;
+    min-height: 0;
+  }
 }
 
