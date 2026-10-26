@@ -51,6 +51,14 @@ export function IconSliders() {
   );
 }
 
+export function IconClip() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M6.2 8.8 10.4 4.6a2.4 2.4 0 0 1 3.4 3.4l-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5l5-5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IconArrow() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">

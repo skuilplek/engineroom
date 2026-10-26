@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isInsidePath, type AgentOptionChoice, type PermissionOption, type PermissionPolicy, type StreamEvent } from "@engineroom/protocol";
+import type { AgentContentBlock } from "../prompt-content.ts";
 import { mapUpdate } from "./map.ts";
 import { JsonRpc } from "./rpc.ts";
 
@@ -38,6 +39,7 @@ export class AcpSession {
   sessionId: string | null = null;
   modes: { currentModeId: string; availableModes: { id: string; name: string; description?: string }[] } | null = null;
   models: { currentModelId: string; availableModels: { modelId: string; name: string }[] } | null = null;
+  acceptsImages = false;
   alive = true;
   private rpc!: JsonRpc;
   private child!: ChildProcess;
@@ -84,7 +86,8 @@ export class AcpSession {
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: "engineroom", version: "0.1.0" },
       }),
-    )) as { authMethods?: { id: string }[] };
+    )) as { authMethods?: { id: string }[]; agentCapabilities?: { promptCapabilities?: { image?: boolean } } };
+    this.acceptsImages = initialized.agentCapabilities?.promptCapabilities?.image === true;
     const method = initialized.authMethods?.[0]?.id;
     if (method) await rpcTimeout(this.rpc.request("authenticate", { methodId: method }));
     if (this.start.needsResync) this.suppress = false;
@@ -119,7 +122,7 @@ export class AcpSession {
     return this.sessionId;
   }
 
-  async prompt(text: string, signal: AbortSignal): Promise<{ stopReason?: string }> {
+  async prompt(blocks: AgentContentBlock[], signal: AbortSignal): Promise<{ stopReason?: string }> {
     if (!this.sessionId) throw new Error("session is not open");
     const onAbort = () => this.cancel();
     if (signal.aborted) onAbort();
@@ -128,7 +131,7 @@ export class AcpSession {
     try {
       const result = (await this.rpc.request("session/prompt", {
         sessionId: this.sessionId,
-        prompt: [{ type: "text", text }],
+        prompt: blocks,
       })) as { stopReason?: string };
       this.start.onEvent({ type: "turn_end", stopReason: result.stopReason });
       this.start.onEvent({ type: "done", agentSessionId: this.sessionId });

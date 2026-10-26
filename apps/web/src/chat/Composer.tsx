@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import type { GitStatus } from "@engineroom/protocol";
+import { useRef, useState, useEffect, type DragEvent, type FormEvent, type ReactNode } from "react";
+import type { GitStatus, QueuedPrompt } from "@engineroom/protocol";
 import { gitWorkspace, initGitWorkspace, switchGitBranch } from "../api.ts";
 import { message } from "../format.ts";
-import { IconArrow, IconBranch } from "../icons.tsx";
+import { IconArrow, IconBranch, IconClip } from "../icons.tsx";
+import { addComposerFiles, removeComposerFile, type ComposerAttachment } from "./attachments.ts";
 import { usePromptHeight } from "./promptHeight.ts";
 
 export interface ComposerChoice {
@@ -14,6 +15,8 @@ export function Composer({
   frame,
   prompt,
   onPrompt,
+  attachments,
+  onAttachments,
   placeholder,
   username,
   disabled,
@@ -38,6 +41,8 @@ export function Composer({
   frame: "dock" | "launch";
   prompt: string;
   onPrompt: (value: string) => void;
+  attachments: ComposerAttachment[];
+  onAttachments: (items: ComposerAttachment[]) => void;
   placeholder: string;
   username: string;
   disabled: boolean;
@@ -48,7 +53,7 @@ export function Composer({
   models: ComposerChoice[];
   model: string;
   onModel?: (modelId: string) => void;
-  queue?: string[];
+  queue?: QueuedPrompt[];
   onEditQueued?: (index: number) => void;
   onRemoveQueued?: (index: number) => void;
   workspace: string;
@@ -61,6 +66,9 @@ export function Composer({
 }) {
   const promptHeight = usePromptHeight(username);
   const box = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
   const [git, setGit] = useState<GitStatus | null>(null);
   const [gitError, setGitError] = useState("");
   const [gitBusy, setGitBusy] = useState(false);
@@ -130,11 +138,40 @@ export function Composer({
     if (await copyText(git.branch)) setCopied(true);
   }
 
+  function addFiles(list: FileList | File[]) {
+    const result = addComposerFiles(attachments, list);
+    onAttachments(result.attachments);
+    setAttachmentError(result.error);
+  }
+
+  function hasFiles(transfer: DataTransfer | null): boolean {
+    return Boolean(transfer?.types?.includes("Files"));
+  }
+
+  function onDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!hasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDragging(true);
+  }
+
+  function onDragLeave(event: DragEvent<HTMLFormElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setDragging(false);
+  }
+
+  function onDrop(event: DragEvent<HTMLFormElement>) {
+    if (!hasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    setDragging(false);
+    addFiles(event.dataTransfer.files);
+  }
+
   const branches = git?.branches ?? [];
   const branchNames = git?.branch && !branches.includes(git.branch) ? [git.branch, ...branches] : branches;
   const showBranch = Boolean(git?.repo && (git.branch || branchNames.length > 0));
   const showCreate = Boolean(git && !git.repo && projectCreate);
-  const alert = gitError || error || "";
+  const alert = gitError || attachmentError || error || "";
 
   return (
     <div className={frame === "dock" ? "composer" : "launch-composer"}>
@@ -147,9 +184,9 @@ export function Composer({
       )}
       {queue.length > 0 && (
         <ul className="queue-list" aria-label="Queued messages">
-          {queue.map((text, index) => (
-            <li key={`${index}:${text}`}>
-              <p title={text}>{text}</p>
+          {queue.map((item, index) => (
+            <li key={`${index}:${item.text}`}>
+              <p title={queueLabel(item)}>{queueLabel(item)}</p>
               {onEditQueued && (
                 <button type="button" onClick={() => onEditQueued(index)}>Edit</button>
               )}
@@ -160,7 +197,31 @@ export function Composer({
           ))}
         </ul>
       )}
-      <form className="composer-card" onSubmit={onSubmit}>
+      <form
+        className={dragging ? "composer-card dropping" : "composer-card"}
+        onSubmit={onSubmit}
+        onDragEnter={onDragOver}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        {attachments.length > 0 && (
+          <ul className="composer-files" aria-label="Attachments">
+            {attachments.map((item) => (
+              <li className="composer-file" key={item.key}>
+                {item.previewUrl ? <img src={item.previewUrl} alt="" /> : null}
+                <span title={item.name}>{item.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${item.name}`}
+                  onClick={() => onAttachments(removeComposerFile(attachments, item.key))}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           ref={box}
           style={promptHeight.style}
@@ -169,6 +230,12 @@ export function Composer({
           aria-label={placeholder}
           onPointerDown={promptHeight.onPointerDown}
           onChange={(event) => onPrompt(event.target.value)}
+          onPaste={(event) => {
+            const files = filesFromClipboard(event.clipboardData);
+            if (files.length === 0) return;
+            event.preventDefault();
+            addFiles(files);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -191,9 +258,24 @@ export function Composer({
               </select>
             )}
           </div>
-          <button className="send" type="submit" disabled={disabled} aria-label="Send">
-            <IconArrow />
-          </button>
+          <div className="composer-actions">
+            <button className="attach-button" type="button" aria-label="Attach files" onClick={() => picker.current?.click()}>
+              <IconClip />
+            </button>
+            <input
+              ref={picker}
+              className="file-input"
+              type="file"
+              multiple
+              onChange={(event) => {
+                if (event.target.files) addFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <button className="send" type="submit" disabled={disabled} aria-label="Send">
+              <IconArrow />
+            </button>
+          </div>
         </div>
       </form>
       {showBranch && git && (
@@ -222,6 +304,23 @@ export function Composer({
       {alert && <p className="alert" role="alert">{alert}</p>}
     </div>
   );
+}
+
+function queueLabel(item: QueuedPrompt): string {
+  if (item.attachments.length === 0) return item.text;
+  const names = item.attachments.map((file) => file.name).join(", ");
+  return item.text ? `${item.text} · ${names}` : names;
+}
+
+function filesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const files: File[] = [];
+  for (const item of data.items) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return files;
 }
 
 async function copyText(text: string): Promise<boolean> {

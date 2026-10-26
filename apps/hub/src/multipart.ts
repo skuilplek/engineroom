@@ -7,6 +7,7 @@ const MAX_UPLOAD_BODY = MAX_TRANSFER_BYTES * 4 + 1024 * 1024;
 export interface UploadPart {
   filename: string;
   data: Buffer;
+  mimeType?: string;
 }
 
 export interface UploadForm {
@@ -62,7 +63,7 @@ export function parseMultipart(body: Buffer, boundary: string): UploadForm {
       if (filename != null) {
         if (files.length >= MAX_UPLOAD_FILES) throw new Error("invalid upload");
         if (data.length > MAX_TRANSFER_BYTES) throw new Error("file is too large");
-        files.push({ filename, data });
+        files.push({ filename, data, mimeType: contentType(headers) });
       } else {
         const name = dispositionParam(disposition, "name");
         if (name) {
@@ -74,6 +75,13 @@ export function parseMultipart(body: Buffer, boundary: string): UploadForm {
     pos = next;
   }
   return { fields, files };
+}
+
+function contentType(headers: string): string | undefined {
+  const line = headers.split(/\r\n/).find((item) => item.toLowerCase().startsWith("content-type:"));
+  if (!line) return undefined;
+  const mime = line.slice(line.indexOf(":") + 1).trim().split(";")[0]?.trim();
+  return mime || undefined;
 }
 
 function dispositionFilename(header: string): string | undefined {

@@ -764,3 +764,61 @@ test("git change requests keep paths inside the repo and reject an empty commit"
   if (plain.type === "git_commit") assert.equal(plain.stageVisible, undefined);
 });
 
+test("prompt attachments must live in the upload folder", () => {
+  const chatId = "11111111-1111-1111-1111-111111111111";
+  const saved = parseRunnerRequest({
+    id: "p1",
+    type: "save_prompt_attachment",
+    workspace: "/home/alice/Sites/proj",
+    name: "shot.png",
+    mimeType: "image/jpg",
+    contentBase64: "aGVsbG8=",
+  });
+  assert.equal(saved.type, "save_prompt_attachment");
+  if (saved.type === "save_prompt_attachment") assert.equal(saved.mimeType, "image/jpeg");
+  const prompt = parseRunnerRequest({
+    id: "p2",
+    type: "prompt",
+    chatId,
+    prompt: "",
+    attachments: [{
+      name: "shot.png",
+      path: ".engineroom/uploads/abc-shot.png",
+      mimeType: "image/png",
+      size: 5,
+    }],
+  });
+  assert.equal(prompt.type, "prompt");
+  if (prompt.type === "prompt") {
+    assert.equal(prompt.prompt, "");
+    assert.equal(prompt.attachments?.[0]?.path, ".engineroom/uploads/abc-shot.png");
+  }
+  assert.throws(() => parseRunnerRequest({ id: "p3", type: "prompt", chatId, prompt: "   " }), /prompt is empty/);
+  assert.throws(() => parseRunnerRequest({
+    id: "p4",
+    type: "prompt",
+    chatId,
+    prompt: "look",
+    attachments: [{ name: "shot.png", path: "src/shot.png", mimeType: "image/png", size: 1 }],
+  }), /invalid attachment/);
+  assert.throws(() => parseRunnerRequest({
+    id: "p5",
+    type: "prompt",
+    chatId,
+    prompt: "look",
+    attachments: [{ name: "shot.png", path: ".engineroom/uploads/nested/shot.png", mimeType: "image/png", size: 1 }],
+  }), /invalid attachment/);
+  assert.throws(() => parseRunnerRequest({
+    id: "p6",
+    type: "prompt",
+    chatId,
+    prompt: "look",
+    attachments: Array.from({ length: 9 }, () => ({
+      name: "a.txt",
+      path: ".engineroom/uploads/a.txt",
+      mimeType: "text/plain",
+      size: 1,
+    })),
+  }), /too many attachments/);
+});
+

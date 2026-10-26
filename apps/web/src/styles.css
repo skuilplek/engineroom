@@ -545,7 +545,74 @@ textarea { resize: vertical; }
   border-radius: 16px;
   padding: 10px 10px 8px 12px;
 }
-.composer-card:focus-within { border-color: var(--focus); }
+.composer-card:focus-within,
+.composer-card.dropping { border-color: var(--focus); }
+.composer-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 2px 6px;
+  list-style: none;
+}
+.composer-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 4px 6px 4px 4px;
+  font-size: 13px;
+}
+.composer-file img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.composer-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.composer-file button {
+  color: var(--muted);
+  padding: 2px 4px;
+  line-height: 1;
+}
+.attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--soft);
+  border-radius: 999px;
+}
+.attach-button:hover { color: var(--ink); background: var(--hover); }
+.file-input { display: none; }
+.bubble-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.bubble-files:last-child { margin-bottom: 0; }
+.bubble-files img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.bubble-files span {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
 .composer-card textarea {
   flex: none;
   width: 100%;
@@ -604,7 +671,14 @@ textarea { resize: vertical; }
 }
 .composer-choices select:hover { color: var(--ink); }
 .composer-choices select:not(:first-of-type):hover { background-color: transparent; }
-.composer-controls .send { margin-left: auto; }
+.composer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.composer-actions .send { margin-left: 0; }
 .composer-controls .muted { margin: 0; }
 .composer-pills { display: flex; gap: 8px; }
 .composer-pill {

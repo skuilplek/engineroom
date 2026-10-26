@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { isTheme, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
+import { isTheme, type ChatMeta, type PromptAttachment, type RepositoryEntry } from "@engineroom/protocol";
 import { createRepository, deleteRepository, listChats, listRepositories, login, logout, me, setRepositoryArchived, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
@@ -118,7 +118,7 @@ function Shell({
   });
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [fileOpenRequest, setFileOpenRequest] = useState<{ id: number; path: string } | null>(null);
-  const openingRef = useRef<{ id: string; prompt: string } | null>(null);
+  const openingRef = useRef<{ id: string; prompt: string; attachments: PromptAttachment[] } | null>(null);
   const consumedRef = useRef<string | null>(null);
   const restoredRef = useRef(false);
   const choseRef = useRef(false);
@@ -184,11 +184,11 @@ function Shell({
     listRepositories().then(setRepos).catch(() => undefined);
   }, []);
 
-  const claimOpening = useCallback((id: string): string | null => {
+  const claimOpening = useCallback((id: string): { prompt: string; attachments: PromptAttachment[] } | null => {
     const pending = openingRef.current;
     if (!pending || pending.id !== id || consumedRef.current === id) return null;
     consumedRef.current = id;
-    return pending.prompt;
+    return { prompt: pending.prompt, attachments: pending.attachments };
   }, []);
 
   const showChat = useCallback((chat: ChatMeta, knownRepos: RepositoryEntry[]) => {
@@ -441,10 +441,10 @@ function Shell({
             onDelete={removeProject}
             onReposChanged={refreshRepos}
             onBranchChanged={bumpFilesRefresh}
-            onStarted={(chat, prompt) => {
+            onStarted={(chat, prompt, attachments) => {
               choseRef.current = true;
               remember(chat);
-              openingRef.current = { id: chat.id, prompt };
+              openingRef.current = { id: chat.id, prompt, attachments };
               consumedRef.current = null;
               writeLastChat(session.username, chat.id);
               setActiveId(chat.id);

@@ -7,6 +7,8 @@ import path from "node:path";
 import { peerCredentials } from "@engineroom/peercred";
 import {
   assertChatId,
+  attachmentListText,
+  displayPrompt,
   isBuiltinAgent,
   MAX_TRANSFER_BYTES,
   maxSeq,
@@ -17,6 +19,8 @@ import {
   type BuiltinAgentId,
   type ChatEvent,
   type ChatMeta,
+  type PromptAttachment,
+  type QueuedPrompt,
   type RunnerRequest,
   type RunnerResponse,
   type StreamEvent,
@@ -42,9 +46,11 @@ import {
   discardRepositoryChange,
   downloadRepositoryFile,
   listRepositoryFiles,
+  loadPromptAttachments,
   readHomeFile,
   readRepositoryFile,
   renameRepositoryEntry,
+  savePromptAttachment,
   stageRepositoryChange,
   unstageRepositoryChange,
   uploadRepositoryFile,
@@ -85,7 +91,7 @@ export interface RunningRunner {
 interface RunState {
   busy: boolean;
   stopped: boolean;
-  queue: string[];
+  queue: QueuedPrompt[];
   controller: AbortController;
 }
 
@@ -136,7 +142,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return;
       }
       if (request.type === "send" || request.type === "prompt") {
-        const result = beginTurn(request.chatId, request.prompt);
+        const result = beginTurn(request.chatId, request.prompt, request.attachments ?? []);
         write(socket, { id: request.id, type: "ok", result });
         socket.end();
         return;
@@ -247,7 +253,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return { ok: true };
       case "send":
       case "prompt":
-        return beginTurn(request.chatId, request.prompt);
+        return beginTurn(request.chatId, request.prompt, request.attachments ?? []);
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -409,6 +415,14 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           request.overwrite === true,
           request.visibility,
         );
+      case "save_prompt_attachment":
+        return savePromptAttachment(
+          home,
+          request.workspace,
+          request.name,
+          request.mimeType,
+          request.contentBase64,
+        );
       case "start_project_archive":
         return archives.start(home, request.workspace);
       case "project_archive_status":
@@ -514,23 +528,34 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     }
   }
 
-  function beginTurn(chatId: string, prompt: string): { accepted: true; queued: boolean } {
+  function beginTurn(
+    chatId: string,
+    prompt: string,
+    attachments: PromptAttachment[] = [],
+  ): { accepted: true; queued: boolean } {
     assertChatId(chatId);
+    const shown = displayPrompt(prompt, attachments.length);
+    if (!shown) throw new Error("prompt is empty");
     let state = runs.get(chatId);
     if (!state) {
       state = { busy: false, stopped: false, queue: [], controller: new AbortController() };
       runs.set(chatId, state);
     }
     if (state.busy) {
-      state.queue.push(prompt);
-      publish(chatId, { type: "queued", text: prompt });
+      const queued = { text: shown, attachments };
+      state.queue.push(queued);
+      publish(chatId, {
+        type: "queued",
+        text: shown,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
       return { accepted: true, queued: true };
     }
     state.busy = true;
     state.stopped = false;
     state.controller = new AbortController();
     bus.setRunning(chatId, true);
-    void executeTurn(chatId, state, prompt);
+    void executeTurn(chatId, state, prompt, attachments);
     return { accepted: true, queued: false };
   }
 
@@ -552,7 +577,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     publish(chatId, { type: "dequeued", index });
   }
 
-  async function executeTurn(chatId: string, state: RunState, prompt: string) {
+  async function executeTurn(chatId: string, state: RunState, prompt: string, attachments: PromptAttachment[] = []) {
     const signal = state.controller.signal;
     let sessionId: string | null = null;
     const publishEvent = (event: StreamEvent) => publish(chatId, event);
@@ -560,14 +585,23 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       if (signal.aborted) return;
       const detail = await getChat(home, chatId, true);
       const chat = detail.chat;
+      const loaded = await loadPromptAttachments(home, chat.workspace, attachments);
+      const shown = displayPrompt(prompt, loaded.length);
+      if (!shown) throw new Error("prompt is empty");
       sessionId = chat.agentSessionId;
       bus.init(chatId, maxSeq(detail.transcript));
       if (chat.title === "New chat") {
-        const title = titleFromPrompt(prompt);
+        const title = titleFromPrompt(shown);
         await updateChat(home, chatId, { title });
         publishEvent({ type: "title", text: title });
       }
-      publishEvent({ type: "user_message", text: prompt });
+      publishEvent({
+        type: "user_message",
+        text: shown,
+        ...(loaded.length > 0
+          ? { attachments: loaded.map((file) => ({ name: file.name, path: file.path, mimeType: file.mimeType, size: file.size })) }
+          : {}),
+      });
       publishEvent({ type: "turn_start" });
       const policy = await loadPolicy(home);
       if (!policy.agents.includes(chat.agent)) throw new Error("invalid agent");
@@ -576,7 +610,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         home,
         workspace: chat.workspace,
         model: chat.model,
-        prompt,
+        prompt: attachmentListText(shown, loaded),
         agentSessionId: chat.agentSessionId,
         settings,
         signal,
@@ -608,7 +642,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           },
         };
         try {
-          const finished = await acp.prompt(chatId, acpCtx, prompt, signal);
+          const finished = await acp.prompt(chatId, acpCtx, shown, loaded, signal);
           sessionId = finished.agentSessionId ?? sessionId;
           if (chat.needsResync) await updateChat(home, chatId, { needsResync: false });
         } catch (error) {
@@ -642,7 +676,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       if (next) {
         state.busy = true;
         state.controller = new AbortController();
-        void executeTurn(chatId, state, next);
+        void executeTurn(chatId, state, next.text, next.attachments);
         return;
       }
       runs.delete(chatId);

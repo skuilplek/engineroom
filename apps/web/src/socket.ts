@@ -1,4 +1,4 @@
-import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
 
 export type { AgentMode, AgentModel };
 
@@ -12,7 +12,7 @@ export type ServerMessage =
       chat: ChatMeta;
       modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
       models?: { currentModelId: string; availableModels: AgentModel[] } | null;
-      queue?: string[];
+      queue?: QueuedPrompt[];
       queueSeq?: number;
       scrollback?: string;
     }

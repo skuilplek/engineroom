@@ -89,7 +89,15 @@ export class TranscriptWriter {
 
 function toEntry(event: StreamEvent, seq: number): TranscriptEntry | null {
   const at = new Date().toISOString();
-  if (event.type === "user_message") return { kind: "user", text: event.text, at, seq };
+  if (event.type === "user_message") {
+    return {
+      kind: "user",
+      text: event.text,
+      at,
+      seq,
+      ...(event.attachments?.length ? { attachments: event.attachments } : {}),
+    };
+  }
   if (event.type === "tool") {
     return {
       kind: "tool",

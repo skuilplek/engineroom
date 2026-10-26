@@ -6,11 +6,36 @@ import path from "node:path";
 import test from "node:test";
 import type { AgentId } from "@engineroom/protocol";
 import { AcpManager, acpCommand } from "../apps/runner/src/acp/manager.ts";
+import { agentContentBlocks } from "../apps/runner/src/prompt-content.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { getChat } from "../apps/runner/src/store.ts";
 
 const fake = path.resolve("test/fake-acp.mjs");
+
+test("prompt blocks link every file and include images only when the agent accepts them", () => {
+  const shot = {
+    name: "shot.png",
+    path: ".engineroom/uploads/id-shot.png",
+    mimeType: "image/png",
+    size: 4,
+    uri: "file:///tmp/shot.png",
+    data: "AAAA",
+  };
+  const note = {
+    name: "notes.txt",
+    path: ".engineroom/uploads/id-notes.txt",
+    mimeType: "text/plain",
+    size: 5,
+    uri: "file:///tmp/notes.txt",
+  };
+  const vision = agentContentBlocks("look", [shot, note], true);
+  assert.equal(vision[0]?.type, "text");
+  assert.match(vision[0]?.type === "text" ? vision[0].text : "", /\.engineroom\/uploads\/id-shot\.png \(image\/png\)/);
+  assert.deepEqual(vision.map((block) => block.type), ["text", "resource_link", "image", "resource_link"]);
+  const plain = agentContentBlocks("look", [shot], false);
+  assert.deepEqual(plain.map((block) => block.type), ["text", "resource_link"]);
+});
 
 test("a custom agent launches its command with acp", () => {
   const commands = new Map([["codex", "codex"]]);
@@ -215,6 +240,51 @@ test("probe reads the session catalog and a personal list rejects other models",
     const chat = await getChat(home, chatId, false);
     assert.equal(chat.chat.model, "fake");
   } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("an ACP prompt sends image bytes and a file link", async () => {
+  const { savePromptAttachment } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-attach-acp-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const shot = await savePromptAttachment(home, home, "shot.png", "application/octet-stream", png.toString("base64"));
+    const note = await savePromptAttachment(home, home, "notes.txt", "text/plain", Buffer.from("hello").toString("base64"));
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "look", attachments: [shot] });
+    await live.next((message) => message.event?.type === "done");
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "", attachments: [note] });
+    await live.next((message) => message.id === "p2" && message.type === "ok");
+    await live.next((message) => message.event?.type === "done");
+    let finished = await getChat(home, chatId, false);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const text = finished.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("files:1:0"));
+      if (text) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      finished = await getChat(home, chatId, false);
+    }
+    assert.equal(finished.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("files:1:1")), true);
+    assert.equal(finished.transcript.some((entry) => entry.kind === "text" && entry.text?.includes("files:1:0")), true);
+    const users = finished.transcript.flatMap((entry) => (entry.kind === "user" ? [entry] : []));
+    assert.equal(users[0]?.attachments?.[0]?.path, shot.path);
+    assert.equal(users[1]?.text, "Attached files.");
+    assert.equal(users[1]?.attachments?.[0]?.name, "notes.txt");
+  } finally {
+    live.close();
     await runner.close();
     await rm(home, { recursive: true, force: true });
   }

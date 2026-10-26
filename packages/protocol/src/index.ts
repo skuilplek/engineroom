@@ -130,7 +130,7 @@ export interface PermissionOption {
 }
 
 export type TranscriptEntry = (
-  | { kind: "user"; text: string; at: string }
+  | { kind: "user"; text: string; at: string; attachments?: PromptAttachment[] }
   | { kind: "text"; text: string; at: string }
   | {
       kind: "tool";
@@ -224,6 +224,24 @@ export interface RepoFileContent {
 /** Largest file the file manager will download or upload. */
 export const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
 
+/** Files pasted or picked in the prompt box. */
+export const MAX_PROMPT_ATTACHMENTS = 8;
+export const MAX_PROMPT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const PROMPT_UPLOAD_DIR = ".engineroom/uploads";
+export const ATTACHED_PROMPT = "Attached files.";
+
+export interface PromptAttachment {
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface QueuedPrompt {
+  text: string;
+  attachments: PromptAttachment[];
+}
+
 export interface RepoFileDownload {
   path: string;
   name: string;
@@ -286,7 +304,7 @@ export const CATALOG_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 export type StreamEvent =
-  | { type: "user_message"; text: string }
+  | { type: "user_message"; text: string; attachments?: PromptAttachment[] }
   | { type: "text_delta"; text: string; messageId?: string }
   | {
       type: "tool";
@@ -307,9 +325,9 @@ export type StreamEvent =
   | { type: "permission_resolved"; requestId: string; optionId: string }
   | { type: "turn_start" }
   | { type: "turn_end"; stopReason?: string }
-  | { type: "queued"; text: string }
+  | { type: "queued"; text: string; attachments?: PromptAttachment[] }
   | { type: "dequeued"; index: number }
-  | { type: "queue"; items: string[] }
+  | { type: "queue"; items: QueuedPrompt[] }
   | { type: "mode"; modeId: string }
   | { type: "model"; modelId: string }
   | { type: "title"; text: string }
@@ -370,8 +388,8 @@ export type RunnerRequest =
   | { id: string; type: "create_repository"; name: string; directory: string; url?: string }
   | { id: string; type: "set_repository_archived"; workspace: string; archived: boolean }
   | { id: string; type: "delete_repository"; workspace: string; name: string }
-  | { id: string; type: "send"; chatId: string; prompt: string }
-  | { id: string; type: "prompt"; chatId: string; prompt: string }
+  | { id: string; type: "send"; chatId: string; prompt: string; attachments?: PromptAttachment[] }
+  | { id: string; type: "prompt"; chatId: string; prompt: string; attachments?: PromptAttachment[] }
   | { id: string; type: "cancel"; chatId: string }
   | { id: string; type: "subscribe" }
   | { id: string; type: "watch"; chatId: string; lastSeq: number }
@@ -422,6 +440,14 @@ export type RunnerRequest =
       contentBase64: string;
       overwrite?: boolean;
       visibility?: FileVisibility;
+    }
+  | {
+      id: string;
+      type: "save_prompt_attachment";
+      workspace: string;
+      name: string;
+      mimeType: string;
+      contentBase64: string;
     }
   | { id: string; type: "start_project_archive"; workspace: string }
   | { id: string; type: "project_archive_status"; archiveId: string }
@@ -544,6 +570,18 @@ export function titleFromPrompt(prompt: string): string {
   const line = prompt.replace(/\s+/g, " ").trim();
   if (!line) return "New chat";
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
+}
+
+export function displayPrompt(text: string, attachmentCount: number): string {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+  return attachmentCount > 0 ? ATTACHED_PROMPT : "";
+}
+
+export function attachmentListText(text: string, attachments: readonly { path: string; mimeType: string }[]): string {
+  if (attachments.length === 0) return text;
+  const lines = attachments.map((item) => `- ${item.path} (${item.mimeType})`);
+  return `${text}\n\nAttached files:\n${lines.join("\n")}`;
 }
 
 export function loginAllowed(
@@ -688,9 +726,16 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "put_settings", settings: parseSettingsPatch(body.settings) };
     case "send":
     case "prompt": {
-      const prompt = optionalString(body.prompt, "prompt", 100_000);
-      if (!prompt?.trim()) throw new Error("prompt is empty");
-      return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), prompt };
+      const attachments = parsePromptAttachments(body.attachments);
+      const prompt = optionalString(body.prompt, "prompt", 100_000) ?? "";
+      if (!prompt.trim() && attachments.length === 0) throw new Error("prompt is empty");
+      return {
+        id: body.id,
+        type: body.type,
+        chatId: assertChatId(body.chatId),
+        prompt,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
     }
     case "subscribe":
       return { id: body.id, type: "subscribe" };
@@ -902,6 +947,15 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }
+    case "save_prompt_attachment":
+      return {
+        id: body.id,
+        type: "save_prompt_attachment",
+        workspace: requiredWorkspace(body.workspace),
+        name: assertUploadFileName(body.name),
+        mimeType: cleanMimeType(body.mimeType),
+        contentBase64: parseAttachmentBase64(body.contentBase64),
+      };
     default:
       throw new Error("unknown request");
   }
@@ -954,6 +1008,54 @@ export function parseTransferBase64(value: unknown): string {
   if (cleaned.length > maxChars) throw new Error("file is too large");
   if (cleaned.length > 0 && !/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) throw new Error("invalid file content");
   return cleaned;
+}
+
+export function parseAttachmentBase64(value: unknown): string {
+  const cleaned = parseTransferBase64(value);
+  const maxChars = Math.ceil(MAX_PROMPT_ATTACHMENT_BYTES / 3) * 4;
+  if (cleaned.length > maxChars) throw new Error("file is too large");
+  return cleaned;
+}
+
+export function cleanMimeType(value: unknown): string {
+  if (typeof value !== "string") return "application/octet-stream";
+  const mime = value.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mime === "image/jpg") return "image/jpeg";
+  if (!/^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/.test(mime)) {
+    return "application/octet-stream";
+  }
+  return mime;
+}
+
+export function assertPromptAttachmentPath(value: unknown): string {
+  const rel = assertRepoRelativePath(value);
+  const prefix = `${PROMPT_UPLOAD_DIR}/`;
+  if (!rel.startsWith(prefix)) throw new Error("invalid attachment");
+  const name = rel.slice(prefix.length);
+  if (!name || name.includes("/")) throw new Error("invalid attachment");
+  return rel;
+}
+
+export function parsePromptAttachments(value: unknown): PromptAttachment[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error("invalid attachment");
+  if (value.length > MAX_PROMPT_ATTACHMENTS) throw new Error("too many attachments");
+  return value.map((item) => parsePromptAttachment(item));
+}
+
+function parsePromptAttachment(value: unknown): PromptAttachment {
+  if (!value || typeof value !== "object") throw new Error("invalid attachment");
+  const body = value as Record<string, unknown>;
+  const size = body.size;
+  if (typeof size !== "number" || !Number.isInteger(size) || size < 0 || size > MAX_PROMPT_ATTACHMENT_BYTES) {
+    throw new Error("invalid attachment");
+  }
+  return {
+    name: assertUploadFileName(body.name),
+    path: assertPromptAttachmentPath(body.path),
+    mimeType: cleanMimeType(body.mimeType),
+    size,
+  };
 }
 
 const MAX_COMMIT_MESSAGE = 50_000;

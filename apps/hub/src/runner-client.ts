@@ -32,7 +32,7 @@ export async function callRunner(
       ? 5 * 60 * 1000
     : request.type === "sync_repositories"
       ? 150_000
-      : request.type === "download_repo_file" || request.type === "upload_repo_file"
+      : request.type === "download_repo_file" || request.type === "upload_repo_file" || request.type === "save_prompt_attachment"
         ? 120_000
         : 30_000;
   return new Promise((resolve, reject) => {

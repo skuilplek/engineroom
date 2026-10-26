@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol";
+import type { AgentId, AgentOptionChoice, ChatMeta, PromptAttachment } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings, type Session } from "../api.ts";
 import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message, strip } from "../format.ts";
+import { composerFilesFromSaved, promptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { Composer } from "./Composer.tsx";
 import { startProjectDownload, useProjectDownload } from "./projectDownload.ts";
 
@@ -33,7 +34,7 @@ export function StartView({
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   workspace: string;
   targetLabel: string;
-  onStarted: (chat: ChatMeta, prompt: string) => void;
+  onStarted: (chat: ChatMeta, prompt: string, attachments: PromptAttachment[]) => void;
   filesOpen?: boolean;
   onToggleFiles?: () => void;
   username: string;
@@ -51,6 +52,7 @@ export function StartView({
   const [mode, setMode] = useState(() => options[agents[0] || ""]?.modes?.[0]?.id || "");
   const [model, setModel] = useState(() => options[agents[0] || ""]?.models?.[0]?.id || "");
   const [prompt, setPrompt] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<"archive" | "delete" | "">("");
@@ -84,18 +86,21 @@ export function StartView({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const text = prompt.trim();
+    const text = promptText(prompt, attachments.length);
     if (!text || busy || !agent) return;
     setBusy(true);
     setError("");
     try {
+      const saved = await uploadPendingAttachments(workspace, attachments);
+      setAttachments(composerFilesFromSaved(saved));
+      const messageText = promptText(prompt, saved.length);
       const chat = await createChat({
         agent,
         mode: modes.length > 0 ? mode : "",
         model: models.length > 0 ? model : "",
         workspace,
       });
-      onStarted(chat, text);
+      onStarted(chat, messageText, saved);
     } catch (err) {
       setError(message(err));
       setBusy(false);
@@ -147,9 +152,11 @@ export function StartView({
         frame="launch"
         prompt={prompt}
         onPrompt={setPrompt}
+        attachments={attachments}
+        onAttachments={setAttachments}
         placeholder="What do you want to build?"
         username={username}
-        disabled={busy || !agent || !prompt.trim()}
+        disabled={busy || !agent || !promptText(prompt, attachments.length)}
         onSubmit={(event) => void submit(event)}
         modes={modes}
         mode={mode}

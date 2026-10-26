@@ -1,7 +1,7 @@
-import type { ToolContent, TranscriptEntry } from "@engineroom/protocol";
+import type { PromptAttachment, ToolContent, TranscriptEntry } from "@engineroom/protocol";
 
 export type Block =
-  | { kind: "text"; role: "user" | "assistant"; text: string }
+  | { kind: "text"; role: "user" | "assistant"; text: string; attachments?: PromptAttachment[] }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; phase: string; input?: string; output?: string; toolKind?: string; content?: ToolContent[] }
   | { kind: "error"; text: string }
@@ -11,7 +11,12 @@ export function groupTranscript(entries: TranscriptEntry[]): Block[] {
   const blocks: Block[] = [];
   for (const entry of entries) {
     if (entry.kind === "user") {
-      blocks.push({ kind: "text", role: "user", text: entry.text });
+      blocks.push({
+        kind: "text",
+        role: "user",
+        text: entry.text,
+        ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
+      });
       continue;
     }
     if (entry.kind === "text") {

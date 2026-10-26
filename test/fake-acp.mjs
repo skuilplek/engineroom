@@ -21,7 +21,15 @@ rl.on("line", (line) => {
 
 async function handle(msg) {
   if (msg.method === "initialize") {
-    return reply(msg.id, { protocolVersion: 1, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } }, authMethods: [] });
+    return reply(msg.id, {
+      protocolVersion: 1,
+      agentCapabilities: {
+        loadSession: true,
+        sessionCapabilities: { list: {} },
+        promptCapabilities: { image: true },
+      },
+      authMethods: [],
+    });
   }
   if (msg.method === "session/new") {
     return reply(msg.id, sessionBody("fake-session"));
@@ -49,7 +57,10 @@ async function handle(msg) {
     return reply(msg.id, {});
   }
   if (msg.method === "session/prompt") {
-    const text = msg.params.prompt?.[0]?.text || "";
+    const blocks = Array.isArray(msg.params?.prompt) ? msg.params.prompt : [];
+    const text = blocks.find((block) => block?.type === "text")?.text || "";
+    const links = blocks.filter((block) => block?.type === "resource_link").length;
+    const images = blocks.filter((block) => block?.type === "image").length;
     const sessionId = msg.params.sessionId;
     if (text === "hold") {
       holding = true;
@@ -102,6 +113,12 @@ async function handle(msg) {
       update: { sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed", rawOutput: { content: "note" } },
     });
     notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "world" } } });
+    if (links || images) {
+      notify("session/update", {
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `files:${links}:${images}` } },
+      });
+    }
     return reply(msg.id, { stopReason: "end_turn" });
   }
   if (msg.method === "session/cancel") return;

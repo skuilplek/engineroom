@@ -2,13 +2,20 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   assertAbsoluteFilePath,
+  assertPromptAttachmentPath,
   assertRepoRelativePath,
+  assertUploadFileName,
+  cleanMimeType,
   DEFAULT_FILE_VISIBILITY,
   isInsidePath,
+  MAX_PROMPT_ATTACHMENT_BYTES,
   MAX_TRANSFER_BYTES,
+  PROMPT_UPLOAD_DIR,
   type FileVisibility,
+  type PromptAttachment,
   type RepoFileDownload,
   type RepoFileUpload,
   type RepoChangeEntry,
@@ -17,7 +24,8 @@ import {
   type RepoFileEntry,
   type RepoFilesResult,
 } from "@engineroom/protocol";
-import { resolveRepoWorkspace } from "./store.ts";
+import { isVisionMime, type LoadedPromptAttachment } from "./prompt-content.ts";
+import { resolveChatWorkspace, resolveRepoWorkspace } from "./store.ts";
 import { isGitRepository } from "./workspace.ts";
 
 const MAX_FILES = 5000;
@@ -540,6 +548,99 @@ export async function uploadRepositoryFile(
   }
 
   return { path: relPath, size: bytes.length };
+}
+
+export async function savePromptAttachment(
+  home: string,
+  workspace: string,
+  rawName: string,
+  mimeType: string,
+  contentBase64: string,
+): Promise<PromptAttachment> {
+  const bytes = Buffer.from(contentBase64, "base64");
+  if (bytes.length > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("file is too large");
+  const name = assertUploadFileName(rawName);
+  const root = await resolveChatWorkspace(home, workspace);
+  const dir = path.join(root, ".engineroom", "uploads");
+  await mkdir(dir, { recursive: true });
+  const dirReal = await realpath(dir);
+  if (!isInsidePath(root, dirReal)) throw new Error("invalid file path");
+  const stored = `${randomUUID()}-${safeAttachmentName(name)}`;
+  const target = path.join(dirReal, stored);
+  if (!isInsidePath(dirReal, target)) throw new Error("invalid file path");
+  await writeFile(target, bytes, { flag: "wx", mode: 0o644 });
+  return {
+    name,
+    path: `${PROMPT_UPLOAD_DIR}/${stored}`,
+    mimeType: sniffMime(bytes, cleanMimeType(mimeType)),
+    size: bytes.length,
+  };
+}
+
+export async function loadPromptAttachments(
+  home: string,
+  workspace: string,
+  attachments: readonly PromptAttachment[],
+): Promise<LoadedPromptAttachment[]> {
+  if (attachments.length === 0) return [];
+  const root = await resolveChatWorkspace(home, workspace);
+  const uploads = path.join(root, ".engineroom", "uploads");
+  let uploadsReal: string;
+  try {
+    uploadsReal = await realpath(uploads);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("invalid attachment");
+    throw error;
+  }
+  if (!isInsidePath(root, uploadsReal)) throw new Error("invalid attachment");
+  const loaded: LoadedPromptAttachment[] = [];
+  for (const item of attachments) {
+    const rel = assertPromptAttachmentPath(item.path);
+    const candidate = path.resolve(root, rel);
+    if (!isInsidePath(uploadsReal, candidate)) throw new Error("invalid attachment");
+    let resolved: string;
+    try {
+      resolved = await realpath(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("invalid attachment");
+      throw error;
+    }
+    if (!isInsidePath(uploadsReal, resolved)) throw new Error("invalid attachment");
+    const info = await stat(resolved);
+    if (!info.isFile() || info.size > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("invalid attachment");
+    const data = isVisionMime(item.mimeType) ? (await readFile(resolved)).toString("base64") : undefined;
+    loaded.push({
+      name: item.name,
+      path: rel,
+      mimeType: item.mimeType,
+      size: info.size,
+      uri: pathToFileURL(resolved).href,
+      ...(data ? { data } : {}),
+    });
+  }
+  return loaded;
+}
+
+function safeAttachmentName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+/, "").slice(0, 80);
+  return cleaned || "file";
+}
+
+function sniffMime(bytes: Buffer, fallback: string): string {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6) {
+    const gif = bytes.subarray(0, 6).toString("ascii");
+    if (gif === "GIF87a" || gif === "GIF89a") return "image/gif";
+  }
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).toString("ascii") === "RIFF"
+    && bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return fallback;
 }
 
 export function isPathAllowedByVisibility(relPath: string, visibility: FileVisibility): boolean {

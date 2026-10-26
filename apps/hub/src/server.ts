@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parsePromptAttachments, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
@@ -48,6 +48,8 @@ interface RunnerCall {
   title?: string;
   settings?: SettingsPatch;
   prompt?: string;
+  attachments?: PromptAttachment[];
+  mimeType?: string;
   enabled?: string[];
   policy?: UserPolicy;
   entries?: EnvEntry[];
@@ -901,6 +903,27 @@ export function createHub(options: HubOptions) {
       }));
       return;
     }
+    if (parts[1] === "chats" && parts[2] === "attachments" && parts.length === 3 && req.method === "POST") {
+      const form = await readUpload(req);
+      const workspace = (form.fields.workspace || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      if (form.files.length === 0) throw new Error("invalid upload");
+      if (form.files.length > MAX_PROMPT_ATTACHMENTS) throw new Error("too many attachments");
+      const saved: PromptAttachment[] = [];
+      for (const file of form.files) {
+        if (file.data.length > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("file is too large");
+        const result = (await call(user, {
+          type: "save_prompt_attachment",
+          workspace,
+          name: file.filename,
+          mimeType: file.mimeType || "application/octet-stream",
+          contentBase64: file.data.toString("base64"),
+        })) as PromptAttachment;
+        saved.push(result);
+      }
+      sendJson(res, 201, { files: saved });
+      return;
+    }
     if (parts[1] === "chats" && parts.length === 2 && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "list_chats" }));
       return;
@@ -943,12 +966,19 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "chats" && parts[3] === "messages" && req.method === "POST") {
-      const body = (await readJson(req)) as { prompt?: unknown };
-      if (typeof body.prompt !== "string") throw new Error("prompt is empty");
+      const body = (await readJson(req)) as { prompt?: unknown; attachments?: unknown };
+      const prompt = typeof body.prompt === "string" ? body.prompt : "";
+      const attachments = parsePromptAttachments(body.attachments);
+      if (!prompt.trim() && attachments.length === 0) throw new Error("prompt is empty");
       const detail = (await call(user, { type: "get_chat", chatId: parts[2]! })) as { chat: ChatMeta };
       await assertAgentAllowed(user, detail.chat.agent);
       await alignStored(user, detail.chat, (request) => call(user, request));
-      sendJson(res, 202, await call(user, { type: "send", chatId: parts[2]!, prompt: body.prompt }));
+      sendJson(res, 202, await call(user, {
+        type: "send",
+        chatId: parts[2]!,
+        prompt,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }));
       return;
     }
     sendJson(res, 404, { error: "not found" });
@@ -1042,6 +1072,7 @@ export function createHub(options: HubOptions) {
       command.type === "delete_repo_entry" ||
       command.type === "download_repo_file" ||
       command.type === "upload_repo_file" ||
+      command.type === "save_prompt_attachment" ||
       command.type === "start_project_archive" ||
       command.type === "project_archive_status" ||
       command.type === "read_project_archive" ||

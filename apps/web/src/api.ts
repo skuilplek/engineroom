@@ -7,6 +7,7 @@ import type {
   EnvEntry,
   FileVisibility,
   GitStatus,
+  PromptAttachment,
   RepoFileContent,
   RepoFilesResult,
   RepositoryEntry,
@@ -318,6 +319,18 @@ export async function uploadRepoFiles(
   const response = await fetch("/api/repositories/file/upload", { method: "POST", body });
   if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
   return (await response.json()) as { files: { path: string; size: number }[] };
+}
+
+export async function uploadPromptAttachment(workspace: string, file: File): Promise<PromptAttachment> {
+  const body = new FormData();
+  body.set("workspace", workspace);
+  body.append("file", file, file.name);
+  const response = await fetch("/api/chats/attachments", { method: "POST", body });
+  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  const payload = (await response.json()) as { files?: PromptAttachment[] };
+  const saved = payload.files?.[0];
+  if (!saved?.path) throw new ApiError(response.status, "invalid upload");
+  return saved;
 }
 
 async function errorMessage(response: Response): Promise<string> {

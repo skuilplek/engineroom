@@ -1,4 +1,4 @@
-import type { AgentId, AgentMode, AgentModel, ChatMeta, PermissionOption, PlanEntry, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
+import type { AgentId, AgentMode, AgentModel, ChatMeta, PermissionOption, PlanEntry, QueuedPrompt, StreamEvent, TranscriptEntry } from "@engineroom/protocol";
 
 export interface LivePermission {
   requestId: string;
@@ -18,7 +18,7 @@ export interface ChatLive {
   modes: AgentMode[];
   models: AgentModel[];
   permission: LivePermission | null;
-  queue: string[];
+  queue: QueuedPrompt[];
   queueSeq: number;
   shell: string;
   ready: boolean;
@@ -51,7 +51,7 @@ export function applySnapshot(state: ChatLive, snapshot: {
   chat: ChatMeta;
   modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
   models?: { currentModelId: string; availableModels: AgentModel[] } | null;
-  queue?: string[];
+  queue?: QueuedPrompt[];
   queueSeq?: number;
 }): ChatLive {
   // Live events can arrive before the snapshot. Keep the ones the snapshot
@@ -83,8 +83,14 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
   if (seq <= state.seq) return state;
   const next = { ...state, seq };
   if (event.type === "user_message") {
-    next.entries = [...state.entries, { kind: "user", text: event.text, at: stamp(), seq }];
-    const queuedAt = state.queue.indexOf(event.text);
+    next.entries = [...state.entries, {
+      kind: "user",
+      text: event.text,
+      at: stamp(),
+      seq,
+      ...(event.attachments?.length ? { attachments: event.attachments } : {}),
+    }];
+    const queuedAt = state.queue.findIndex((item) => item.text === event.text);
     next.queue = queuedAt < 0 ? state.queue : [...state.queue.slice(0, queuedAt), ...state.queue.slice(queuedAt + 1)];
     return next;
   }
@@ -132,7 +138,9 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
   if (event.type === "queued" || event.type === "dequeued" || event.type === "queue") {
     if (seq <= state.queueSeq) return next;
     next.queueSeq = seq;
-    if (event.type === "queued") next.queue = [...state.queue, event.text];
+    if (event.type === "queued") {
+      next.queue = [...state.queue, { text: event.text, attachments: event.attachments ?? [] }];
+    }
     else if (event.type === "dequeued") next.queue = state.queue.filter((_, index) => index !== event.index);
     else next.queue = event.items;
     return next;

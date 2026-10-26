@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { CommandBlockStyle, RepositoryEntry, StreamEvent } from "@engineroom/protocol";
-import { agentLabel } from "@engineroom/protocol";
+import type { CommandBlockStyle, PromptAttachment, RepositoryEntry, StreamEvent } from "@engineroom/protocol";
+import { agentLabel, ATTACHED_PROMPT } from "@engineroom/protocol";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
-import { workspaceLabel } from "../format.ts";
+import { message, workspaceLabel } from "../format.ts";
 import { isMissingChat } from "./missingChat.ts";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
@@ -11,6 +11,7 @@ import { ToolBlock } from "./ToolBlock.tsx";
 import { CopyResponse } from "./CopyResponse.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Composer } from "./Composer.tsx";
+import { attachmentPreview, composerFilesFromSaved, promptText, restorePromptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -37,7 +38,7 @@ export function ChatView({
   agentCatalog?: { id: string; label: string }[];
   repos: RepositoryEntry[];
   rawTerminal: boolean;
-  claimOpening: (id: string) => string | null;
+  claimOpening: (id: string) => { prompt: string; attachments: PromptAttachment[] } | null;
   onTitle: (title: string) => void;
   filesOpen?: boolean;
   onToggleFiles?: () => void;
@@ -52,6 +53,8 @@ export function ChatView({
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
   const [prompt, setPrompt] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
@@ -107,8 +110,15 @@ export function ChatView({
         }
         if (!opened.current) {
           opened.current = true;
-          const text = claimOpening(chatId);
-          if (text) sendCommand({ type: "prompt", chatId, prompt: text });
+          const opening = claimOpening(chatId);
+          if (opening) {
+            sendCommand({
+              type: "prompt",
+              chatId,
+              prompt: opening.prompt,
+              ...(opening.attachments.length > 0 ? { attachments: opening.attachments } : {}),
+            });
+          }
         }
         return;
       }
@@ -146,14 +156,34 @@ export function ChatView({
     stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    const text = prompt.trim();
-    if (!text || raw) return;
-    setPrompt("");
+    const text = promptText(prompt, attachments.length);
+    if (!text || raw || sending) return;
+    if (attachments.some((item) => item.file && !item.saved) && !live.workspace) {
+      setError("Loading chat…");
+      return;
+    }
+    setSending(true);
     setError("");
-    stick.current = true;
-    sendCommand({ type: "prompt", chatId, prompt: text });
+    try {
+      const saved = await uploadPendingAttachments(live.workspace, attachments);
+      setAttachments(composerFilesFromSaved(saved));
+      const messageText = promptText(prompt, saved.length);
+      setPrompt("");
+      setAttachments([]);
+      stick.current = true;
+      sendCommand({
+        type: "prompt",
+        chatId,
+        prompt: messageText,
+        ...(saved.length > 0 ? { attachments: saved } : {}),
+      });
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setSending(false);
+    }
   }
 
   function choose(optionId: string) {
@@ -199,7 +229,7 @@ export function ChatView({
             {blocks.map((block, index) => {
               const last = index === blocks.length - 1;
               if (block.kind === "text") {
-                if (block.role === "user") return <div className="bubble user" key={index}>{block.text}</div>;
+                if (block.role === "user") return <UserBubble key={index} text={block.text} attachments={block.attachments} />;
                 return (
                   <div className="bubble assistant" key={index}>
                     <Markdown text={block.text} streaming={last && live.running} onOpenFile={onOpenFile} />
@@ -245,10 +275,12 @@ export function ChatView({
             frame="dock"
             prompt={prompt}
             onPrompt={setPrompt}
+            attachments={attachments}
+            onAttachments={setAttachments}
             placeholder={live.running ? "Add a follow up" : "Message this chat"}
             username={username}
-            disabled={!prompt.trim()}
-            onSubmit={submit}
+            disabled={sending || !promptText(prompt, attachments.length)}
+            onSubmit={(event) => void submit(event)}
             modes={live.modes.map((item) => ({ id: item.id, name: item.name }))}
             mode={live.mode}
             onMode={(modeId) => sendCommand({ type: "set_mode", chatId, modeId })}
@@ -257,9 +289,10 @@ export function ChatView({
             onModel={(modelId) => sendCommand({ type: "set_model", chatId, modelId })}
             queue={live.queue}
             onEditQueued={(index) => {
-              const text = live.queue[index];
-              if (text == null) return;
-              setPrompt(text);
+              const item = live.queue[index];
+              if (!item) return;
+              setPrompt(restorePromptText(item.text, item.attachments.length));
+              setAttachments(composerFilesFromSaved(item.attachments));
               sendCommand({ type: "dequeue", chatId, index });
             }}
             onRemoveQueued={(index) => sendCommand({ type: "dequeue", chatId, index })}
@@ -272,6 +305,27 @@ export function ChatView({
           />
         </>
       )}
+    </div>
+  );
+}
+
+function UserBubble({ text, attachments = [] }: { text: string; attachments?: PromptAttachment[] }) {
+  const showText = text !== ATTACHED_PROMPT || attachments.length === 0;
+  return (
+    <div className="bubble user">
+      {attachments.length > 0 && (
+        <div className="bubble-files">
+          {attachments.map((file) => {
+            const preview = attachmentPreview(file.path);
+            return preview ? (
+              <img key={file.path} src={preview} alt={file.name} />
+            ) : (
+              <span key={file.path}>{file.name}</span>
+            );
+          })}
+        </div>
+      )}
+      {showText ? text : null}
     </div>
   );
 }

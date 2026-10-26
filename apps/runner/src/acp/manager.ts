@@ -1,6 +1,7 @@
 import type { AgentId, AgentOptionChoice, ListedSession, PermissionPolicy, StreamEvent } from "@engineroom/protocol";
 import { childEnv, resolveBinary } from "../cli.ts";
 import { binaryFor, loadPolicy } from "../policy.ts";
+import { agentContentBlocks, type LoadedPromptAttachment } from "../prompt-content.ts";
 import { loadSettings } from "../store.ts";
 import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, type AcpStart } from "./session.ts";
 
@@ -64,7 +65,13 @@ export class AcpManager {
     return { modes: session.modes, models: session.models };
   }
 
-  async prompt(chatId: string, ctx: AcpContext, text: string, signal: AbortSignal): Promise<{ agentSessionId: string | null }> {
+  async prompt(
+    chatId: string,
+    ctx: AcpContext,
+    shown: string,
+    files: readonly LoadedPromptAttachment[],
+    signal: AbortSignal,
+  ): Promise<{ agentSessionId: string | null }> {
     this.clearIdle(chatId);
     const session = await this.ensure(chatId, ctx);
     if (session.sessionId) await ctx.onSession?.(session.sessionId);
@@ -74,7 +81,7 @@ export class AcpManager {
       return { agentSessionId: session.sessionId };
     }
     try {
-      await session.prompt(text, signal);
+      await session.prompt(agentContentBlocks(shown, files, session.acceptsImages), signal);
     } catch (error) {
       if (signal.aborted) {
         ctx.onEvent({ type: "status", text: "Stopped" });

@@ -79,16 +79,16 @@ test("a snapshot restores the queued prompts and ignores the events it already c
     seq: 2,
     running: true,
     chat,
-    queue: ["follow up"],
+    queue: [{ text: "follow up", attachments: [] }],
     queueSeq: 5,
   });
-  assert.deepEqual(restored.queue, ["follow up"]);
+  assert.deepEqual(restored.queue, [{ text: "follow up", attachments: [] }]);
   const ignored = applyEvent(restored, { type: "queued", text: "follow up" }, 5);
-  assert.deepEqual(ignored.queue, ["follow up"]);
+  assert.deepEqual(ignored.queue, [{ text: "follow up", attachments: [] }]);
   const added = applyEvent(ignored, { type: "queued", text: "next" }, 6);
-  assert.deepEqual(added.queue, ["follow up", "next"]);
+  assert.deepEqual(added.queue, [{ text: "follow up", attachments: [] }, { text: "next", attachments: [] }]);
   const removed = applyEvent(added, { type: "dequeued", index: 0 }, 7);
-  assert.deepEqual(removed.queue, ["next"]);
+  assert.deepEqual(removed.queue, [{ text: "next", attachments: [] }]);
   const cleared = applyEvent(removed, { type: "queue", items: [] }, 8);
   assert.deepEqual(cleared.queue, []);
   const model = applyEvent(cleared, { type: "model", modelId: "composer" }, 9);
@@ -99,13 +99,13 @@ test("a repeated queued prompt is removed once when it starts", () => {
   let live = applyEvent(emptyLive(chat), { type: "queued", text: "same" }, 1);
   live = applyEvent(live, { type: "queued", text: "same" }, 2);
   live = applyEvent(live, { type: "user_message", text: "same" }, 3);
-  assert.deepEqual(live.queue, ["same"]);
+  assert.deepEqual(live.queue, [{ text: "same", attachments: [] }]);
 });
 
 test("a late snapshot keeps a queue that already arrived", () => {
   let live = applyEvent(emptyLive(chat), { type: "queued", text: "stay" }, 4);
   live = applySnapshot(live, { transcript: [], seq: 1, running: true, chat, queue: [] });
-  assert.deepEqual(live.queue, ["stay"]);
+  assert.deepEqual(live.queue, [{ text: "stay", attachments: [] }]);
 });
 
 test("agent text chunks accept a list of blocks", () => {

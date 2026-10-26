@@ -718,7 +718,7 @@ test("a queued prompt can be removed and a model change is announced", async () 
     assert.equal(removed.event?.index, 0);
     live.send({ id: "w2", type: "watch", chatId, lastSeq: 0 });
     const snapshot = await live.next((message) => message.id === "w2");
-    assert.deepEqual((snapshot.result as { queue?: string[] }).queue, ["third"]);
+    assert.deepEqual((snapshot.result as { queue?: { text: string }[] }).queue, [{ text: "third", attachments: [] }]);
     live.send({ id: "bad", type: "dequeue", chatId, index: 9 });
     const failed = await live.next((message) => message.id === "bad");
     assert.equal(failed.type, "error");
@@ -729,6 +729,105 @@ test("a queued prompt can be removed and a model change is announced", async () 
     const model = await live.next((message) => message.type === "chat_event" && message.event?.type === "model");
     assert.equal(model.event?.modelId, "composer");
   } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("prompt attachments stay in the hidden upload folder", async () => {
+  const { savePromptAttachment, loadPromptAttachments, listRepositoryFiles } = await import("../apps/runner/src/files.ts");
+  const { MAX_PROMPT_ATTACHMENT_BYTES } = await import("@engineroom/protocol");
+  const home = await mkdtemp(path.join(tmpdir(), "er-attach-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-attach-out-"));
+  const repo = path.join(home, "Sites", "proj");
+  try {
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await writeFile(path.join(outside, "secret.txt"), "nope");
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await setEnabledRepositories(home, [repo]);
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const saved = await savePromptAttachment(home, repo, "My Shot.png", "application/octet-stream", png.toString("base64"));
+    assert.equal(saved.mimeType, "image/png");
+    assert.match(saved.path, /^\.engineroom\/uploads\/[0-9a-f-]{36}-My_Shot\.png$/);
+    const hidden = await listRepositoryFiles(home, repo);
+    assert.equal(hidden.files.some((file) => file.path.startsWith(".engineroom")), false);
+    const visible = await listRepositoryFiles(home, repo, { showHidden: true, showGitignored: true, showGitDir: false });
+    assert.equal(visible.files.some((file) => file.path === saved.path), true);
+    const loaded = await loadPromptAttachments(home, repo, [saved]);
+    assert.equal((loaded[0]?.data?.length ?? 0) > 0, true);
+    assert.match(loaded[0]?.uri || "", /^file:/);
+    await symlink(path.join(outside, "secret.txt"), path.join(repo, ".engineroom", "uploads", "evil"));
+    await assert.rejects(
+      () => loadPromptAttachments(home, repo, [{ name: "evil", path: ".engineroom/uploads/evil", mimeType: "text/plain", size: 4 }]),
+      /invalid attachment/,
+    );
+    await assert.rejects(
+      () => savePromptAttachment(
+        home,
+        repo,
+        "big.bin",
+        "application/octet-stream",
+        Buffer.alloc(MAX_PROMPT_ATTACHMENT_BYTES + 1).toString("base64"),
+      ),
+      /too large/,
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("a queued prompt keeps its attachments for the next turn", async () => {
+  const { savePromptAttachment } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-attach-queue-"));
+  const sock = path.join(home, "runner.sock");
+  const seen: string[] = [];
+  let release: () => void = () => undefined;
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: {
+      id: "cursor",
+      async run(ctx) {
+        seen.push(ctx.prompt);
+        if (seen.length === 1) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        ctx.onEvent({ type: "done", agentSessionId: "s" });
+        return { agentSessionId: "s" };
+      },
+    },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const saved = await savePromptAttachment(home, home, "notes.txt", "text/plain", Buffer.from("hello").toString("base64"));
+    const created = await rpc(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "first" });
+    for (let attempt = 0; attempt < 50 && seen.length < 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(seen[0], "first");
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "look", attachments: [saved] });
+    await live.next((message) => message.type === "chat_event" && message.event?.type === "queued" && message.event.text === "look");
+    release();
+    const echoed = await live.next((message) => message.event?.type === "user_message" && message.event.attachments?.[0]?.path === saved.path);
+    for (let attempt = 0; attempt < 50 && seen.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.match(seen[1] || "", new RegExp(`${saved.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(text/plain\\)`));
+    assert.equal(echoed.event?.attachments?.[0]?.path, saved.path);
+  } finally {
+    release();
     live.close();
     await runner.close();
     await rm(home, { recursive: true, force: true });
@@ -776,7 +875,14 @@ interface LiveLine {
   type?: string;
   error?: string;
   result?: unknown;
-  event?: { type?: string; text?: string; index?: number; items?: string[]; modelId?: string };
+  event?: {
+    type?: string;
+    text?: string;
+    index?: number;
+    items?: { text: string }[];
+    modelId?: string;
+    attachments?: { path?: string }[];
+  };
 }
 
 function subscribe(socketPath: string): Promise<{
