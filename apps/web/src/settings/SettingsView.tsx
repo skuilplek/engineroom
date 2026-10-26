@@ -12,7 +12,6 @@ export function SettingsView({
   options,
   fileEditorAllowed = true,
   piSetup = false,
-  piLoginHint = false,
   onTheme,
   onSaved,
   onSession,
@@ -22,7 +21,6 @@ export function SettingsView({
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
-  piLoginHint?: boolean;
   onTheme: (theme: ThemePreference) => void;
   onSaved: (theme: ThemePreference, filesReadOnly: boolean) => void;
   onSession: (session: Session) => void;
@@ -149,7 +147,7 @@ export function SettingsView({
         })}
       </div>
       <h2>Defaults for new chats</h2>
-      {piSetup && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
+      {piSetup && <PiSetupNotice onReady={onSession} />}
       {agents.length === 0 ? (
         <p className="muted">No agents available</p>
       ) : (

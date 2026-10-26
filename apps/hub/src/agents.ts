@@ -372,8 +372,14 @@ export function effectivePiAuth(site: PiSiteConfig, personal?: string): PiAuth {
   return site.auth;
 }
 
-export function piSetupAllowed(site: PiSiteConfig, enabled: boolean, allowed: boolean, personal?: string): boolean {
-  if (!enabled || !allowed) return false;
+export function piSetupAllowed(
+  site: PiSiteConfig,
+  enabled: boolean,
+  allowed: boolean,
+  personal: string | undefined,
+  installed: boolean,
+): boolean {
+  if (!enabled || !allowed || installed) return false;
   return effectivePiAuth(site, personal) === "user";
 }
 

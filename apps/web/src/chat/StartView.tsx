@@ -18,7 +18,6 @@ export function StartView({
   onToggleFiles,
   username,
   piSetup = false,
-  piLoginHint = false,
   onSession,
   projectCreate,
   onReposChanged,
@@ -34,7 +33,6 @@ export function StartView({
   onToggleFiles?: () => void;
   username: string;
   piSetup?: boolean;
-  piLoginHint?: boolean;
   onSession?: (session: Session) => void;
   projectCreate: boolean;
   onReposChanged?: () => void;
@@ -125,7 +123,7 @@ export function StartView({
         error={error}
       >
         {agents.length === 0 && <p className="muted">No agents available</p>}
-        {piSetup && onSession && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
+        {piSetup && onSession && <PiSetupNotice onReady={onSession} />}
         {agents.length > 1 && (
           <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
             {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}

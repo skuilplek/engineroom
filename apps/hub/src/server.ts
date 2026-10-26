@@ -6,7 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, effectivePiAuth, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { serverOverview } from "./overview.ts";
@@ -276,8 +276,8 @@ export function createHub(options: HubOptions) {
       for (const [name, found] of resolved) resolvedOverrides.set(name, found);
     }
     const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides);
-    const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth);
-    const piLoginHint = pi.install === "global" && effectivePiAuth(pi, policy.piAuth) === "user" && piSetup;
+    const piInstalled = listed.some((item) => item.id === "pi" && item.available);
+    const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, piInstalled);
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
     for (const agent of agents) {
       const config = stored[agent];
@@ -293,7 +293,7 @@ export function createHub(options: HubOptions) {
       fileUpload: fileManager && loadFileUpload(agentsFile) && policy.fileUpload,
       projectCreate: loadProjectCreate(reposFile) && policy.projectCreate,
       piSetup,
-      piLoginHint,
+      piLoginHint: false,
       options: optionMap,
     };
   }
@@ -302,7 +302,9 @@ export function createHub(options: HubOptions) {
     const pi = loadPiConfig(agentsFile);
     const flags = loadAgentFlags(agentsFile);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
-    if (!piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth)) {
+    const listed = await visibleAgents(user, true);
+    const installed = listed.some((item) => item.id === "pi" && item.available);
+    if (!piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, installed)) {
       throw new Error("invalid pi setup");
     }
     await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth });
@@ -310,7 +312,7 @@ export function createHub(options: HubOptions) {
       type: "setup_pi",
       provider: pi.provider,
       model: pi.model,
-      linkShared: pi.install === "global",
+      linkShared: false,
     });
   }
 

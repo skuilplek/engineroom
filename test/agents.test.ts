@@ -84,9 +84,13 @@ test("pi install, login, and model survive a later agent save", async () => {
     assert.equal(loadPiConfig(file).model, "recursive/flint-v1.0:free");
     assert.equal(effectivePiAuth(saved), "shared");
     assert.equal(effectivePiAuth(saved, "user"), "user");
-    assert.equal(piSetupAllowed(saved, true, true, "user"), true);
-    assert.equal(piSetupAllowed(saved, true, true, "shared"), false);
-    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared"), true);
+    assert.equal(piSetupAllowed(saved, true, true, "user", false), true);
+    assert.equal(piSetupAllowed(saved, true, true, "user", true), false);
+    assert.equal(piSetupAllowed(saved, true, true, "shared", false), false);
+    assert.equal(piSetupAllowed(saved, false, true, "user", false), false);
+    assert.equal(piSetupAllowed(saved, true, false, "user", false), false);
+    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared", false), true);
+    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared", true), false);
     assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, piModel: "bad model" }));
   } finally {
     await rm(dir, { recursive: true, force: true });

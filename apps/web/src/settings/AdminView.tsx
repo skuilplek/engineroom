@@ -555,6 +555,7 @@ export function AdminView({
                       {piInstall === "global" && (
                         <p className="muted">Each person keeps ~/.pi/agent/auth.json. Shared uses one auth.json unless a person overrides it. After saving, run sudo /usr/local/lib/engineroom/agents/setup_pi.sh --global. Switching back to each person leaves that install and /etc/systemd/system/engineroom-runner@.service.d/pi.conf in place until you remove them.</p>
                       )}
+                      <p className="muted">Once pi is on this machine, each person runs setup_pi.sh from an SSH session. The account page offers setup only when the command is missing entirely.</p>
                       <label>
                         Provider
                         <input aria-label="Pi provider" value={piProvider} onChange={(event) => setPiProvider(event.target.value)} placeholder="openrouter" />

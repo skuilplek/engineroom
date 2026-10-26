@@ -346,7 +346,6 @@ function Shell({
             options={session.options}
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
-            piLoginHint={session.piLoginHint}
             onTheme={applyTheme}
             onSaved={(theme, filesReadOnly) => onSession({ ...session, theme, filesReadOnly })}
             onSession={onSession}
@@ -389,7 +388,6 @@ function Shell({
             onToggleFiles={filesEnabled ? toggleFiles : undefined}
             username={session.username}
             piSetup={session.piSetup}
-            piLoginHint={session.piLoginHint}
             onSession={onSession}
             projectCreate={Boolean(session.projectCreate)}
             onReposChanged={refreshRepos}
