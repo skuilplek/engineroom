@@ -12,6 +12,8 @@ export type ServerMessage =
       chat: ChatMeta;
       modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
       models?: { currentModelId: string; availableModels: AgentModel[] } | null;
+      queue?: string[];
+      queueSeq?: number;
       scrollback?: string;
     }
   | { type: "event"; chatId: string; seq: number; at: string; event: StreamEvent }

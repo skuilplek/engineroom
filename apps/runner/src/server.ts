@@ -27,6 +27,7 @@ import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
 import { childEnv, refreshLoginCommandDirs, resolveBinary, binaryNames } from "./cli.ts";
 import { gitClone } from "./clone.ts";
+import { gitInitWorkspace, gitStatus, gitSwitch } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
 import { loadEnv, saveEnv } from "./envfile.ts";
 import { TranscriptWriter } from "./persist.ts";
@@ -213,6 +214,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         const seq = Math.max(maxSeq(detail.transcript), bus.current(request.chatId));
         bus.init(request.chatId, seq);
         const info = acp?.info(request.chatId);
+        const queue = [...(runs.get(request.chatId)?.queue ?? [])];
+        const queueSeq = bus.current(request.chatId);
         return {
           chat: detail.chat,
           transcript: detail.transcript,
@@ -220,6 +223,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           running: runs.has(request.chatId),
           modes: info?.modes,
           models: info?.models,
+          queue,
+          queueSeq,
           scrollback: Buffer.from(pty.scrollback(request.chatId), "utf8").toString("base64"),
         };
       }
@@ -232,6 +237,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return beginTurn(request.chatId, request.prompt);
       case "cancel":
         cancel(request.chatId);
+        return { ok: true };
+      case "dequeue":
+        dequeue(request.chatId, request.index);
         return { ok: true };
       case "permission_response":
         if (!acp?.respond(request.chatId, request.requestId, request.optionId)) throw new Error("no pending permission");
@@ -324,6 +332,15 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
+      case "dequeue":
+        dequeue(request.chatId, request.index);
+        return { ok: true };
+      case "git_status":
+        return gitStatus(home, request.workspace);
+      case "git_init":
+        return gitInitWorkspace(home, request.workspace);
+      case "git_switch":
+        return gitSwitch(home, request.workspace, request.branch);
       case "list_sessions":
         return listSessions(request.agent);
       case "import_session":
@@ -374,6 +391,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     await assertPersonalOption(chatId, "model", modelId);
     await updateChat(home, chatId, { model: modelId });
     if (modelId && !runs.get(chatId)?.busy) await acp?.setModel(chatId, modelId).catch(() => undefined);
+    publish(chatId, { type: "model", modelId });
     return { ok: true };
   }
 
@@ -481,6 +499,15 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     state.stopped = true;
     state.controller.abort();
     acp?.cancel(chatId);
+    publish(chatId, { type: "queue", items: [] });
+  }
+
+  function dequeue(chatId: string, index: number) {
+    const state = runs.get(chatId);
+    if (!state?.busy) throw new Error("nothing queued");
+    if (index < 0 || index >= state.queue.length) throw new Error("invalid queue index");
+    state.queue.splice(index, 1);
+    publish(chatId, { type: "dequeued", index });
   }
 
   async function executeTurn(chatId: string, state: RunState, prompt: string) {

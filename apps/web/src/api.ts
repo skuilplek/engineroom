@@ -6,6 +6,7 @@ import type {
   ChatMeta,
   EnvEntry,
   FileVisibility,
+  GitStatus,
   RepoFileContent,
   RepoFilesResult,
   RepositoryEntry,
@@ -157,6 +158,24 @@ export function createRepository(name: string, url?: string) {
   return api<RepositoryEntry>("/api/repositories", {
     method: "POST",
     body: JSON.stringify({ name, ...(url ? { url } : {}) }),
+  });
+}
+
+export function gitWorkspace(workspace: string) {
+  return api<GitStatus>(`/api/repositories/git?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function initGitWorkspace(workspace: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "init" }),
+  });
+}
+
+export function switchGitBranch(workspace: string, branch: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "switch", branch }),
   });
 }
 

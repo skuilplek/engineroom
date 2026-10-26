@@ -19,6 +19,7 @@ export interface ChatLive {
   models: AgentModel[];
   permission: LivePermission | null;
   queue: string[];
+  queueSeq: number;
   shell: string;
   ready: boolean;
 }
@@ -37,6 +38,7 @@ export function emptyLive(chat?: ChatMeta): ChatLive {
     models: [],
     permission: null,
     queue: [],
+    queueSeq: 0,
     shell: "",
     ready: false,
   };
@@ -49,6 +51,8 @@ export function applySnapshot(state: ChatLive, snapshot: {
   chat: ChatMeta;
   modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
   models?: { currentModelId: string; availableModels: AgentModel[] } | null;
+  queue?: string[];
+  queueSeq?: number;
 }): ChatLive {
   // Live events can arrive before the snapshot. Keep the ones the snapshot
   // does not already cover so a late snapshot cannot erase the agent's text.
@@ -68,7 +72,8 @@ export function applySnapshot(state: ChatLive, snapshot: {
     modes: snapshot.modes?.availableModes || state.modes,
     models: snapshot.models?.availableModels || state.models,
     permission: liveAhead ? state.permission : null,
-    queue: liveAhead ? state.queue : [],
+    queue: liveAhead ? state.queue : (snapshot.queue ?? []),
+    queueSeq: liveAhead ? state.queueSeq : (snapshot.queueSeq ?? 0),
     shell: shellFrom(entries),
     ready: true,
   };
@@ -79,7 +84,8 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
   const next = { ...state, seq };
   if (event.type === "user_message") {
     next.entries = [...state.entries, { kind: "user", text: event.text, at: stamp(), seq }];
-    next.queue = state.queue.filter((item) => item !== event.text);
+    const queuedAt = state.queue.indexOf(event.text);
+    next.queue = queuedAt < 0 ? state.queue : [...state.queue.slice(0, queuedAt), ...state.queue.slice(queuedAt + 1)];
     return next;
   }
   if (event.type === "text_delta") {
@@ -123,12 +129,20 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
     next.permission = state.permission?.requestId === event.requestId ? null : state.permission;
     return next;
   }
-  if (event.type === "queued") {
-    next.queue = [...state.queue, event.text];
+  if (event.type === "queued" || event.type === "dequeued" || event.type === "queue") {
+    if (seq <= state.queueSeq) return next;
+    next.queueSeq = seq;
+    if (event.type === "queued") next.queue = [...state.queue, event.text];
+    else if (event.type === "dequeued") next.queue = state.queue.filter((_, index) => index !== event.index);
+    else next.queue = event.items;
     return next;
   }
   if (event.type === "mode") {
     next.mode = event.modeId;
+    return next;
+  }
+  if (event.type === "model") {
+    next.model = event.modelId;
     return next;
   }
   if (event.type === "title") {

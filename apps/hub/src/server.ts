@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isInsidePath, isTheme, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseEnvEntries, parseFileVisibility, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
 import { addCustomAgent, customCatalog, detectionNames, effectivePiAuth, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
@@ -72,6 +72,7 @@ interface RunnerCall {
   linkShared?: boolean;
   name?: string;
   url?: string;
+  branch?: string;
 }
 
 export function createHub(options: HubOptions) {
@@ -653,6 +654,27 @@ export function createHub(options: HubOptions) {
       sendJson(res, 201, created);
       return;
     }
+    if (parts[1] === "repositories" && parts[2] === "git" && parts.length === 3 && req.method === "GET") {
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      sendJson(res, 200, await call(user, { type: "git_status", workspace }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "git" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { workspace?: unknown; action?: unknown; branch?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      if (body.action === "init") {
+        await assertProjectCreate(user);
+        sendJson(res, 200, await call(user, { type: "git_init", workspace }));
+        return;
+      }
+      if (body.action === "switch") {
+        sendJson(res, 200, await call(user, { type: "git_switch", workspace, branch: assertBranchName(body.branch) }));
+        return;
+      }
+      throw new Error("invalid git action");
+    }
     if (parts[1] === "repositories" && parts[2] === "files" && parts.length === 3 && req.method === "GET") {
       await assertFileManager(user);
       const workspace = (url.searchParams.get("workspace") || "").trim();
@@ -915,7 +937,10 @@ export function createHub(options: HubOptions) {
       command.type === "rename_repo_entry" ||
       command.type === "delete_repo_entry" ||
       command.type === "download_repo_file" ||
-      command.type === "upload_repo_file"
+      command.type === "upload_repo_file" ||
+      command.type === "git_status" ||
+      command.type === "git_init" ||
+      command.type === "git_switch"
     ) {
       throw new Error("unknown request");
     }

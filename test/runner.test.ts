@@ -11,7 +11,8 @@ import { startRunner } from "../apps/runner/src/server.ts";
 import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
 import { createChat, getChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
-import { MAX_TRANSFER_BYTES } from "@engineroom/protocol";
+import { assertBranchName, MAX_TRANSFER_BYTES } from "@engineroom/protocol";
+import { gitInitWorkspace, gitStatus, gitSwitch } from "../apps/runner/src/git.ts";
 import "./peercred-helper.ts";
 
 const execFileAsync = promisify(execFile);
@@ -607,6 +608,102 @@ test("repository file transfer enforces size, visibility, and overwrite", async 
   }
 });
 
+test("git status, init, and branch switch stay inside an allowed workspace", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-git-"));
+  const repo = path.join(home, "Sites", "proj");
+  try {
+    assert.equal((await gitStatus(home, home)).repo, false);
+    const created = await gitInitWorkspace(home, home);
+    assert.equal(created.repo, true);
+    assert.equal(created.branch, "main");
+    assert.equal(created.branches.includes("main"), true);
+    await assert.rejects(() => gitInitWorkspace(home, home), /already exists/);
+    assert.throws(() => assertBranchName("foo..bar"));
+    assert.throws(() => assertBranchName("-main"));
+    await mkdir(path.join(home, "notes"));
+    await assert.rejects(() => gitStatus(home, path.join(home, "notes")), /not enabled/);
+
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.email", "alice@example.com"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "Alice"], { cwd: repo });
+    await writeFile(path.join(repo, "src", "index.ts"), "export const x = 1;\n");
+    await execFileAsync("git", ["add", "src/index.ts"], { cwd: repo });
+    await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+    await execFileAsync("git", ["branch", "feature"], { cwd: repo });
+    await setEnabledRepositories(home, [repo]);
+    const status = await gitStatus(home, repo);
+    assert.equal(status.repo, true);
+    assert.equal(status.branch, "main");
+    assert.deepEqual(status.branches.sort(), ["feature", "main"]);
+    const switched = await gitSwitch(home, repo, "feature");
+    assert.equal(switched.branch, "feature");
+    await assert.rejects(() => gitSwitch(home, repo, "nope"), /invalid branch/);
+    await assert.rejects(() => gitSwitch(home, repo, "foo..bar"), /invalid branch/);
+    await assert.rejects(() => gitInitWorkspace(home, repo), /already exists/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a queued prompt can be removed and a model change is announced", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-queue-"));
+  const sock = path.join(home, "runner.sock");
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: {
+      id: "cursor",
+      async run(ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        ctx.onEvent({ type: "done" });
+        return { agentSessionId: ctx.agentSessionId };
+      },
+    },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    live.send({ id: "c1", type: "create_chat", agent: "cursor", workspace: home });
+    const created = await live.next((message) => message.id === "c1");
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w1", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w1");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "first" });
+    await live.next((message) => message.id === "p1");
+    await live.next((message) => message.type === "chat_event" && message.event?.type === "turn_start");
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "second" });
+    await live.next((message) => message.type === "chat_event" && message.event?.type === "queued" && message.event.text === "second");
+    live.send({ id: "p3", type: "prompt", chatId, prompt: "third" });
+    await live.next((message) => message.type === "chat_event" && message.event?.type === "queued" && message.event.text === "third");
+    live.send({ id: "d1", type: "dequeue", chatId, index: 0 });
+    const removed = await live.next((message) => message.type === "chat_event" && message.event?.type === "dequeued");
+    assert.equal(removed.event?.index, 0);
+    live.send({ id: "w2", type: "watch", chatId, lastSeq: 0 });
+    const snapshot = await live.next((message) => message.id === "w2");
+    assert.deepEqual((snapshot.result as { queue?: string[] }).queue, ["third"]);
+    live.send({ id: "bad", type: "dequeue", chatId, index: 9 });
+    const failed = await live.next((message) => message.id === "bad");
+    assert.equal(failed.type, "error");
+    live.send({ id: "x", type: "cancel", chatId });
+    const cleared = await live.next((message) => message.type === "chat_event" && message.event?.type === "queue");
+    assert.deepEqual(cleared.event?.items, []);
+    live.send({ id: "m1", type: "set_model", chatId, modelId: "composer" });
+    const model = await live.next((message) => message.type === "chat_event" && message.event?.type === "model");
+    assert.equal(model.event?.modelId, "composer");
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 interface RpcResult {
   events: Array<{ type: string; text?: string }>;
   result?: unknown;
@@ -643,4 +740,57 @@ function rpc(socketPath: string, request: Record<string, unknown>): Promise<RpcR
   });
 }
 
-void writeFile;
+interface LiveLine {
+  id?: string;
+  type?: string;
+  error?: string;
+  result?: unknown;
+  event?: { type?: string; text?: string; index?: number; items?: string[]; modelId?: string };
+}
+
+function subscribe(socketPath: string): Promise<{
+  send: (request: Record<string, unknown>) => void;
+  next: (match: (message: LiveLine) => boolean) => Promise<LiveLine>;
+  close: () => void;
+}> {
+  const socket = connect(socketPath);
+  return new Promise((resolve, reject) => {
+    let buf = "";
+    const pending: LiveLine[] = [];
+    const waiters: { match: (message: LiveLine) => boolean; resolve: (message: LiveLine) => void }[] = [];
+    let opened = false;
+    const api = {
+      send: (request: Record<string, unknown>) => socket.write(`${JSON.stringify(request)}\n`),
+      next: (match: (message: LiveLine) => boolean) =>
+        new Promise<LiveLine>((done) => {
+          const existing = pending.findIndex(match);
+          if (existing >= 0) done(pending.splice(existing, 1)[0]!);
+          else waiters.push({ match, resolve: done });
+        }),
+      close: () => socket.end(),
+    };
+    const push = (message: LiveLine) => {
+      if (!opened && message.id === "sub") {
+        opened = true;
+        resolve(api);
+        return;
+      }
+      const index = waiters.findIndex((waiter) => waiter.match(message));
+      if (index >= 0) waiters.splice(index, 1)[0]?.resolve(message);
+      else pending.push(message);
+    };
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buf += chunk;
+      let index = buf.indexOf("\n");
+      while (index >= 0) {
+        const line = buf.slice(0, index);
+        buf = buf.slice(index + 1);
+        index = buf.indexOf("\n");
+        if (line.trim()) push(JSON.parse(line) as LiveLine);
+      }
+    });
+    socket.on("error", reject);
+    socket.write(`${JSON.stringify({ id: "sub", type: "subscribe" })}\n`);
+  });
+}

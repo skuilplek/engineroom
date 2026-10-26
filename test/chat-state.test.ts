@@ -73,6 +73,41 @@ test("tool updates keep nested result text and file locations", () => {
   );
 });
 
+test("a snapshot restores the queued prompts and ignores the events it already covers", () => {
+  const restored = applySnapshot(emptyLive(chat), {
+    transcript: [],
+    seq: 2,
+    running: true,
+    chat,
+    queue: ["follow up"],
+    queueSeq: 5,
+  });
+  assert.deepEqual(restored.queue, ["follow up"]);
+  const ignored = applyEvent(restored, { type: "queued", text: "follow up" }, 5);
+  assert.deepEqual(ignored.queue, ["follow up"]);
+  const added = applyEvent(ignored, { type: "queued", text: "next" }, 6);
+  assert.deepEqual(added.queue, ["follow up", "next"]);
+  const removed = applyEvent(added, { type: "dequeued", index: 0 }, 7);
+  assert.deepEqual(removed.queue, ["next"]);
+  const cleared = applyEvent(removed, { type: "queue", items: [] }, 8);
+  assert.deepEqual(cleared.queue, []);
+  const model = applyEvent(cleared, { type: "model", modelId: "composer" }, 9);
+  assert.equal(model.model, "composer");
+});
+
+test("a repeated queued prompt is removed once when it starts", () => {
+  let live = applyEvent(emptyLive(chat), { type: "queued", text: "same" }, 1);
+  live = applyEvent(live, { type: "queued", text: "same" }, 2);
+  live = applyEvent(live, { type: "user_message", text: "same" }, 3);
+  assert.deepEqual(live.queue, ["same"]);
+});
+
+test("a late snapshot keeps a queue that already arrived", () => {
+  let live = applyEvent(emptyLive(chat), { type: "queued", text: "stay" }, 4);
+  live = applySnapshot(live, { transcript: [], seq: 1, running: true, chat, queue: [] });
+  assert.deepEqual(live.queue, ["stay"]);
+});
+
 test("agent text chunks accept a list of blocks", () => {
   assert.deepEqual(
     mapUpdate({

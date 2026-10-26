@@ -10,7 +10,7 @@ import { groupTranscript } from "./group.ts";
 import { ToolBlock } from "./ToolBlock.tsx";
 import { CopyResponse } from "./CopyResponse.tsx";
 import { Markdown } from "./Markdown.tsx";
-import { usePromptHeight } from "./promptHeight.ts";
+import { Composer } from "./Composer.tsx";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -27,6 +27,8 @@ export function ChatView({
   onFilesChanged,
   onUnavailable,
   username,
+  projectCreate,
+  onReposChanged,
 }: {
   chatId: string;
   home: string;
@@ -41,9 +43,10 @@ export function ChatView({
   onFilesChanged?: () => void;
   onUnavailable: () => void;
   username: string;
+  projectCreate: boolean;
+  onReposChanged?: () => void;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
-  const promptHeight = usePromptHeight(username);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
@@ -234,36 +237,35 @@ export function ChatView({
               </div>
             </div>
           )}
-          {live.queue.length > 0 && <p className="queue">{live.queue.length} queued</p>}
-          <form className="composer" onSubmit={submit}>
-            <textarea
-              style={promptHeight.style}
-              value={prompt}
-              placeholder={live.running ? "Queue a follow-up" : "Message this chat"}
-              onPointerDown={promptHeight.onPointerDown}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-            />
-            <div className="composer-tools">
-              {live.modes.length > 0 && (
-                <select aria-label="Mode" value={live.mode} onChange={(event) => sendCommand({ type: "set_mode", chatId, modeId: event.target.value })}>
-                  {live.modes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
-                </select>
-              )}
-              {live.models.length > 0 && (
-                <select aria-label="Model" value={live.model} onChange={(event) => sendCommand({ type: "set_model", chatId, modelId: event.target.value })}>
-                  {live.models.map((model) => <option key={model.modelId} value={model.modelId}>{model.name}</option>)}
-                </select>
-              )}
-              <button className="primary" type="submit" disabled={!prompt.trim()}>Send</button>
-            </div>
-            {error && <p className="alert" role="alert">{error}</p>}
-          </form>
+          <Composer
+            frame="dock"
+            prompt={prompt}
+            onPrompt={setPrompt}
+            placeholder={live.running ? "Add a follow up" : "Message this chat"}
+            username={username}
+            disabled={!prompt.trim()}
+            onSubmit={submit}
+            modes={live.modes.map((item) => ({ id: item.id, name: item.name }))}
+            mode={live.mode}
+            onMode={(modeId) => sendCommand({ type: "set_mode", chatId, modeId })}
+            models={live.models.map((item) => ({ id: item.modelId, name: item.name }))}
+            model={live.model}
+            onModel={(modelId) => sendCommand({ type: "set_model", chatId, modelId })}
+            queue={live.queue}
+            onEditQueued={(index) => {
+              const text = live.queue[index];
+              if (text == null) return;
+              setPrompt(text);
+              sendCommand({ type: "dequeue", chatId, index });
+            }}
+            onRemoveQueued={(index) => sendCommand({ type: "dequeue", chatId, index })}
+            workspace={live.workspace}
+            projectCreate={projectCreate}
+            switchDisabled={live.running}
+            onReposChanged={onReposChanged}
+            onBranchChanged={onFilesChanged}
+            error={error}
+          />
         </>
       )}
     </div>

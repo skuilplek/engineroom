@@ -103,6 +103,13 @@ export async function setEnabledRepositories(home: string, requested: string[], 
   return listRepositories(home);
 }
 
+export async function enableRepository(home: string, workspace: string): Promise<void> {
+  const state = await loadRepoState(home);
+  const homeReal = await realpath(home);
+  if (workspace === homeReal || state.enabled.has(workspace)) return;
+  await setEnabledRepositories(home, [...state.enabled, workspace], state.directory);
+}
+
 export async function createChat(
   home: string,
   input: { agent?: AgentId; mode?: string; model?: string; workspace?: string; title?: string },

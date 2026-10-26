@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { AgentId, AgentOptionChoice, ChatMeta } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings, type Session } from "../api.ts";
 import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message } from "../format.ts";
-import { IconArrow } from "../icons.tsx";
-import { usePromptHeight } from "./promptHeight.ts";
+import { Composer } from "./Composer.tsx";
 
 export function StartView({
   agents,
@@ -21,6 +20,9 @@ export function StartView({
   piSetup = false,
   piLoginHint = false,
   onSession,
+  projectCreate,
+  onReposChanged,
+  onBranchChanged,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
@@ -34,9 +36,10 @@ export function StartView({
   piSetup?: boolean;
   piLoginHint?: boolean;
   onSession?: (session: Session) => void;
+  projectCreate: boolean;
+  onReposChanged?: () => void;
+  onBranchChanged?: () => void;
 }) {
-  const box = useRef<HTMLTextAreaElement>(null);
-  const promptHeight = usePromptHeight(username);
   const [agent, setAgent] = useState<AgentId | "">(agents[0] || "");
   const [mode, setMode] = useState("");
   const [model, setModel] = useState("");
@@ -61,10 +64,6 @@ export function StartView({
       setModel(models.some((item) => item.id === next.defaultModel) ? next.defaultModel : models[0]?.id || "");
     }).catch((err) => setError(message(err)));
   }, [agents, options]);
-
-  useEffect(() => {
-    box.current?.focus();
-  }, [workspace]);
 
   const modes = options[agent]?.modes ?? [];
   const models = options[agent]?.models ?? [];
@@ -105,54 +104,34 @@ export function StartView({
         </div>
       )}
       <h1>Let's Start Building!</h1>
-      <form className="launch" onSubmit={(event) => void submit(event)}>
-        <textarea
-          ref={box}
-          style={promptHeight.style}
-          value={prompt}
-          placeholder="What do you want to build?"
-          aria-label="What do you want to build?"
-          onPointerDown={promptHeight.onPointerDown}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-        />
-        <div className="launch-bar">
-          {agents.length === 0 && <p className="muted">No agents available</p>}
-          {piSetup && onSession && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
-          {agents.length > 1 && (
-            <label className="chip">
-              <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
-                {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
-              </select>
-            </label>
-          )}
-          {modes.length > 0 && (
-            <label className="chip">
-              Mode
-              <select aria-label="Mode" value={mode} onChange={(event) => setMode(event.target.value)}>
-                {modes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-          )}
-          {models.length > 0 && (
-            <label className="chip">
-              Model
-              <select aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)}>
-                {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-          )}
-          <button className="send" type="submit" disabled={busy || !agent || !prompt.trim()} aria-label="Send">
-            <IconArrow />
-          </button>
-        </div>
-        {error && <p className="alert" role="alert">{error}</p>}
-      </form>
+      <Composer
+        frame="launch"
+        prompt={prompt}
+        onPrompt={setPrompt}
+        placeholder="What do you want to build?"
+        username={username}
+        disabled={busy || !agent || !prompt.trim()}
+        onSubmit={(event) => void submit(event)}
+        modes={modes}
+        mode={mode}
+        onMode={setMode}
+        models={models}
+        model={model}
+        onModel={setModel}
+        workspace={workspace}
+        projectCreate={projectCreate}
+        onReposChanged={onReposChanged}
+        onBranchChanged={onBranchChanged}
+        error={error}
+      >
+        {agents.length === 0 && <p className="muted">No agents available</p>}
+        {piSetup && onSession && <PiSetupNotice loginHint={piLoginHint} onReady={onSession} />}
+        {agents.length > 1 && (
+          <select aria-label="Agent" value={agent} onChange={(event) => chooseAgent(event.target.value as AgentId)}>
+            {agents.map((item) => <option key={item} value={item}>{agentLabel(item, agentCatalog)}</option>)}
+          </select>
+        )}
+      </Composer>
       <p className="context-line">{targetLabel}</p>
     </div>
   );

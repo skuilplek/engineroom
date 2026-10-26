@@ -7,6 +7,7 @@ import {
   agentLabel,
   agentSlug,
   applySettings,
+  assertBranchName,
   assertGitUrl,
   DEFAULT_SETTINGS,
   isInsidePath,
@@ -541,5 +542,31 @@ test("repository file requests validate relative paths and visibility flags", as
 
   const readOnlySettings = applySettings(DEFAULT_SETTINGS, parseSettingsPatch({ filesReadOnly: true }));
   assert.equal(readOnlySettings.filesReadOnly, true);
+});
+
+test("branch names and queue indexes stay narrow", () => {
+  assert.equal(assertBranchName("feature/widget"), "feature/widget");
+  assert.throws(() => assertBranchName("foo..bar"));
+  assert.throws(() => assertBranchName("-main"));
+  assert.throws(() => assertBranchName("refs/heads/main.lock"));
+  const queued = parseRunnerRequest({
+    id: "20",
+    type: "dequeue",
+    chatId: "11111111-1111-1111-1111-111111111111",
+    index: 1,
+  });
+  assert.equal(queued.type, "dequeue");
+  if (queued.type === "dequeue") assert.equal(queued.index, 1);
+  assert.throws(() => parseRunnerRequest({
+    id: "21",
+    type: "dequeue",
+    chatId: "11111111-1111-1111-1111-111111111111",
+    index: -1,
+  }));
+  const status = parseRunnerRequest({ id: "22", type: "git_status", workspace: "/home/alice/Sites/proj" });
+  assert.equal(status.type, "git_status");
+  assert.throws(() => parseRunnerRequest({ id: "23", type: "git_switch", workspace: "/home/alice", branch: "foo..bar" }));
+  const switched = parseClientCommand({ type: "git_switch", workspace: "/home/alice/Sites/proj", branch: "main" });
+  assert.equal(switched.type, "git_switch");
 });
 

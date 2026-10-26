@@ -167,6 +167,10 @@ function Shell({
     setFilesRefreshKey((current) => current + 1);
   }, []);
 
+  const refreshRepos = useCallback(() => {
+    listRepositories().then(setRepos).catch(() => undefined);
+  }, []);
+
   const claimOpening = useCallback((id: string): string | null => {
     const pending = openingRef.current;
     if (!pending || pending.id !== id || consumedRef.current === id) return null;
@@ -387,6 +391,9 @@ function Shell({
             piSetup={session.piSetup}
             piLoginHint={session.piLoginHint}
             onSession={onSession}
+            projectCreate={Boolean(session.projectCreate)}
+            onReposChanged={refreshRepos}
+            onBranchChanged={bumpFilesRefresh}
             onStarted={(chat, prompt) => {
               choseRef.current = true;
               remember(chat);
@@ -425,6 +432,8 @@ function Shell({
             onFilesChanged={bumpFilesRefresh}
             onUnavailable={leaveMissingChat}
             username={session.username}
+            projectCreate={Boolean(session.projectCreate)}
+            onReposChanged={refreshRepos}
           />
         )}
       </section>

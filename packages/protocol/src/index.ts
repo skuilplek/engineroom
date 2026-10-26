@@ -189,6 +189,12 @@ export interface RepoFilesResult {
   changes: RepoChangeEntry[];
 }
 
+export interface GitStatus {
+  repo: boolean;
+  branch: string;
+  branches: string[];
+}
+
 export interface RepoFileContent {
   path: string;
   content: string;
@@ -285,7 +291,10 @@ export type StreamEvent =
   | { type: "turn_start" }
   | { type: "turn_end"; stopReason?: string }
   | { type: "queued"; text: string }
+  | { type: "dequeued"; index: number }
+  | { type: "queue"; items: string[] }
   | { type: "mode"; modeId: string }
+  | { type: "model"; modelId: string }
   | { type: "title"; text: string }
   | { type: "status"; text: string }
   | { type: "thinking"; text: string }
@@ -351,6 +360,10 @@ export type RunnerRequest =
   | { id: string; type: "permission_response"; chatId: string; requestId: string; optionId: string }
   | { id: string; type: "set_mode"; chatId: string; modeId: string }
   | { id: string; type: "set_model"; chatId: string; modelId: string }
+  | { id: string; type: "dequeue"; chatId: string; index: number }
+  | { id: string; type: "git_status"; workspace: string }
+  | { id: string; type: "git_init"; workspace: string }
+  | { id: string; type: "git_switch"; workspace: string; branch: string }
   | { id: string; type: "pty_open"; chatId: string; cols: number; rows: number }
   | { id: string; type: "pty_input"; chatId: string; data: string }
   | { id: string; type: "pty_resize"; chatId: string; cols: number; rows: number }
@@ -668,6 +681,18 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "set_model":
       return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
+    case "dequeue":
+      return { id: body.id, type: "dequeue", chatId: assertChatId(body.chatId), index: parseQueueIndex(body.index) };
+    case "git_status":
+    case "git_init":
+      return { id: body.id, type: body.type, workspace: requiredWorkspace(body.workspace) };
+    case "git_switch":
+      return {
+        id: body.id,
+        type: "git_switch",
+        workspace: requiredWorkspace(body.workspace),
+        branch: assertBranchName(body.branch),
+      };
     case "pty_open":
     case "pty_resize":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), cols: parseDim(body.cols), rows: parseDim(body.rows) };
@@ -860,6 +885,19 @@ export function assertRepoRelativePath(value: unknown): string {
   return parts.join("/");
 }
 
+function parseQueueIndex(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 1000) {
+    throw new Error("invalid queue index");
+  }
+  return value;
+}
+
+function requiredWorkspace(value: unknown): string {
+  const workspace = optionalString(value, "workspace", 4096);
+  if (!workspace?.trim()) throw new Error("invalid workspace");
+  return workspace.trim();
+}
+
 function parseSeq(value: unknown): number {
   const seq = typeof value === "number" ? value : 0;
   if (!Number.isInteger(seq) || seq < 0 || seq > 1_000_000_000_000) throw new Error("invalid sequence");
@@ -925,6 +963,26 @@ export function assertCatalogName(value: unknown): string {
 export function assertCatalogId(value: unknown): string {
   if (typeof value !== "string" || !CHAT_ID_RE.test(value)) throw new Error("invalid repository");
   return value;
+}
+
+export function assertBranchName(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid branch");
+  const name = value.trim();
+  if (
+    name.startsWith("-")
+    || name.includes("..")
+    || name.endsWith(".")
+    || name.endsWith("/")
+    || name.endsWith(".lock")
+    || name.includes("@{")
+    || name.includes("//")
+    || name.includes("\\")
+    || name.includes("\0")
+    || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(name)
+  ) {
+    throw new Error("invalid branch");
+  }
+  return name;
 }
 
 export function assertGitUrl(value: unknown): string {
