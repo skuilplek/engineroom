@@ -69,7 +69,7 @@ export function ToolBlock({
   }
 
   return (
-    <details className="tool tool-prompt" open={hasBody}>
+    <details className="tool tool-prompt">
       <summary aria-label={commandLine || "command"}>
         <span className="tool-prompt-mark" aria-hidden="true">&gt;_</span>
         {commandLine ? (
