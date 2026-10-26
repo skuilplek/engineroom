@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   assertRepoDirectory,
@@ -80,7 +80,11 @@ export async function listRepositories(home: string): Promise<RepositoryEntry[]>
   const found = await listGitRepositories(home, state.directory);
   return found
     .filter((entry) => repositoryPathAllowed(homeReal, entry.path, state.directory))
-    .map((entry) => ({ ...entry, enabled: state.enabled.has(entry.path) }));
+    .map((entry) => ({
+      ...entry,
+      enabled: state.enabled.has(entry.path),
+      archived: state.archived.has(entry.path),
+    }));
 }
 
 export async function detectRepositories(home: string, directory: string): Promise<RepositoryEntry[]> {
@@ -89,6 +93,7 @@ export async function detectRepositories(home: string, directory: string): Promi
 }
 
 export async function setEnabledRepositories(home: string, requested: string[], directory = "Sites"): Promise<RepositoryEntry[]> {
+  const previous = await loadRepoState(home);
   const homeReal = await realpath(home);
   const enabled: string[] = [];
   for (const raw of requested) {
@@ -98,8 +103,49 @@ export async function setEnabledRepositories(home: string, requested: string[], 
     }
     if (!enabled.includes(resolved)) enabled.push(resolved);
   }
-  await ensureRoot(home);
-  await writeAtomic(repositoriesFile(home), `${JSON.stringify({ directory, enabled }, null, 2)}\n`);
+  const archived = [...previous.archived].filter((item) => enabled.includes(item));
+  await writeRepoState(home, directory, enabled, archived);
+  return listRepositories(home);
+}
+
+export async function setRepositoryArchived(home: string, requested: string, archived: boolean): Promise<RepositoryEntry[]> {
+  const workspace = await resolveWorkspace(home, requested);
+  const state = await loadRepoState(home);
+  const homeReal = await realpath(home);
+  if (workspace === homeReal || !state.enabled.has(workspace)) throw new Error("repository is not enabled");
+  const next = new Set(state.archived);
+  if (archived) next.add(workspace);
+  else next.delete(workspace);
+  await writeRepoState(home, state.directory, [...state.enabled], [...next]);
+  return listRepositories(home);
+}
+
+export async function deleteRepository(
+  home: string,
+  requested: string,
+  name: string,
+  onChat: (chatId: string) => void = () => undefined,
+): Promise<RepositoryEntry[]> {
+  const workspace = await assertProjectDirectory(home, requested);
+  const state = await loadRepoState(home);
+  if (!state.enabled.has(workspace)) throw new Error("repository is not enabled");
+  const entry = (await listRepositories(home)).find((item) => item.path === workspace && item.enabled);
+  if (!entry) throw new Error("repository is not enabled");
+  const folder = name.trim();
+  if (!folder || folder !== entry.name) throw new Error("project name does not match");
+  const chatIds = await chatIdsForWorkspace(home, workspace);
+  for (const chatId of chatIds) onChat(chatId);
+  for (const chatId of chatIds) await rm(chatDir(home, chatId), { recursive: true, force: true });
+  const again = await assertProjectDirectory(home, workspace);
+  if (again !== workspace) throw new Error("invalid repository");
+  await rm(workspace, { recursive: true, force: true });
+  const latest = await loadRepoState(home);
+  await writeRepoState(
+    home,
+    latest.directory,
+    [...latest.enabled].filter((item) => item !== workspace),
+    [...latest.archived].filter((item) => item !== workspace),
+  );
   return listRepositories(home);
 }
 
@@ -279,25 +325,83 @@ async function resolveChatWorkspace(home: string, requested?: string): Promise<s
   return workspace;
 }
 
-async function loadRepoState(home: string): Promise<{ directory: string; enabled: Set<string> }> {
+async function loadRepoState(home: string): Promise<{ directory: string; enabled: Set<string>; archived: Set<string> }> {
   try {
-    const parsed = JSON.parse(await readFile(repositoriesFile(home), "utf8")) as { directory?: unknown; enabled?: unknown };
+    const parsed = JSON.parse(await readFile(repositoriesFile(home), "utf8")) as {
+      directory?: unknown;
+      enabled?: unknown;
+      archived?: unknown;
+    };
     let directory = "Sites";
     try {
       if (typeof parsed.directory === "string" && parsed.directory.trim()) directory = assertRepoDirectory(parsed.directory);
     } catch {
       directory = "Sites";
     }
-    const enabled = Array.isArray(parsed.enabled)
-      ? parsed.enabled.filter((item): item is string => typeof item === "string" && item.startsWith("/"))
-      : [];
-    return { directory, enabled: new Set(enabled) };
+    const enabled = absolutePaths(parsed.enabled);
+    const archived = absolutePaths(parsed.archived).filter((item) => enabled.includes(item));
+    return { directory, enabled: new Set(enabled), archived: new Set(archived) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) {
-      return { directory: "Sites", enabled: new Set() };
+      return { directory: "Sites", enabled: new Set(), archived: new Set() };
     }
     throw error;
   }
+}
+
+function absolutePaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.startsWith("/"));
+}
+
+async function writeRepoState(home: string, directory: string, enabled: string[], archived: string[]): Promise<void> {
+  await ensureRoot(home);
+  const kept = archived.filter((item) => enabled.includes(item));
+  await writeAtomic(repositoriesFile(home), `${JSON.stringify({ directory, enabled, archived: kept }, null, 2)}\n`);
+}
+
+async function assertProjectDirectory(home: string, requested: string): Promise<string> {
+  const homeReal = await realpath(home);
+  const raw = requested.trim();
+  if (!raw) throw new Error("invalid repository");
+  const candidate = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(homeReal, raw);
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("repository is not enabled");
+    throw error;
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("invalid repository");
+  const workspace = await resolveWorkspace(home, candidate);
+  if (workspace === homeReal) throw new Error("invalid repository");
+  const state = await loadRepoState(home);
+  if (!repositoryPathAllowed(homeReal, workspace, state.directory)) throw new Error("invalid repository");
+  const confirmed = await lstat(workspace);
+  if (confirmed.isSymbolicLink() || !confirmed.isDirectory()) throw new Error("invalid repository");
+  return workspace;
+}
+
+async function chatIdsForWorkspace(home: string, workspace: string): Promise<string[]> {
+  const dir = path.join(dataRoot(home), "chats");
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const ids: string[] = [];
+  for (const name of names) {
+    if (!CHAT_ID_RE.test(name)) continue;
+    try {
+      const chat = await readMeta(home, name);
+      if (chat.workspace === workspace) ids.push(chat.id);
+    } catch {
+      continue;
+    }
+  }
+  return ids;
 }
 
 function repositoriesFile(home: string): string {

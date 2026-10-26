@@ -22,6 +22,9 @@ export function StartView({
   onSession,
   projectCreate,
   projectDownloads,
+  archived,
+  onArchive,
+  onDelete,
   onReposChanged,
   onBranchChanged,
 }: {
@@ -38,6 +41,9 @@ export function StartView({
   onSession?: (session: Session) => void;
   projectCreate: boolean;
   projectDownloads: boolean;
+  archived: boolean;
+  onArchive: () => Promise<void>;
+  onDelete: (name: string) => Promise<void>;
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
 }) {
@@ -47,8 +53,13 @@ export function StartView({
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<"archive" | "delete" | "">("");
+  const [actionError, setActionError] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
   const download = useProjectDownload();
   const downloadHere = Boolean(download && strip(download.workspace) === strip(workspace));
+  const creatingZip = Boolean(downloadHere && download?.phase === "creating");
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -88,6 +99,31 @@ export function StartView({
     } catch (err) {
       setError(message(err));
       setBusy(false);
+    }
+  }
+
+  async function archiveProject() {
+    if (action) return;
+    setAction("archive");
+    setActionError("");
+    try {
+      await onArchive();
+    } catch (err) {
+      setActionError(message(err));
+    } finally {
+      setAction("");
+    }
+  }
+
+  async function removeProject() {
+    if (action || typed !== targetLabel) return;
+    setAction("delete");
+    setActionError("");
+    try {
+      await onDelete(typed);
+    } catch (err) {
+      setActionError(message(err));
+      setAction("");
     }
   }
 
@@ -136,18 +172,55 @@ export function StartView({
         )}
       </Composer>
       <p className="context-line">{targetLabel}</p>
-      {projectDownloads && (
-        <div className="download-project">
-          {downloadHere && download?.phase === "creating" ? (
-            <p className="zip-progress" role="status">..creating project zip file..</p>
-          ) : (
-            <>
-              {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
-              <button className="primary" type="button" onClick={() => void startProjectDownload(workspace, targetLabel)}>
-                Download project
-              </button>
-            </>
+      <div className="download-project">
+        {creatingZip && <p className="zip-progress" role="status">..creating project zip file..</p>}
+        {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
+        {actionError && !confirming && <p className="alert" role="alert">{actionError}</p>}
+        <div className="project-actions">
+          {projectDownloads && !creatingZip && (
+            <button className="primary" type="button" onClick={() => void startProjectDownload(workspace, targetLabel)}>
+              Download project
+            </button>
           )}
+          <button className="ghost" type="button" disabled={action !== ""} onClick={() => void archiveProject()}>
+            {archived ? "Unarchive" : "Archive"}
+          </button>
+          <button
+            className="danger"
+            type="button"
+            disabled={action !== ""}
+            onClick={() => {
+              setTyped("");
+              setActionError("");
+              setConfirming(true);
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+      {confirming && (
+        <div className="modal-backdrop">
+          <div className="confirm-dialog" role="dialog" aria-labelledby="delete-project-title" aria-modal="true">
+            <h2 id="delete-project-title">Delete this project</h2>
+            <p className="muted">Type <span className="folder-name">{targetLabel}</span> to delete this project. This removes the project folder and its chats.</p>
+            <label>
+              Project folder name
+              <input
+                value={typed}
+                autoFocus
+                onChange={(event) => setTyped(event.target.value)}
+                disabled={action === "delete"}
+              />
+            </label>
+            {actionError && <p className="alert" role="alert">{actionError}</p>}
+            <div className="confirm-actions">
+              <button type="button" onClick={() => setConfirming(false)} disabled={action === "delete"}>Cancel</button>
+              <button className="danger" type="button" disabled={typed !== targetLabel || action === "delete"} onClick={() => void removeProject()}>
+                {action === "delete" ? "Deleting…" : "Delete project"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

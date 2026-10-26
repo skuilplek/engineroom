@@ -162,6 +162,20 @@ export function createRepository(name: string, url?: string) {
   });
 }
 
+export function setRepositoryArchived(workspace: string, archived: boolean) {
+  return api<RepositoryEntry[]>("/api/repositories/archived", {
+    method: "POST",
+    body: JSON.stringify({ workspace, archived }),
+  });
+}
+
+export function deleteRepository(workspace: string, name: string) {
+  return api<RepositoryEntry[]>("/api/repositories", {
+    method: "DELETE",
+    body: JSON.stringify({ workspace, name }),
+  });
+}
+
 export function gitWorkspace(workspace: string) {
   return api<GitStatus>(`/api/repositories/git?workspace=${encodeURIComponent(workspace)}`);
 }

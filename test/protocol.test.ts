@@ -588,3 +588,28 @@ test("project archive requests keep a workspace and an archive id", () => {
   assert.throws(() => parseRunnerRequest({ id: "a5", type: "start_project_archive", workspace: "   " }));
 });
 
+test("repository archive and delete requests keep a workspace and a folder name", () => {
+  const archived = parseRunnerRequest({
+    id: "r1",
+    type: "set_repository_archived",
+    workspace: "  /home/alice/Sites/proj  ",
+    archived: true,
+  });
+  assert.equal(archived.type, "set_repository_archived");
+  if (archived.type === "set_repository_archived") {
+    assert.equal(archived.workspace, "/home/alice/Sites/proj");
+    assert.equal(archived.archived, true);
+  }
+  const removed = parseRunnerRequest({
+    id: "r2",
+    type: "delete_repository",
+    workspace: "/home/alice/Sites/proj",
+    name: " proj ",
+  });
+  assert.equal(removed.type, "delete_repository");
+  if (removed.type === "delete_repository") assert.equal(removed.name, "proj");
+  assert.throws(() => parseRunnerRequest({ id: "r3", type: "delete_repository", workspace: "/home/alice/Sites/proj", name: "   " }));
+  assert.throws(() => parseRunnerRequest({ id: "r4", type: "delete_repository", workspace: "   ", name: "proj" }));
+  assert.throws(() => parseRunnerRequest({ id: "r5", type: "set_repository_archived", workspace: "   ", archived: false }));
+});
+

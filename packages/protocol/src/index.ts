@@ -152,6 +152,7 @@ export interface RepositoryEntry {
   path: string;
   name: string;
   enabled: boolean;
+  archived: boolean;
 }
 
 export interface FileVisibility {
@@ -351,6 +352,8 @@ export type RunnerRequest =
   | { id: string; type: "sync_repositories"; repos: CatalogEntry[]; catalog: string[]; directory: string }
   | { id: string; type: "detect_repositories"; directory: string }
   | { id: string; type: "create_repository"; name: string; directory: string; url?: string }
+  | { id: string; type: "set_repository_archived"; workspace: string; archived: boolean }
+  | { id: string; type: "delete_repository"; workspace: string; name: string }
   | { id: string; type: "send"; chatId: string; prompt: string }
   | { id: string; type: "prompt"; chatId: string; prompt: string }
   | { id: string; type: "cancel"; chatId: string }
@@ -620,6 +623,20 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         directory: body.directory == null || body.directory === "" ? "Sites" : assertRepoDirectory(body.directory),
         ...(url ? { url } : {}),
       };
+    }
+    case "set_repository_archived": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (typeof body.archived !== "boolean") throw new Error("invalid repository");
+      return { id: body.id, type: "set_repository_archived", workspace: workspace.trim(), archived: body.archived };
+    }
+    case "delete_repository": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (typeof body.name !== "string" || !body.name.trim()) throw new Error("invalid project name");
+      const name = body.name.trim();
+      if (name.length > 512 || name.includes("\0") || name.includes("\\")) throw new Error("invalid project name");
+      return { id: body.id, type: "delete_repository", workspace: workspace.trim(), name };
     }
     case "get_chat":
     case "cancel":

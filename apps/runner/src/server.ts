@@ -51,10 +51,12 @@ import {
   getChat,
   listChats,
   detectRepositories,
+  deleteRepository,
   listRepositories,
   loadSettings,
   saveSettings,
   setEnabledRepositories,
+  setRepositoryArchived,
   updateChat,
 } from "./store.ts";
 
@@ -316,6 +318,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return listRepositories(home);
       case "set_repositories":
         return setEnabledRepositories(home, request.enabled);
+      case "set_repository_archived":
+        return setRepositoryArchived(home, request.workspace, request.archived);
+      case "delete_repository":
+        return deleteRepository(home, request.workspace, request.name, (chatId) => {
+          cancel(chatId);
+          pty.close(chatId);
+        });
       case "create_chat": {
         const policy = await loadPolicy(home);
         const settings = await loadSettings(home);

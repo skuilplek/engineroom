@@ -10,10 +10,17 @@ export interface RepoGroup {
   marked: boolean;
 }
 
-export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: string, query = ""): RepoGroup[] {
+export function buildGroups(
+  chats: ChatMeta[],
+  repos: RepositoryEntry[],
+  home: string,
+  query = "",
+  archived = false,
+): RepoGroup[] {
   const needle = query.trim().toLowerCase();
   const homeKey = strip(home);
-  const enabled = new Set(repos.map((repo) => strip(repo.path)));
+  const selected = repos.filter((repo) => Boolean(repo.archived) === archived);
+  const enabled = new Set(selected.map((repo) => strip(repo.path)));
   const homeIsRepo = enabled.has(homeKey);
   const allowed = chats.filter((chat) => {
     const key = strip(chat.workspace);
@@ -45,7 +52,7 @@ export function buildGroups(chats: ChatMeta[], repos: RepositoryEntry[], home: s
     };
   }
   const groups: RepoGroup[] = [];
-  for (const repo of [...repos].sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const repo of [...selected].sort((a, b) => a.name.localeCompare(b.name))) {
     groups.push(take(strip(repo.path), repo.name, true));
   }
   return groups.filter((group) => !needle || group.chats.length > 0 || group.label.toLowerCase().includes(needle));

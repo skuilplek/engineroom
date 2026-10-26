@@ -74,6 +74,7 @@ interface RunnerCall {
   url?: string;
   branch?: string;
   archiveId?: string;
+  archived?: boolean;
 }
 
 export function createHub(options: HubOptions) {
@@ -665,6 +666,23 @@ export function createHub(options: HubOptions) {
       sendJson(res, 201, created);
       return;
     }
+    if (parts[1] === "repositories" && parts.length === 2 && req.method === "DELETE") {
+      const body = (await readJson(req)) as { workspace?: unknown; name?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      if (!name) throw new Error("invalid project name");
+      sendJson(res, 200, await call(user, { type: "delete_repository", workspace, name }));
+      return;
+    }
+    if (parts[1] === "repositories" && parts[2] === "archived" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { workspace?: unknown; archived?: unknown };
+      const workspace = typeof body.workspace === "string" ? body.workspace.trim() : "";
+      if (!workspace) throw new Error("invalid workspace");
+      if (typeof body.archived !== "boolean") throw new Error("invalid repository");
+      sendJson(res, 200, await call(user, { type: "set_repository_archived", workspace, archived: body.archived }));
+      return;
+    }
     if (parts[1] === "repositories" && parts[2] === "git" && parts.length === 3 && req.method === "GET") {
       const workspace = (url.searchParams.get("workspace") || "").trim();
       if (!workspace) throw new Error("invalid workspace");
@@ -973,6 +991,8 @@ export function createHub(options: HubOptions) {
       command.type === "get_access" ||
       command.type === "sync_repositories" ||
       command.type === "create_repository" ||
+      command.type === "set_repository_archived" ||
+      command.type === "delete_repository" ||
       command.type === "set_repositories" ||
       command.type === "probe_agent" ||
       command.type === "list_repo_files" ||
@@ -1307,6 +1327,7 @@ function statusFor(message: string): number {
   if (message.includes("not enabled") || message.includes("hidden by policy") || message.includes("cannot modify .git")) return 403;
   if (
     message.includes("invalid") ||
+    message.includes("does not match") ||
     message.includes("empty") ||
     message.includes("must") ||
     message.includes("taken") ||

@@ -10,7 +10,7 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { archiveDirectory, archiveFileName, archivePath, archiveUserHash } from "../apps/runner/src/archive.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
-import { createChat, getChat, listChats, listRepositories, setEnabledRepositories, updateChat } from "../apps/runner/src/store.ts";
+import { createChat, deleteRepository, getChat, listChats, listRepositories, setEnabledRepositories, setRepositoryArchived, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import { assertBranchName, MAX_TRANSFER_BYTES } from "@engineroom/protocol";
 import { gitInitWorkspace, gitStatus, gitSwitch } from "../apps/runner/src/git.ts";
@@ -943,3 +943,49 @@ function rpcBytes(socketPath: string, request: Record<string, unknown>): Promise
     socket.write(`${JSON.stringify(request)}\n`);
   });
 }
+
+test("archiving a project keeps the folder and deleting it requires the folder name", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-project-life-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "er-project-life-out-"));
+  const sites = path.join(home, "Sites");
+  const repo = path.join(sites, "widget");
+  const other = path.join(sites, "other");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  await mkdir(path.join(other, ".git"), { recursive: true });
+  await symlink(outside, path.join(sites, "link"));
+  try {
+    await setEnabledRepositories(home, [repo, other]);
+    const archived = await setRepositoryArchived(home, repo, true);
+    assert.equal(archived.find((entry) => entry.name === "widget")?.archived, true);
+    assert.equal(archived.find((entry) => entry.name === "other")?.archived, false);
+    await stat(repo);
+    const rewritten = await setEnabledRepositories(home, [repo, other]);
+    assert.equal(rewritten.find((entry) => entry.name === "widget")?.archived, true);
+    const dropped = await setEnabledRepositories(home, [other]);
+    assert.equal(dropped.find((entry) => entry.name === "widget")?.archived, false);
+    await setEnabledRepositories(home, [repo, other]);
+    await setRepositoryArchived(home, repo, true);
+    const restored = await setRepositoryArchived(home, repo, false);
+    assert.equal(restored.find((entry) => entry.name === "widget")?.archived, false);
+
+    await assert.rejects(() => deleteRepository(home, path.join(sites, "link"), "widget"), /invalid repository/);
+    await stat(repo);
+    await assert.rejects(() => deleteRepository(home, repo, "nope"), /project name does not match/);
+    await stat(repo);
+
+    const kept = await createChat(home, { workspace: other, title: "stays" });
+    const gone = await createChat(home, { workspace: repo, title: "goes" });
+    const cancelled: string[] = [];
+    await deleteRepository(home, repo, "widget", (id) => cancelled.push(id));
+    assert.deepEqual(cancelled, [gone.id]);
+    await assert.rejects(() => stat(repo));
+    await assert.rejects(() => stat(path.join(home, ".engineroom", "chats", gone.id)));
+    await stat(path.join(home, ".engineroom", "chats", kept.id));
+    const listed = await listRepositories(home);
+    assert.equal(listed.some((entry) => entry.name === "widget"), false);
+    assert.equal(listed.find((entry) => entry.name === "other")?.enabled, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});

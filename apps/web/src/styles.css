@@ -383,6 +383,17 @@ textarea { resize: vertical; }
   color: var(--muted);
   font-size: 13px;
 }
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 18px 10px 6px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+.section-toggle:hover { color: var(--ink); }
 .new-project {
   display: grid;
   gap: 8px;
@@ -672,6 +683,35 @@ textarea { resize: vertical; }
   align-items: center;
   gap: 8px;
 }
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.confirm-dialog {
+  width: min(440px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.confirm-dialog h2 { margin: 0; font-size: 20px; }
+.confirm-dialog p { margin: 0; }
+.folder-name { color: var(--ink); font-weight: 600; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .zip-progress {
   margin: 0;
   color: var(--muted);

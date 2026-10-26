@@ -19,8 +19,8 @@ function chat(workspace: string, title: string): ChatMeta {
 test("buildGroups hides chats outside enabled repositories", () => {
   const home = "/home/serveradmin";
   const repos: RepositoryEntry[] = [
-    { path: "/home/serveradmin/Sites/internet", name: "internet", enabled: true },
-    { path: "/home/serveradmin/Sites/test", name: "test", enabled: true },
+    { path: "/home/serveradmin/Sites/internet", name: "internet", enabled: true, archived: false },
+    { path: "/home/serveradmin/Sites/test", name: "test", enabled: true, archived: false },
   ];
   const groups = buildGroups(
     [
@@ -41,9 +41,27 @@ test("buildGroups keeps home chats when home is an enabled repository", () => {
   const home = "/home/serveradmin";
   const groups = buildGroups(
     [chat(home, "loose")],
-    [{ path: home, name: "serveradmin", enabled: true }],
+    [{ path: home, name: "serveradmin", enabled: true, archived: false }],
     home,
   );
   assert.deepEqual(groups.map((group) => group.label), ["serveradmin"]);
   assert.deepEqual(groups[0]?.chats.map((item) => item.title), ["loose"]);
+});
+
+test("buildGroups leaves archived projects out of the main list", () => {
+  const home = "/home/serveradmin";
+  const repos: RepositoryEntry[] = [
+    { path: "/home/serveradmin/Sites/internet", name: "internet", enabled: true, archived: false },
+    { path: "/home/serveradmin/Sites/old", name: "old", enabled: true, archived: true },
+  ];
+  const chats = [
+    chat("/home/serveradmin/Sites/internet", "Proxy Server List"),
+    chat("/home/serveradmin/Sites/old", "Old chat"),
+  ];
+  const groups = buildGroups(chats, repos, home);
+  assert.deepEqual(groups.map((group) => group.label), ["internet"]);
+  assert.deepEqual(groups[0]?.chats.map((item) => item.title), ["Proxy Server List"]);
+  const archived = buildGroups(chats, repos, home, "", true);
+  assert.deepEqual(archived.map((group) => group.label), ["old"]);
+  assert.deepEqual(archived[0]?.chats.map((item) => item.title), ["Old chat"]);
 });

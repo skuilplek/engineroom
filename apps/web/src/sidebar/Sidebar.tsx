@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { buildGroups, relativeTime, strip, type RepoGroup } from "../format.ts";
-import { IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
+import { IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
 type View = "chat" | "settings" | "start" | "admin";
@@ -46,7 +46,9 @@ export function Sidebar({
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
   const [agent, setAgent] = useState<AgentId>("cursor");
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const groups = buildGroups(chats, repos, home, query);
+  const archivedGroups = buildGroups(chats, repos, home, query, true);
   const appName = session.appName.trim() || "AgentWrapper";
 
   useEffect(() => onAgent((message) => {
@@ -130,6 +132,20 @@ export function Sidebar({
           <div className="tree">
             {groups.map((group) => (
               <Group key={group.key} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
+            ))}
+            {archivedGroups.length > 0 && (
+              <button
+                className="section-toggle"
+                type="button"
+                aria-expanded={archivedOpen}
+                onClick={() => setArchivedOpen((open) => !open)}
+              >
+                <IconChevron open={archivedOpen} />
+                Archived
+              </button>
+            )}
+            {archivedOpen && archivedGroups.map((group) => (
+              <Group key={`archived-${group.key}`} group={group} view={view} activeId={activeId} target={target} onNew={onNew} onOpen={onOpen} />
             ))}
           </div>
           {error && <p className="alert" role="alert">{error}</p>}

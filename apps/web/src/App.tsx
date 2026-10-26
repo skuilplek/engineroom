@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { isTheme, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
-import { createRepository, listChats, listRepositories, login, logout, me, type Session } from "./api.ts";
+import { createRepository, deleteRepository, listChats, listRepositories, login, logout, me, setRepositoryArchived, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
@@ -282,6 +282,26 @@ function Shell({
     setCheckingChat(false);
   }
 
+  async function archiveProject() {
+    if (!selectedRepo) return;
+    setError("");
+    await setRepositoryArchived(selectedRepo.path, !selectedRepo.archived);
+    await refresh();
+  }
+
+  async function removeProject(name: string) {
+    setError("");
+    await deleteRepository(target, name);
+    const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
+    setChats(nextChats);
+    setRepos(nextRepos);
+    choseRef.current = true;
+    forgetLastChat(session.username);
+    setActiveId(null);
+    setTarget(session.home);
+    setView("start");
+  }
+
   async function createProject(name: string, url: string) {
     try {
       setError("");
@@ -405,6 +425,9 @@ function Shell({
             onSession={onSession}
             projectCreate={Boolean(session.projectCreate)}
             projectDownloads={Boolean(session.projectDownloads)}
+            archived={Boolean(selectedRepo.archived)}
+            onArchive={archiveProject}
+            onDelete={removeProject}
             onReposChanged={refreshRepos}
             onBranchChanged={bumpFilesRefresh}
             onStarted={(chat, prompt) => {

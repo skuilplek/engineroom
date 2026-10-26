@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ChatMeta, RepositoryEntry } from "@engineroom/protocol";
-import { relativeTime, workspaceLabel } from "../format.ts";
+import { relativeTime, strip, workspaceLabel } from "../format.ts";
 
 export function HomeView({
   repos,
@@ -19,13 +19,19 @@ export function HomeView({
   onOpen: (chat: ChatMeta) => void;
   onCreateProject: (name: string, url: string) => Promise<void>;
 }) {
-  const [project, setProject] = useState(() => (repos.length === 1 ? repos[0]!.path : ""));
-  const recent = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8);
+  const active = repos.filter((repo) => !repo.archived);
+  const activeKeys = new Set(active.map((repo) => strip(repo.path)));
+  const [project, setProject] = useState(() => (active.length === 1 ? active[0]!.path : ""));
+  const recent = [...chats]
+    .filter((chat) => activeKeys.has(strip(chat.workspace)))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 8);
 
   useEffect(() => {
+    const next = repos.filter((repo) => !repo.archived);
     setProject((current) => {
-      if (repos.some((repo) => repo.path === current)) return current;
-      return repos.length === 1 ? repos[0]!.path : "";
+      if (next.some((repo) => repo.path === current)) return current;
+      return next.length === 1 ? next[0]!.path : "";
     });
   }, [repos]);
 
@@ -34,13 +40,13 @@ export function HomeView({
       <h1>What do you want to work on?</h1>
       <section className="home-card">
         <h2>New chat</h2>
-        {repos.length > 0 ? (
+        {active.length > 0 ? (
           <>
             <label>
               Project
               <select aria-label="Project" value={project} onChange={(event) => setProject(event.target.value)}>
-                {repos.length > 1 && <option value="">Choose a project</option>}
-                {repos.map((repo) => (
+                {active.length > 1 && <option value="">Choose a project</option>}
+                {active.map((repo) => (
                   <option key={repo.path} value={repo.path}>{repo.name}</option>
                 ))}
               </select>

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -1883,6 +1883,108 @@ test("the administrator controls project downloads", async () => {
     hub.close();
     await runner.close();
     if (zipName) await rm(archivePath(zipName), { force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a person can archive and delete a project", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-project-life-"));
+  const home = path.join(root, "alice");
+  const socketDir = path.join(root, "socks");
+  const reposFile = path.join(root, "repos.json");
+  const agentsFile = path.join(root, "agents.json");
+  const repo = path.join(home, "Sites", "app");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("project-life-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    reposFile,
+    lookup: (username) => (username === "alice" ? alice : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const login = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (login.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const listed = (await (await fetch(`${base}/api/repositories`, { headers })).json()) as Array<{ path: string; name: string; archived: boolean }>;
+    const project = listed.find((entry) => entry.name === "app");
+    assert.ok(project);
+    assert.equal(project.archived, false);
+
+    const archived = await fetch(`${base}/api/repositories/archived`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: project.path, archived: true }),
+    });
+    assert.equal(archived.status, 200);
+    const archivedList = (await archived.json()) as Array<{ name: string; archived: boolean }>;
+    assert.equal(archivedList.find((entry) => entry.name === "app")?.archived, true);
+    await stat(repo);
+
+    const visible = (await (await fetch(`${base}/api/repositories`, { headers })).json()) as Array<{ name: string; archived: boolean }>;
+    assert.equal(visible.find((entry) => entry.name === "app")?.archived, true);
+
+    const restored = await fetch(`${base}/api/repositories/archived`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ workspace: project.path, archived: false }),
+    });
+    assert.equal(restored.status, 200);
+    const restoredList = (await restored.json()) as Array<{ name: string; archived: boolean }>;
+    assert.equal(restoredList.find((entry) => entry.name === "app")?.archived, false);
+
+    const mismatch = await fetch(`${base}/api/repositories`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ workspace: project.path, name: "nope" }),
+    });
+    assert.equal(mismatch.status, 400);
+    await stat(repo);
+
+    const removed = await fetch(`${base}/api/repositories`, {
+      method: "DELETE",
+      headers,
+      body: JSON.stringify({ workspace: project.path, name: "app" }),
+    });
+    assert.equal(removed.status, 200);
+    await assert.rejects(() => stat(repo));
+    const after = (await (await fetch(`${base}/api/repositories`, { headers })).json()) as Array<{ name: string }>;
+    assert.equal(after.some((entry) => entry.name === "app"), false);
+  } finally {
+    hub.close();
+    await runner.close();
     await rm(root, { recursive: true, force: true });
   }
 });
