@@ -372,6 +372,51 @@ export function piArgs(sessionId: string, model: string, prompt: string): string
   return args;
 }
 
+const PI_LIST_HEADERS = ["provider", "model", "context", "max-out", "thinking", "images"] as const;
+
+/** Rows from `pi --list-models`. An unauthenticated login prints guidance and yields none. */
+export function parsePiModelList(stdout: string): { id: string; name: string }[] {
+  const lines = stdout.split(/\r?\n/).map((line) => line.replace(/\u001b\[[0-9;]*m/g, ""));
+  const header = lines.find((line) => piListColumns(line));
+  const starts = header ? piListColumns(header) : null;
+  if (!starts) return [];
+  const models: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  const headerAt = lines.indexOf(header!);
+  for (const line of lines.slice(headerAt + 1)) {
+    const provider = piListCell(line, starts, 0);
+    const model = piListCell(line, starts, 1);
+    if (!provider || !model) continue;
+    const id = `${provider}/${model}`;
+    if (id.length > 200 || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, name: id });
+  }
+  return models;
+}
+
+function piListColumns(line: string): number[] | null {
+  const starts: number[] = [];
+  let from = 0;
+  for (const name of PI_LIST_HEADERS) {
+    const at = line.indexOf(name, from);
+    if (at < 0) return null;
+    if (at > 0 && line[at - 1] !== " ") return null;
+    const after = at + name.length;
+    if (after < line.length && line[after] !== " ") return null;
+    starts.push(at);
+    from = after;
+  }
+  return starts;
+}
+
+function piListCell(line: string, starts: number[], index: number): string {
+  const start = starts[index];
+  if (start == null || start >= line.length) return "";
+  const end = starts[index + 1] ?? line.length;
+  return line.slice(start, end).trim();
+}
+
 export function parseCliId(stdout: string): string {
   const lines = stdout
     .split(/\r?\n/)

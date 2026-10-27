@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -1123,10 +1123,34 @@ test("offered modes and models are probed, then narrowed per person", async () =
     });
     assert.equal(goodModel.status, 200);
 
+    const piBin = path.join(aliceHome, ".local", "bin");
+    await mkdir(piBin, { recursive: true });
+    const piRows = [
+      { provider: "anthropic", model: "claude-sonnet-4", context: "200K", maxOut: "16K", thinking: "yes", images: "yes" },
+      { provider: "openrouter", model: "recursive/flint-v1.0:free", context: "128K", maxOut: "8K", thinking: "no", images: "no" },
+    ];
+    const piHeaders = { provider: "provider", model: "model", context: "context", maxOut: "max-out", thinking: "thinking", images: "images" };
+    const piWidth = (key: keyof typeof piHeaders) => Math.max(piHeaders[key].length, ...piRows.map((row) => row[key].length));
+    const piLine = (row: typeof piHeaders) =>
+      [row.provider.padEnd(piWidth("provider")), row.model.padEnd(piWidth("model")), row.context.padEnd(piWidth("context")), row.maxOut.padEnd(piWidth("maxOut")), row.thinking.padEnd(piWidth("thinking")), row.images.padEnd(piWidth("images"))].join(" ");
+    const piTable = [piLine(piHeaders), ...piRows.map(piLine)].join("\n");
+    await writeFile(path.join(piBin, "pi"), `#!/bin/sh\ncat <<'EOF'\n${piTable}\nEOF\n`);
+    await chmod(path.join(piBin, "pi"), 0o755);
     const pi = await fetch(`${base}/api/admin/agent-options/pi/probe`, { method: "POST", headers });
-    assert.equal(pi.status, 400);
-    const piBody = (await pi.json()) as { error: string };
-    assert.match(piBody.error, /does not report/);
+    assert.equal(pi.status, 200);
+    const piBody = (await pi.json()) as { discovered: { modes: unknown[]; models: { id: string }[] }; offered: { models: string[] } };
+    assert.deepEqual(piBody.discovered.modes, []);
+    assert.deepEqual(piBody.discovered.models.map((model) => model.id), [
+      "anthropic/claude-sonnet-4",
+      "openrouter/recursive/flint-v1.0:free",
+    ]);
+    assert.deepEqual(piBody.offered.models, []);
+    const piUnknown = await fetch(`${base}/api/admin/agent-options`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ pi: { modes: [], models: ["missing/model"] } }),
+    });
+    assert.equal(piUnknown.status, 400);
 
     const policy = await fetch(`${base}/api/admin/users/carol/policy`, {
       method: "PUT",

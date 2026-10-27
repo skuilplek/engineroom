@@ -30,7 +30,7 @@ import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
-import { childEnv, refreshLoginCommandDirs, resolveBinary, binaryNames } from "./cli.ts";
+import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture } from "./cli.ts";
 import { gitClone } from "./clone.ts";
 import { gitInitWorkspace, gitStatus, gitSwitch } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
@@ -519,10 +519,35 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   }
 
   async function probeAgent(agent: AgentId) {
+    if (agent === "pi") return probePi();
     if (!acp?.supports(agent)) throw new Error("this agent does not report modes or models");
     const cwd = await mkdtemp(path.join(tmpdir(), "er-probe-"));
     try {
       return await acp.probe(agent, cwd, process.env, home);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  async function probePi() {
+    const env = childEnv(process.env, home);
+    const binary = await resolveBinary(undefined, ["pi"], env);
+    const cwd = await mkdtemp(path.join(tmpdir(), "er-probe-"));
+    const signal = AbortSignal.timeout(20_000);
+    try {
+      const result = await runCapture({
+        binary,
+        args: ["--list-models", "--offline"],
+        cwd,
+        env,
+        signal,
+      });
+      if (signal.aborted) throw new Error("pi model list timed out");
+      if (result.code !== 0) {
+        const detail = result.stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
+        throw new Error(detail || "pi could not list models");
+      }
+      return { modes: [], models: parsePiModelList(result.stdout) };
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

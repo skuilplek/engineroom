@@ -537,9 +537,8 @@ export function AdminView({
                   {selectedAgent.builtin ? null : (
                     <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
                   )}
-                  {selectedAgent.id === "pi" ? (
+                  {selectedAgent.id === "pi" && (
                     <>
-                      <p className="muted">Pi does not report modes or models. These choices are saved with the agents.</p>
                       <label>
                         Install
                         <select aria-label="Pi install" value={piInstall} onChange={(event) => setPiInstall(event.target.value as "user" | "global")}>
@@ -569,18 +568,18 @@ export function AdminView({
                         <input aria-label="Pi model" value={piModel} onChange={(event) => setPiModel(event.target.value)} placeholder="recursive/flint-v1.0:free" />
                       </label>
                       <p className="muted">Provider and model are written to Pi's settings.json when setup runs. Saving here stores them. Run setup again to apply a later change.</p>
+                      <p className="muted">This list is the models this Pi login can call. Nothing is offered until you check it and save.</p>
                     </>
-                  ) : (
-                    <AgentOptions
-                      label={selectedAgent.label}
-                      config={agentOptions[selectedAgent.id]}
-                      draft={offeredDraft[selectedAgent.id] ?? { modes: [], models: [] }}
-                      enabled={Boolean(savedFlags[selectedAgent.id])}
-                      busy={busy}
-                      onLoad={() => void loadOptions(selectedAgent.id)}
-                      onToggle={(kind, id) => toggleOffered(selectedAgent.id, kind, id)}
-                    />
                   )}
+                  <AgentOptions
+                    label={selectedAgent.label}
+                    config={agentOptions[selectedAgent.id]}
+                    draft={offeredDraft[selectedAgent.id] ?? { modes: [], models: [] }}
+                    enabled={Boolean(savedFlags[selectedAgent.id])}
+                    busy={busy}
+                    onLoad={() => void loadOptions(selectedAgent.id)}
+                    onToggle={(kind, id) => toggleOffered(selectedAgent.id, kind, id)}
+                  />
                 </div>
               )}
             </form>
@@ -1110,9 +1109,6 @@ function PersonPanel({
           const config = agentOptions[agent];
           const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));
           const models = (config?.discovered.models ?? []).filter((model) => config?.offered.models.includes(model.id));
-          if (agent === "pi") {
-            return <p className="muted" key={`${agent}-options`}>Pi does not report modes or models.</p>;
-          }
           if (modes.length === 0 && models.length === 0) {
             return <p className="muted" key={`${agent}-options`}>Load modes and models for {agentLabel(agent, agentNames)} on the Agents tab before choosing any for this person.</p>;
           }

@@ -31,7 +31,7 @@ import {
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
-import { childEnv, claudeArgs, cursorArgs, parseLoginPath, piArgs, resolveBinary } from "../apps/runner/src/cli.ts";
+import { childEnv, claudeArgs, cursorArgs, parseLoginPath, parsePiModelList, piArgs, resolveBinary } from "../apps/runner/src/cli.ts";
 import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
@@ -380,6 +380,23 @@ test("cli arguments match the headless auto-run contract", () => {
   assert.ok(claudeArgs("", "sid", "hello", "ask").includes("default"));
   assert.ok(claudeArgs("", "sid", "hello").includes("--resume"));
   assert.deepEqual(piArgs("erabc123", "", "hello").slice(0, 4), ["--mode", "json", "--session-id", "erabc123"]);
+});
+
+test("pi model list keeps provider and model columns, including ids with slashes", () => {
+  const rows = [
+    { provider: "anthropic", model: "claude-sonnet-4", context: "200K", maxOut: "16K", thinking: "yes", images: "yes" },
+    { provider: "openrouter", model: "recursive/flint-v1.0:free", context: "128K", maxOut: "8K", thinking: "no", images: "no" },
+  ];
+  const headers = { provider: "provider", model: "model", context: "context", maxOut: "max-out", thinking: "thinking", images: "images" };
+  const width = (key: keyof typeof headers) => Math.max(headers[key].length, ...rows.map((row) => row[key].length));
+  const line = (row: typeof headers) =>
+    [row.provider.padEnd(width("provider")), row.model.padEnd(width("model")), row.context.padEnd(width("context")), row.maxOut.padEnd(width("maxOut")), row.thinking.padEnd(width("thinking")), row.images.padEnd(width("images"))].join(" ");
+  const table = ["Warning: ignored before the table", line(headers), ...rows.map(line)].join("\n");
+  assert.deepEqual(parsePiModelList(table), [
+    { id: "anthropic/claude-sonnet-4", name: "anthropic/claude-sonnet-4" },
+    { id: "openrouter/recursive/flint-v1.0:free", name: "openrouter/recursive/flint-v1.0:free" },
+  ]);
+  assert.deepEqual(parsePiModelList("No models available. Run /login or set an API key.\n"), []);
 });
 
 test("claude resume keeps the original session id", () => {
