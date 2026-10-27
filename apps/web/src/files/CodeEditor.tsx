@@ -121,13 +121,16 @@ export function CodeEditor({
         <pre className="code-editor-highlight" ref={preRef} aria-hidden="true">
           {tokenLines.map((tokens, index) => (
             <div className="code-highlight-line" key={index}>
-              {tokens.length === 0
-                ? " "
-                : tokens.map((token, tIndex) => (
-                    <span className={`tok-${token.kind}`} key={tIndex}>
-                      {token.text}
-                    </span>
-                  ))}
+              <span className="code-highlight-num">{index + 1}</span>
+              <span className="code-highlight-text">
+                {tokens.length === 0
+                  ? " "
+                  : tokens.map((token, tIndex) => (
+                      <span className={`tok-${token.kind}`} key={tIndex}>
+                        {token.text}
+                      </span>
+                    ))}
+              </span>
             </div>
           ))}
         </pre>

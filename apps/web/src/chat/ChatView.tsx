@@ -12,6 +12,7 @@ import { CopyResponse } from "./CopyResponse.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Composer } from "./Composer.tsx";
 import { attachmentPreview, composerFilesFromSaved, promptText, restorePromptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
+import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -52,13 +53,13 @@ export function ChatView({
   onOpenFile?: (path: string) => void;
 }) {
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
-  const [prompt, setPrompt] = useState("");
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`chat:${chatId}`);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const alive = useRef(true);
   const stick = useRef(true);
   const opened = useRef(false);
   const sawSnapshot = useRef(false);
@@ -71,6 +72,13 @@ export function ChatView({
   filesChangedRef.current = onFilesChanged;
   const unavailableRef = useRef(onUnavailable);
   unavailableRef.current = onUnavailable;
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     setLive(emptyLive());
@@ -164,14 +172,19 @@ export function ChatView({
       setError("Loading chat…");
       return;
     }
+    const sentPrompt = prompt;
     setSending(true);
     setError("");
     try {
       const saved = await uploadPendingAttachments(live.workspace, attachments);
-      setAttachments(composerFilesFromSaved(saved));
-      const messageText = promptText(prompt, saved.length);
-      setPrompt("");
-      setAttachments([]);
+      const messageText = promptText(sentPrompt, saved.length);
+      const draftKey = `chat:${chatId}`;
+      if (!alive.current) {
+        if (readDraft<ComposerAttachment>(draftKey).prompt === sentPrompt) clearDraft(draftKey);
+      } else {
+        setAttachments(composerFilesFromSaved(saved));
+        if (readDraft<ComposerAttachment>(draftKey).prompt === sentPrompt) clearDraftInput();
+      }
       stick.current = true;
       sendCommand({
         type: "prompt",

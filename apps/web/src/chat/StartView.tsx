@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AgentId, AgentOptionChoice, ChatMeta, PromptAttachment } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings, type Session } from "../api.ts";
@@ -6,6 +6,7 @@ import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message, strip } from "../format.ts";
 import { composerFilesFromSaved, promptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
+import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
 import { Composer } from "./Composer.tsx";
 import { startProjectDownload, useProjectDownload } from "./projectDownload.ts";
 
@@ -48,11 +49,11 @@ export function StartView({
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
 }) {
+  const alive = useRef(true);
   const [agent, setAgent] = useState<AgentId | "">(agents[0] || "");
   const [mode, setMode] = useState(() => options[agents[0] || ""]?.modes?.[0]?.id || "");
   const [model, setModel] = useState(() => options[agents[0] || ""]?.models?.[0]?.id || "");
-  const [prompt, setPrompt] = useState("");
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`start:${workspace}`);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<"archive" | "delete" | "">("");
@@ -62,6 +63,13 @@ export function StartView({
   const download = useProjectDownload();
   const downloadHere = Boolean(download && strip(download.workspace) === strip(workspace));
   const creatingZip = Boolean(downloadHere && download?.phase === "creating");
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -88,18 +96,24 @@ export function StartView({
     event.preventDefault();
     const text = promptText(prompt, attachments.length);
     if (!text || busy || !agent) return;
+    const sentPrompt = prompt;
     setBusy(true);
     setError("");
     try {
       const saved = await uploadPendingAttachments(workspace, attachments);
-      setAttachments(composerFilesFromSaved(saved));
-      const messageText = promptText(prompt, saved.length);
+      const messageText = promptText(sentPrompt, saved.length);
+      const draftKey = `start:${workspace}`;
+      if (alive.current) setAttachments(composerFilesFromSaved(saved));
       const chat = await createChat({
         agent,
         mode: modes.length > 0 ? mode : "",
         model: models.length > 0 ? model : "",
         workspace,
       });
+      if (readDraft<ComposerAttachment>(draftKey).prompt === sentPrompt) {
+        if (alive.current) clearDraftInput();
+        else clearDraft(draftKey);
+      }
       onStarted(chat, messageText, saved);
     } catch (err) {
       setError(message(err));

@@ -3,6 +3,7 @@ import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry 
 import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readHomeFile, readRepoFile, renameRepoEntry, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
 import { classifyOpenedPath } from "../chat/filePaths.ts";
 import { DiffView } from "../chat/Diff.tsx";
+import { Markdown } from "../chat/Markdown.tsx";
 import { message } from "../format.ts";
 import {
   IconBranch,
@@ -26,6 +27,7 @@ import {
 import { CodeEditor } from "./CodeEditor.tsx";
 
 type DrawerTab = "files" | "changes";
+type FileViewMode = "code" | "diff" | "preview";
 
 interface TreeNode {
   name: string;
@@ -76,7 +78,7 @@ export function FileManagerDrawer({
   const [draftContent, setDraftContent] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
-  const [previewMode, setPreviewMode] = useState<"code" | "diff">("code");
+  const [previewMode, setPreviewMode] = useState<FileViewMode>("code");
   const [viewOnlyOverride, setViewOnlyOverride] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -156,7 +158,7 @@ export function FileManagerDrawer({
           setPreviewMode("code");
         } else if (autoModeFor.current !== modeKey) {
           autoModeFor.current = modeKey;
-          setPreviewMode(content.oldContent != null && tab === "changes" ? "diff" : "code");
+          setPreviewMode(defaultViewMode(selectedPath, tab, content.oldContent != null));
         }
       })
       .catch((err) => {
@@ -230,8 +232,17 @@ export function FileManagerDrawer({
     });
   }
 
-  function selectFile(filePath: string, mode?: "code") {
-    if (selectedPath === filePath && !externalPath && !expanded && mode !== "code") {
+  function chooseViewMode(mode: FileViewMode) {
+    const path = externalPath || selectedPath;
+    if (path) {
+      autoModeFor.current = `${path}:${tab}`;
+      forceCodePath.current = mode === "code" ? path : null;
+    }
+    setPreviewMode(mode);
+  }
+
+  function selectFile(filePath: string, mode?: "code" | "preview") {
+    if (selectedPath === filePath && !externalPath && !expanded && mode == null) {
       setSelectedPath(null);
       return;
     }
@@ -244,6 +255,9 @@ export function FileManagerDrawer({
     if (mode === "code") {
       forceCodePath.current = filePath;
       setPreviewMode("code");
+    } else if (mode === "preview" || isPlanPath(filePath)) {
+      forceCodePath.current = null;
+      setPreviewMode("preview");
     } else {
       forceCodePath.current = null;
     }
@@ -266,7 +280,7 @@ export function FileManagerDrawer({
         if (cancelled) return;
         setPreview(content);
         setDraftContent(content.content);
-        setPreviewMode("code");
+        setPreviewMode(isPlanPath(externalPath) ? "preview" : "code");
       })
       .catch((err) => {
         if (cancelled) return;
@@ -294,7 +308,7 @@ export function FileManagerDrawer({
       setPreview(null);
       setDraftContent("");
       setPreviewError("");
-      setPreviewMode("code");
+      setPreviewMode(isPlanPath(target.path) ? "preview" : "code");
       setRenamingPath(null);
       setConfirmDeletePath(null);
       setExternalPath(target.path);
@@ -303,7 +317,7 @@ export function FileManagerDrawer({
     }
     setTab("files");
     expandAncestors(target.path);
-    selectFile(target.path, "code");
+    selectFile(target.path, isPlanPath(target.path) ? "preview" : "code");
   }, [open, openRequest, workspace]);
 
   async function refreshAfterGit(clearedPath?: string) {
@@ -978,18 +992,28 @@ export function FileManagerDrawer({
                         <button
                           className={previewMode === "code" ? "mode-pill active" : "mode-pill"}
                           type="button"
-                          onClick={() => setPreviewMode("code")}
+                          onClick={() => chooseViewMode("code")}
                         >
                           File
                         </button>
                         <button
                           className={previewMode === "diff" ? "mode-pill active" : "mode-pill"}
                           type="button"
-                          onClick={() => setPreviewMode("diff")}
+                          onClick={() => chooseViewMode("diff")}
                         >
                           Diff
                         </button>
                       </div>
+                    )}
+                    {viewingPath && isMarkdownPath(viewingPath) && (
+                      <button
+                        className={previewMode === "preview" ? "mode-pill file-preview-toggle active" : "mode-pill file-preview-toggle"}
+                        type="button"
+                        title={previewMode === "preview" ? "Show source" : "Preview markdown"}
+                        onClick={() => chooseViewMode(previewMode === "preview" ? "code" : "preview")}
+                      >
+                        {previewMode === "preview" ? "Source" : "Preview"}
+                      </button>
                     )}
                     <button
                       className="icon-btn"
@@ -1016,6 +1040,10 @@ export function FileManagerDrawer({
                       <p className="muted file-empty">Binary file ({formatSize(preview.size)}) cannot be previewed.</p>
                     ) : previewMode === "diff" && preview.oldContent != null ? (
                       <DiffView path={preview.path} oldText={preview.oldContent} newText={draftContent} />
+                    ) : previewMode === "preview" && isMarkdownPath(preview.path) ? (
+                      <div className="file-markdown">
+                        <Markdown text={draftContent} />
+                      </div>
                     ) : (
                       <CodeEditor
                         filePath={preview.path}
@@ -1296,6 +1324,22 @@ function statusLabel(status: RepoChangeStatus): string {
     case "?":
       return "Untracked";
   }
+}
+
+function isMarkdownPath(filePath: string): boolean {
+  const name = filePath.split("/").pop()?.toLowerCase() ?? "";
+  return name.endsWith(".md") || name.endsWith(".markdown");
+}
+
+function isPlanPath(filePath: string): boolean {
+  const name = filePath.split("/").pop()?.toLowerCase() ?? "";
+  return name.endsWith(".plan.md") || filePath.includes("/.cursor/plans/");
+}
+
+function defaultViewMode(filePath: string, tab: DrawerTab, hasDiff: boolean): FileViewMode {
+  if (isPlanPath(filePath)) return "preview";
+  if (hasDiff && tab === "changes") return "diff";
+  return "code";
 }
 
 function formatSize(bytes: number): string {

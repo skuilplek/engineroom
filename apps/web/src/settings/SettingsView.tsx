@@ -13,6 +13,7 @@ export function SettingsView({
   fileEditorAllowed = true,
   piSetup = false,
   onTheme,
+  onWrap,
   onSaved,
   onSession,
 }: {
@@ -22,7 +23,8 @@ export function SettingsView({
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
   onTheme: (theme: ThemePreference) => void;
-  onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number, commandBlockStyle: CommandBlockStyle) => void;
+  onWrap: (wrapText: boolean) => void;
+  onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number, commandBlockStyle: CommandBlockStyle, wrapText: boolean) => void;
   onSession: (session: Session) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -42,6 +44,7 @@ export function SettingsView({
         permission: next.permission || "ask",
         theme: normalizeTheme(next.theme),
         commandBlockStyle: normalizeCommandBlockStyle(next.commandBlockStyle),
+        wrapText: Boolean(next.wrapText),
         visibleChats: normalizeVisibleChats(next.visibleChats),
       });
     }).catch((err) => setError(message(err)));
@@ -57,13 +60,15 @@ export function SettingsView({
       const savedSettings = await saveSettings(settingsPayload(settings, agents));
       const nextTheme = normalizeTheme(savedSettings.theme);
       const commandBlockStyle = normalizeCommandBlockStyle(savedSettings.commandBlockStyle);
+      const wrapText = Boolean(savedSettings.wrapText);
       setSettings({
         ...savedSettings,
         theme: nextTheme,
         commandBlockStyle,
+        wrapText,
         visibleChats: normalizeVisibleChats(savedSettings.visibleChats),
       });
-      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly), normalizeVisibleChats(savedSettings.visibleChats), commandBlockStyle);
+      onSaved(nextTheme, Boolean(savedSettings.filesReadOnly), normalizeVisibleChats(savedSettings.visibleChats), commandBlockStyle, wrapText);
       setSaved("Saved");
     } catch (err) {
       setError(message(err));
@@ -193,6 +198,19 @@ export function SettingsView({
         />
       </label>
       <p className="muted">Older chats stay collapsed. Use 0 to show every chat.</p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.wrapText}
+          onChange={(event) => {
+            const wrapText = event.target.checked;
+            setSettings({ ...settings, wrapText });
+            onWrap(wrapText);
+          }}
+        />
+        Wrap long lines
+      </label>
+      <p className="muted">Wrap file text, diffs, and code blocks instead of scrolling sideways.</p>
       <h2>Defaults for new chats</h2>
       {piSetup && <PiSetupNotice onReady={onSession} />}
       {agents.length === 0 ? (

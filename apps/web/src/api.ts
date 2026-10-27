@@ -40,6 +40,7 @@ export interface Session {
   fileDownloadOffered?: boolean;
   fileUploadOffered?: boolean;
   filesReadOnly?: boolean;
+  wrapText?: boolean;
   visibleChats?: number;
   cliImport: boolean;
   appName: string;

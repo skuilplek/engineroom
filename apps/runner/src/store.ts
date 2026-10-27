@@ -52,6 +52,7 @@ export async function loadSettings(home: string): Promise<Settings> {
     if (isTheme(parsed.theme)) patch.theme = parsed.theme;
     if (isCommandBlockStyle(parsed.commandBlockStyle)) patch.commandBlockStyle = parsed.commandBlockStyle;
     if (typeof parsed.filesReadOnly === "boolean") patch.filesReadOnly = parsed.filesReadOnly;
+    if (typeof parsed.wrapText === "boolean") patch.wrapText = parsed.wrapText;
     if (typeof parsed.visibleChats === "number") {
       try {
         patch.visibleChats = parseVisibleChats(parsed.visibleChats);

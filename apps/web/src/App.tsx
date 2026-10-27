@@ -14,6 +14,11 @@ import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { onAgent, startAgentSocket, stopAgentSocket } from "./socket.ts";
 import { applyTheme, rememberTheme } from "./theme.ts";
 
+function applyWrap(wrapText: boolean) {
+  if (wrapText) document.documentElement.dataset.wrap = "1";
+  else delete document.documentElement.dataset.wrap;
+}
+
 type View = "chat" | "settings" | "start" | "admin";
 
 export function App() {
@@ -235,7 +240,8 @@ function Shell({
   useEffect(() => {
     if (view === "settings") return;
     if (isTheme(session.theme)) applyTheme(session.theme);
-  }, [view, session.theme]);
+    applyWrap(Boolean(session.wrapText));
+  }, [view, session.theme, session.wrapText]);
 
   useEffect(() => {
     if (strip(target) === strip(session.home)) return;
@@ -392,7 +398,8 @@ function Shell({
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
             onTheme={applyTheme}
-            onSaved={(theme, filesReadOnly, visibleChats, commandBlockStyle) => onSession({ ...session, theme, filesReadOnly, visibleChats, commandBlockStyle })}
+            onWrap={applyWrap}
+            onSaved={(theme, filesReadOnly, visibleChats, commandBlockStyle, wrapText) => onSession({ ...session, theme, filesReadOnly, visibleChats, commandBlockStyle, wrapText })}
             onSession={onSession}
           />
         )}

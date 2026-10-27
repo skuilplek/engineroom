@@ -346,6 +346,11 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(applySettings(applySettings(next, { commandBlockStyle: "window" }), { theme: "light" }).commandBlockStyle, "window");
   assert.throws(() => parseSettingsPatch({ commandBlockStyle: "card" }), /invalid commandBlockStyle/);
   assert.throws(() => parseSettingsPatch({ commandBlockStyle: "" }), /invalid commandBlockStyle/);
+  assert.equal(next.wrapText, false);
+  assert.equal(parseSettingsPatch({ wrapText: true }).wrapText, true);
+  assert.equal(applySettings(next, { wrapText: true }).wrapText, true);
+  assert.equal(applySettings(applySettings(next, { wrapText: true }), { theme: "light" }).wrapText, true);
+  assert.throws(() => parseSettingsPatch({ wrapText: "yes" }), /invalid wrapText/);
 });
 
 test("session cookies are signed and expire", () => {

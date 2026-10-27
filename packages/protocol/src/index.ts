@@ -69,6 +69,7 @@ export interface Settings {
   theme: ThemePreference;
   commandBlockStyle: CommandBlockStyle;
   filesReadOnly?: boolean;
+  wrapText: boolean;
   visibleChats: number;
   lockedBinaries?: AgentId[];
 }
@@ -81,6 +82,7 @@ export interface SettingsPatch {
   theme?: ThemePreference;
   commandBlockStyle?: CommandBlockStyle;
   filesReadOnly?: boolean;
+  wrapText?: boolean;
   visibleChats?: number;
 }
 
@@ -466,6 +468,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   commandBlockStyle: "prompt",
   filesReadOnly: false,
+  wrapText: false,
   visibleChats: 5,
 };
 
@@ -1496,6 +1499,10 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     if (typeof body.filesReadOnly !== "boolean") throw new Error("invalid filesReadOnly");
     patch.filesReadOnly = body.filesReadOnly;
   }
+  if (body.wrapText != null) {
+    if (typeof body.wrapText !== "boolean") throw new Error("invalid wrapText");
+    patch.wrapText = body.wrapText;
+  }
   if (body.visibleChats != null) patch.visibleChats = parseVisibleChats(body.visibleChats);
   if (body.binaries != null) {
     if (typeof body.binaries !== "object") throw new Error("invalid binaries");
@@ -1526,6 +1533,7 @@ export function applySettings(current: Settings, patch: SettingsPatch): Settings
     theme: patch.theme ?? current.theme ?? "dark",
     commandBlockStyle: patch.commandBlockStyle ?? current.commandBlockStyle ?? "prompt",
     filesReadOnly: patch.filesReadOnly ?? current.filesReadOnly ?? false,
+    wrapText: patch.wrapText ?? current.wrapText ?? false,
     visibleChats: patch.visibleChats ?? current.visibleChats ?? 5,
   };
   if (patch.binaries) {
