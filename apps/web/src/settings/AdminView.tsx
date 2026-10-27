@@ -55,6 +55,13 @@ import { message, relativeTime } from "../format.ts";
 
 type AdminTab = "overview" | "agents" | "repositories" | "users";
 
+type FolderBaseline = {
+  directory: string;
+  projectCreate: boolean;
+  projectDownloads: boolean;
+  visibility: FileVisibility;
+};
+
 type OfferSnapshot = {
   flags: Record<string, boolean>;
   rawTerminal: boolean;
@@ -127,6 +134,12 @@ export function AdminView({
   const [fileVisibility, setFileVisibility] = useState<FileVisibility>(() => ({
     ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY),
   }));
+  const [folderBaseline, setFolderBaseline] = useState<FolderBaseline>(() => ({
+    directory: "Sites",
+    projectCreate: session.projectCreate,
+    projectDownloads: Boolean(session.projectDownloads),
+    visibility: { ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY) },
+  }));
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
@@ -165,6 +178,12 @@ export function AdminView({
       if (body.visibility) setFileVisibility(body.visibility);
       if (typeof body.projectCreate === "boolean") setProjectCreate(body.projectCreate);
       if (typeof body.projectDownloads === "boolean") setProjectDownloads(body.projectDownloads);
+      setFolderBaseline((current) => ({
+        directory: body.directory,
+        projectCreate: typeof body.projectCreate === "boolean" ? body.projectCreate : current.projectCreate,
+        projectDownloads: typeof body.projectDownloads === "boolean" ? body.projectDownloads : current.projectDownloads,
+        visibility: body.visibility ? { ...body.visibility } : { ...current.visibility },
+      }));
     }).catch((err) => setError(message(err)));
     listAdminAgents().then((body) => {
       setInventory(body.agents);
@@ -436,11 +455,18 @@ export function AdminView({
     setError("");
     setSaved("");
     try {
-      const savedFolder = await saveRepoDirectory(repoFolder.trim(), fileVisibility, projectCreate, projectDownloads);
-      setRepoFolder(savedFolder.directory);
-      if (savedFolder.visibility) setFileVisibility(savedFolder.visibility);
-      setProjectCreate(savedFolder.projectCreate);
-      setProjectDownloads(savedFolder.projectDownloads);
+      const next = await saveRepoDirectory(repoFolder.trim(), fileVisibility, projectCreate, projectDownloads);
+      const baseline: FolderBaseline = {
+        directory: next.directory,
+        projectCreate: next.projectCreate,
+        projectDownloads: next.projectDownloads,
+        visibility: { ...(next.visibility ?? fileVisibility) },
+      };
+      setRepoFolder(baseline.directory);
+      setFileVisibility(baseline.visibility);
+      setProjectCreate(baseline.projectCreate);
+      setProjectDownloads(baseline.projectDownloads);
+      setFolderBaseline(baseline);
       onAccess();
       setSaved("Repository folder saved");
     } catch (err) {
@@ -449,6 +475,19 @@ export function AdminView({
       setBusy(false);
     }
   }
+
+  function discardFolder() {
+    setRepoFolder(folderBaseline.directory);
+    setProjectCreate(folderBaseline.projectCreate);
+    setProjectDownloads(folderBaseline.projectDownloads);
+    setFileVisibility({ ...folderBaseline.visibility });
+    setError("");
+  }
+
+  const folderDirty = repoFolder !== folderBaseline.directory
+    || projectCreate !== folderBaseline.projectCreate
+    || projectDownloads !== folderBaseline.projectDownloads
+    || !visibilityEqual(fileVisibility, folderBaseline.visibility);
 
   async function addRepo(event: FormEvent) {
     event.preventDefault();
@@ -749,80 +788,175 @@ export function AdminView({
         )}
 
         {tab === "repositories" && (
-          <>
-          <form className="admin-pane" onSubmit={(event) => void saveFolder(event)}>
-            <h2>Repository folder</h2>
-            <p className="muted">Users can start a chat in any git repository inside this folder of their home, including ones they add themselves. The folder is scanned when they sign in. The default is Sites.</p>
-            <label>
-              Folder
-              <input value={repoFolder} onChange={(event) => setRepoFolder(event.target.value)} placeholder="Sites" required />
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={projectCreate} onChange={() => setProjectCreate((value) => !value)} />
-              Allow users to create projects
-            </label>
-            <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off.</p>
-            <label className="check">
-              <input type="checkbox" checked={projectDownloads} onChange={() => setProjectDownloads((value) => !value)} />
-              Allow project downloads
-            </label>
-            <p className="muted">When this is on, a person can download a project as a zip from the new chat page.</p>
-            <h3>File manager visibility</h3>
-            <p className="muted">Choose which repository files are visible in the right-hand file manager. Hidden dotfiles, gitignored files, and .git/ are hidden by default.</p>
-            <div className="admin-checks">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={fileVisibility.showHidden}
-                  onChange={() => setFileVisibility((current) => ({ ...current, showHidden: !current.showHidden }))}
-                />
-                Show hidden files (dotfiles)
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={fileVisibility.showGitignored}
-                  onChange={() => setFileVisibility((current) => ({ ...current, showGitignored: !current.showGitignored }))}
-                />
-                Show gitignored files
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={fileVisibility.showGitDir}
-                  onChange={() => setFileVisibility((current) => ({ ...current, showGitDir: !current.showGitDir }))}
-                />
-                Show .git directory
-              </label>
-            </div>
-            <button className="primary" type="submit" disabled={busy}>Save folder</button>
-          </form>
-          <form className="admin-pane" onSubmit={(event) => void addRepo(event)}>
-            <h2>Repository catalog</h2>
-            <p className="muted">These remotes are what a person can install. Granting one clones it into their repository folder. A checkout that is already there stays available for chats.</p>
-            <div className="repo-admin">
-              {catalog.map((entry) => (
-                <div className="account" key={entry.id}>
-                  <div>
-                    <strong>{entry.name}</strong>
-                    <span>{entry.url}</span>
-                  </div>
-                  <button className="danger" type="button" disabled={busy} onClick={() => void dropRepo(entry.id)}>Remove</button>
+          <div className="repos-page">
+            <header className="repos-head">
+              <div>
+                <h2>Repository folder</h2>
+                <p className="muted">Users can start a chat in any git repository inside this folder of their home, including ones they add themselves. The folder is scanned when they sign in. The default is Sites.</p>
+              </div>
+              <span className="repos-scan">Scanned on sign-in</span>
+            </header>
+            <form id="repo-folder" className="repos-stack" onSubmit={(event) => void saveFolder(event)}>
+              <section className="agents-card">
+                <div className="repos-card-head">
+                  <label htmlFor="repo-folder-input">Folder</label>
+                  <p className="muted" id="repo-folder-help">Home-relative path. The default is Sites.</p>
                 </div>
-              ))}
-              {catalog.length === 0 && <p className="muted">No repositories in the catalog yet.</p>}
-            </div>
-            <label>
-              Directory name
-              <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="widget" required />
-            </label>
-            <label>
-              Git URL
-              <input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://github.com/org/widget.git" required />
-            </label>
-            <button className="primary" type="submit" disabled={busy}>Add repository</button>
-          </form>
-          </>
+                <div className="repos-path">
+                  <span className="repos-path-prefix" aria-hidden="true">~/</span>
+                  <input
+                    id="repo-folder-input"
+                    value={repoFolder}
+                    onChange={(event) => setRepoFolder(event.target.value)}
+                    placeholder="Sites"
+                    aria-describedby="repo-folder-help"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    required
+                  />
+                </div>
+              </section>
+              <section className="repos-access" aria-labelledby="repo-access-heading">
+                <h3 id="repo-access-heading">Access</h3>
+                <div className="repos-toggles">
+                  <div className={projectCreate ? "repos-toggle on" : "repos-toggle"}>
+                    <div className="repos-toggle-copy">
+                      <div className="repos-toggle-title">
+                        <h3>Allow users to create projects</h3>
+                        <span className="repos-state">{projectCreate ? "On" : "Off"}</span>
+                      </div>
+                      <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off.</p>
+                    </div>
+                    <label className="offer-switch">
+                      <input
+                        type="checkbox"
+                        checked={projectCreate}
+                        aria-label="Allow users to create projects"
+                        onChange={() => setProjectCreate((value) => !value)}
+                      />
+                      <span className="switch-track" aria-hidden="true" />
+                    </label>
+                  </div>
+                  <div className={projectDownloads ? "repos-toggle on" : "repos-toggle"}>
+                    <div className="repos-toggle-copy">
+                      <div className="repos-toggle-title">
+                        <h3>Allow project downloads</h3>
+                        <span className="repos-state">{projectDownloads ? "On" : "Off"}</span>
+                      </div>
+                      <p className="muted">When this is on, a person can download a project as a zip from the new chat page.</p>
+                    </div>
+                    <label className="offer-switch">
+                      <input
+                        type="checkbox"
+                        checked={projectDownloads}
+                        aria-label="Allow project downloads"
+                        onChange={() => setProjectDownloads((value) => !value)}
+                      />
+                      <span className="switch-track" aria-hidden="true" />
+                    </label>
+                  </div>
+                </div>
+              </section>
+              <section className="agents-card" aria-labelledby="repo-visibility-heading">
+                <div className="repos-card-head">
+                  <h3 id="repo-visibility-heading">File manager visibility</h3>
+                  <p className="muted">Choose which repository files are visible in the right-hand file manager. Hidden dotfiles, gitignored files, and .git/ are hidden by default.</p>
+                </div>
+                <div className="repos-visibility">
+                  <label className={fileVisibility.showHidden ? "choice-card on" : "choice-card"}>
+                    <input
+                      type="checkbox"
+                      checked={fileVisibility.showHidden}
+                      onChange={() => setFileVisibility((current) => ({ ...current, showHidden: !current.showHidden }))}
+                    />
+                    <span className="choice-copy">
+                      <strong>Show hidden files</strong>
+                      <span className="choice-sub">Dotfiles, including names that start with a dot.</span>
+                    </span>
+                  </label>
+                  <label className={fileVisibility.showGitignored ? "choice-card on" : "choice-card"}>
+                    <input
+                      type="checkbox"
+                      checked={fileVisibility.showGitignored}
+                      onChange={() => setFileVisibility((current) => ({ ...current, showGitignored: !current.showGitignored }))}
+                    />
+                    <span className="choice-copy">
+                      <strong>Show gitignored files</strong>
+                      <span className="choice-sub">Files matched by .gitignore.</span>
+                    </span>
+                  </label>
+                  <label className={fileVisibility.showGitDir ? "choice-card on" : "choice-card"}>
+                    <input
+                      type="checkbox"
+                      checked={fileVisibility.showGitDir}
+                      onChange={() => setFileVisibility((current) => ({ ...current, showGitDir: !current.showGitDir }))}
+                    />
+                    <span className="choice-copy">
+                      <span className="repos-choice-title">
+                        <strong>Show .git directory</strong>
+                        <span className="repos-caution">Caution</span>
+                      </span>
+                      <span className="choice-sub">Shows the Git database, hooks, and logs.</span>
+                    </span>
+                  </label>
+                </div>
+              </section>
+            </form>
+            <section className="agents-card" aria-labelledby="repo-catalog-heading">
+              <div className="agents-section-head">
+                <h3 id="repo-catalog-heading">
+                  Repository catalog
+                  <span className="agents-count">{catalog.length}</span>
+                </h3>
+                <p className="muted">These remotes are what a person can install. Granting one clones it into their repository folder. A checkout that is already there stays available for chats.</p>
+              </div>
+              {catalog.length === 0 ? (
+                <p className="muted">No repositories in the catalog yet.</p>
+              ) : (
+                <div className="repos-table-wrap">
+                  <table className="repos-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Git URL</th>
+                        <th>Remove</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalog.map((entry) => (
+                        <tr key={entry.id}>
+                          <td>{entry.name}</td>
+                          <td>{entry.url}</td>
+                          <td>
+                            <button className="danger" type="button" disabled={busy} onClick={() => void dropRepo(entry.id)}>Remove</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <form className="repos-add" onSubmit={(event) => void addRepo(event)}>
+                <label>
+                  Directory name
+                  <input value={repoName} onChange={(event) => setRepoName(event.target.value)} placeholder="widget" required />
+                </label>
+                <label>
+                  Git URL
+                  <input value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} placeholder="https://github.com/org/widget.git" spellCheck={false} required />
+                </label>
+                <button className="primary" type="submit" disabled={busy}>Add repository</button>
+              </form>
+            </section>
+            <footer className="agents-bar">
+              {folderDirty && <p>Unsaved folder settings.</p>}
+              <div className="row-actions">
+                <button className="ghost" type="button" disabled={!folderDirty || busy} onClick={discardFolder}>Discard</button>
+                <button className="primary" type="submit" form="repo-folder" disabled={busy}>Save folder</button>
+              </div>
+            </footer>
+          </div>
         )}
 
         {tab === "users" && (
@@ -1800,6 +1934,12 @@ function cloneOffered(
     copy[agent] = { modes: [...list.modes], models: [...list.models] };
   }
   return copy;
+}
+
+function visibilityEqual(left: FileVisibility, right: FileVisibility): boolean {
+  return left.showHidden === right.showHidden
+    && left.showGitignored === right.showGitignored
+    && left.showGitDir === right.showGitDir;
 }
 
 function listsEqual(left: string[] = [], right: string[] = []): boolean {
