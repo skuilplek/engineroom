@@ -55,6 +55,21 @@ import { message, relativeTime } from "../format.ts";
 
 type AdminTab = "overview" | "agents" | "repositories" | "users";
 
+type OfferSnapshot = {
+  flags: Record<string, boolean>;
+  rawTerminal: boolean;
+  cliImport: boolean;
+  fileManager: boolean;
+  fileEditor: boolean;
+  fileDownload: boolean;
+  fileUpload: boolean;
+  piInstall: "user" | "global";
+  piAuth: "user" | "shared";
+  piProvider: string;
+  piModel: string;
+  offered: Partial<Record<string, { modes: string[]; models: string[] }>>;
+};
+
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "agents", label: "Agents" },
@@ -83,7 +98,7 @@ export function AdminView({
   onAccess: () => void;
 }) {
   const [flags, setFlags] = useState<Record<string, boolean>>(() => agentFlags(session.agents));
-  const [savedFlags, setSavedFlags] = useState<Record<string, boolean>>(() => agentFlags(session.agents));
+  const [savedOffer, setSavedOffer] = useState<OfferSnapshot>(() => sessionOffer(session));
   const [inventory, setInventory] = useState<AdminAgent[]>([]);
   const [agentTab, setAgentTab] = useState("+");
   const [customLabel, setCustomLabel] = useState("");
@@ -155,7 +170,6 @@ export function AdminView({
       setInventory(body.agents);
       const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
       setFlags(nextFlags);
-      setSavedFlags(nextFlags);
       setRawTerminal(body.rawTerminal);
       setCliImport(body.cliImport);
       setFileManager(body.fileManager);
@@ -166,6 +180,20 @@ export function AdminView({
       setPiAuth(body.piAuth === "shared" ? "shared" : "user");
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
+      setSavedOffer((current) => ({
+        ...current,
+        flags: nextFlags,
+        rawTerminal: body.rawTerminal,
+        cliImport: body.cliImport,
+        fileManager: body.fileManager,
+        fileEditor: body.fileEditor ?? true,
+        fileDownload: body.fileDownload ?? false,
+        fileUpload: body.fileUpload ?? false,
+        piInstall: body.piInstall === "global" ? "global" : "user",
+        piAuth: body.piAuth === "shared" ? "shared" : "user",
+        piProvider: body.piProvider ?? "",
+        piModel: body.piModel ?? "",
+      }));
       const first = body.agents.find((agent) => agent.available);
       setAgentTab(first?.id ?? "+");
     }).catch((err) => setError(message(err)));
@@ -176,6 +204,7 @@ export function AdminView({
         if (options[agent]) draft[agent] = options[agent].offered;
       }
       setOfferedDraft(draft);
+      setSavedOffer((current) => ({ ...current, offered: cloneOffered(draft) }));
     }).catch((err) => setError(message(err)));
   }, []);
 
@@ -193,13 +222,22 @@ export function AdminView({
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
     setFlags(nextFlags);
-    setSavedFlags(nextFlags);
     setRawTerminal(body.rawTerminal);
     setCliImport(body.cliImport);
     if (typeof body.fileManager === "boolean") setFileManager(body.fileManager);
     if (typeof body.fileEditor === "boolean") setFileEditor(body.fileEditor);
     if (typeof body.fileDownload === "boolean") setFileDownload(body.fileDownload);
     if (typeof body.fileUpload === "boolean") setFileUpload(body.fileUpload);
+    setSavedOffer((current) => ({
+      ...current,
+      flags: nextFlags,
+      rawTerminal: body.rawTerminal,
+      cliImport: body.cliImport,
+      fileManager: typeof body.fileManager === "boolean" ? body.fileManager : current.fileManager,
+      fileEditor: typeof body.fileEditor === "boolean" ? body.fileEditor : current.fileEditor,
+      fileDownload: typeof body.fileDownload === "boolean" ? body.fileDownload : current.fileDownload,
+      fileUpload: typeof body.fileUpload === "boolean" ? body.fileUpload : current.fileUpload,
+    }));
     if (select) setAgentTab(select);
   }
 
@@ -242,11 +280,35 @@ export function AdminView({
         savedAgents.fileDownload ?? fileDownload,
         savedAgents.fileUpload ?? fileUpload,
       );
+      const provider = piProvider.trim();
+      const model = piModel.trim();
+      let offered = offeredDraft;
       if (Object.keys(offeredDraft).length > 0) {
         const savedOptions = await saveAgentOptions(offeredDraft);
         setAgentOptions(savedOptions);
+        offered = {};
+        for (const agent of Object.keys(savedOptions) as AgentId[]) {
+          const record = savedOptions[agent];
+          if (record) offered[agent] = { modes: [...record.offered.modes], models: [...record.offered.models] };
+        }
+        setOfferedDraft(offered);
       }
-      setSavedFlags(flags);
+      setPiProvider(provider);
+      setPiModel(model);
+      setSavedOffer({
+        flags,
+        rawTerminal: savedAgents.rawTerminal ?? rawTerminal,
+        cliImport: savedAgents.cliImport ?? cliImport,
+        fileManager: savedAgents.fileManager ?? fileManager,
+        fileEditor: savedAgents.fileEditor ?? fileEditor,
+        fileDownload: savedAgents.fileDownload ?? fileDownload,
+        fileUpload: savedAgents.fileUpload ?? fileUpload,
+        piInstall: savedAgents.piInstall === "global" ? "global" : piInstall,
+        piAuth: savedAgents.piAuth === "shared" ? "shared" : piAuth,
+        piProvider: savedAgents.piProvider ?? provider,
+        piModel: savedAgents.piModel ?? model,
+        offered: cloneOffered(offered),
+      });
       setInventory((current) => current.map((agent) => ({ ...agent, enabled: Boolean(flags[agent.id]) })));
       onAccess();
       setSaved("Agents saved");
@@ -256,6 +318,45 @@ export function AdminView({
       setBusy(false);
     }
   }
+
+  function discardOffer() {
+    setFlags(savedOffer.flags);
+    setRawTerminal(savedOffer.rawTerminal);
+    setCliImport(savedOffer.cliImport);
+    setFileManager(savedOffer.fileManager);
+    setFileEditor(savedOffer.fileEditor);
+    setFileDownload(savedOffer.fileDownload);
+    setFileUpload(savedOffer.fileUpload);
+    setPiInstall(savedOffer.piInstall);
+    setPiAuth(savedOffer.piAuth);
+    setPiProvider(savedOffer.piProvider);
+    setPiModel(savedOffer.piModel);
+    setOfferedDraft(cloneOffered(savedOffer.offered));
+    setError("");
+  }
+
+  function clearOfferedModels(agent: AgentId, ids: string[]) {
+    const drop = new Set(ids);
+    setOfferedDraft((current) => {
+      const list = current[agent] ?? { modes: [], models: [] };
+      return { ...current, [agent]: { ...list, models: list.models.filter((item) => !drop.has(item)) } };
+    });
+  }
+
+  const offerDirty = !offersEqual({
+    flags,
+    rawTerminal,
+    cliImport,
+    fileManager,
+    fileEditor,
+    fileDownload,
+    fileUpload,
+    piInstall,
+    piAuth,
+    piProvider,
+    piModel,
+    offered: offeredDraft,
+  }, savedOffer);
 
   function toggleOffered(agent: AgentId, kind: "modes" | "models", id: string) {
     setOfferedDraft((current) => {
@@ -318,7 +419,9 @@ export function AdminView({
     try {
       const record = await probeAgentOptions(agent);
       setAgentOptions((current) => ({ ...current, [agent]: record }));
-      setOfferedDraft((current) => ({ ...current, [agent]: record.offered }));
+      const offered = { modes: [...record.offered.modes], models: [...record.offered.models] };
+      setOfferedDraft((current) => ({ ...current, [agent]: offered }));
+      setSavedOffer((current) => ({ ...current, offered: { ...current.offered, [agent]: { modes: [...offered.modes], models: [...offered.models] } } }));
       setSaved(`Loaded ${agentLabel(agent, inventory)} modes and models`);
     } catch (err) {
       setError(message(err));
@@ -466,79 +569,98 @@ export function AdminView({
         )}
 
         {tab === "agents" && (
-          <div className="admin-pane">
-            <h2>Available agents</h2>
-            <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Each tab is an agent whose command is installed. Load an agent, then choose the modes and models people can use. Nothing is offered until you save a selection.</p>
-            <form id="agent-offer" onSubmit={(event) => void saveAgentList(event)}>
-              <div className="admin-checks">
-                <label className="check">
-                  <input type="checkbox" checked={rawTerminal} onChange={() => setRawTerminal((value) => !value)} />
-                  Raw terminal
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={cliImport} onChange={() => setCliImport((value) => !value)} />
-                  Import CLI sessions
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={fileManager} onChange={() => setFileManager((value) => !value)} />
-                  Repository file manager
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={fileEditor} onChange={() => setFileEditor((value) => !value)} />
-                  File editor
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={fileDownload} onChange={() => setFileDownload((value) => !value)} />
-                  File download
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={fileUpload} onChange={() => setFileUpload((value) => !value)} />
-                  File upload
-                </label>
-              </div>
-              <div className="agent-tabs" role="tablist" aria-label="Installed agents" onKeyDown={onAgentTabKey}>
-                {installed.map((agent) => (
+          <div className="agents-page">
+            <form id="agent-offer" className="agents-stack" onSubmit={(event) => void saveAgentList(event)}>
+              <section className="agents-card">
+                <div className="agents-card-head">
+                  <h2>Available agents</h2>
+                  <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Each tab is an agent whose command is installed. Load an agent, then choose the modes and models people can use. Nothing is offered until you save a selection.</p>
+                </div>
+                <div className="agents-privileges">
+                  <span className="eyebrow">Global tooling</span>
+                  <div className="privilege-grid">
+                    <label className={rawTerminal ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={rawTerminal} onChange={() => setRawTerminal((value) => !value)} />
+                      Raw terminal
+                    </label>
+                    <label className={cliImport ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={cliImport} onChange={() => setCliImport((value) => !value)} />
+                      Import CLI sessions
+                    </label>
+                    <label className={fileManager ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={fileManager} onChange={() => setFileManager((value) => !value)} />
+                      Repository file manager
+                    </label>
+                    <label className={fileEditor ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={fileEditor} onChange={() => setFileEditor((value) => !value)} />
+                      File editor
+                    </label>
+                    <label className={fileDownload ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={fileDownload} onChange={() => setFileDownload((value) => !value)} />
+                      File download
+                    </label>
+                    <label className={fileUpload ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={fileUpload} onChange={() => setFileUpload((value) => !value)} />
+                      File upload
+                    </label>
+                  </div>
+                </div>
+              </section>
+              <div className="agent-switcher">
+                <div className="agent-tabs" role="tablist" aria-label="Installed agents" onKeyDown={onAgentTabKey}>
+                  {installed.map((agent) => (
+                    <button
+                      className={agentTab === agent.id ? "admin-tab active" : "admin-tab"}
+                      id={`agent-tab-${agent.id}`}
+                      key={agent.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={agentTab === agent.id}
+                      tabIndex={agentTab === agent.id ? 0 : -1}
+                      onClick={() => setAgentTab(agent.id)}
+                    >
+                      <span className="agent-tab-label">
+                        <span className={agent.available ? "dot" : "dot dot-idle"} aria-hidden="true" />
+                        {agent.label}
+                      </span>
+                    </button>
+                  ))}
                   <button
-                    className={agentTab === agent.id ? "admin-tab active" : "admin-tab"}
-                    id={`agent-tab-${agent.id}`}
-                    key={agent.id}
+                    className={agentTab === "+" ? "admin-tab agent-add active" : "admin-tab agent-add"}
+                    id="agent-tab-add"
                     type="button"
                     role="tab"
-                    aria-selected={agentTab === agent.id}
-                    tabIndex={agentTab === agent.id ? 0 : -1}
-                    onClick={() => setAgentTab(agent.id)}
+                    aria-selected={agentTab === "+"}
+                    tabIndex={agentTab === "+" ? 0 : -1}
+                    onClick={() => setAgentTab("+")}
                   >
-                    {agent.label}
+                    + Add agent
                   </button>
-                ))}
-                <button
-                  className={agentTab === "+" ? "admin-tab active" : "admin-tab"}
-                  id="agent-tab-add"
-                  type="button"
-                  role="tab"
-                  aria-selected={agentTab === "+"}
-                  aria-label="Add agent"
-                  tabIndex={agentTab === "+" ? 0 : -1}
-                  onClick={() => setAgentTab("+")}
-                >
-                  +
-                </button>
+                </div>
+                {selectedAgent && (
+                  <label className="offer-switch">
+                    <span>Offer {selectedAgent.label}</span>
+                    <input type="checkbox" checked={Boolean(flags[selectedAgent.id])} onChange={() => toggle(selectedAgent.id)} />
+                    <span className="switch-track" aria-hidden="true" />
+                  </label>
+                )}
               </div>
               {installed.length === 0 && agentTab !== "+" && <p className="muted">No agents are installed on this machine.</p>}
               {selectedAgent && (
-                <div className="option-block" role="tabpanel" aria-labelledby={`agent-tab-${selectedAgent.id}`}>
-                  <label className="check">
-                    <input type="checkbox" checked={Boolean(flags[selectedAgent.id])} onChange={() => toggle(selectedAgent.id)} />
-                    Offer {selectedAgent.label}
-                  </label>
-                  {selectedAgent.builtin && !selectedAgent.available && (
-                    <p className="muted">This command was not found in the system path. Chats still look for {selectedAgent.binary} on that person's PATH, including ~/.local/bin.</p>
-                  )}
-                  {selectedAgent.builtin ? null : (
-                    <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
+                <div className="agents-stack" role="tabpanel" aria-labelledby={`agent-tab-${selectedAgent.id}`}>
+                  {((selectedAgent.builtin && !selectedAgent.available) || !selectedAgent.builtin) && (
+                    <section className="agents-card">
+                      {selectedAgent.builtin && !selectedAgent.available && (
+                        <p className="muted">This command was not found in the system path. Chats still look for {selectedAgent.binary} on that person's PATH, including ~/.local/bin.</p>
+                      )}
+                      {!selectedAgent.builtin && (
+                        <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
+                      )}
+                    </section>
                   )}
                   {selectedAgent.id === "pi" && (
-                    <>
+                    <section className="agents-card">
+                      <h3>Pi setup</h3>
                       <label>
                         Install
                         <select aria-label="Pi install" value={piInstall} onChange={(event) => setPiInstall(event.target.value as "user" | "global")}>
@@ -569,22 +691,22 @@ export function AdminView({
                       </label>
                       <p className="muted">Provider and model are written to Pi's settings.json when setup runs. Saving here stores them. Run setup again to apply a later change.</p>
                       <p className="muted">This list is the models this Pi login can call. Nothing is offered until you check it and save.</p>
-                    </>
+                    </section>
                   )}
                   <AgentOptions
+                    key={selectedAgent.id}
                     label={selectedAgent.label}
                     config={agentOptions[selectedAgent.id]}
                     draft={offeredDraft[selectedAgent.id] ?? { modes: [], models: [] }}
-                    enabled={Boolean(savedFlags[selectedAgent.id])}
-                    busy={busy}
-                    onLoad={() => void loadOptions(selectedAgent.id)}
+                    enabled={Boolean(savedOffer.flags[selectedAgent.id])}
                     onToggle={(kind, id) => toggleOffered(selectedAgent.id, kind, id)}
+                    onClearModels={(ids) => clearOfferedModels(selectedAgent.id, ids)}
                   />
                 </div>
               )}
             </form>
             {agentTab === "+" && (
-              <form onSubmit={(event) => void addAgent(event)}>
+              <form className="agents-card" onSubmit={(event) => void addAgent(event)}>
                 <h3>Add an agent</h3>
                 <p className="muted">Give it a display name and the command to launch with acp. Use a command name such as codex, or an absolute path. Built-in agents already have their own tabs.</p>
                 <label>
@@ -611,7 +733,18 @@ export function AdminView({
                 )}
               </form>
             )}
-            <button className="primary" type="submit" form="agent-offer" disabled={busy}>Save agents</button>
+            <footer className="agents-bar">
+              {offerDirty && <p>Unsaved changes. Nothing is offered until you save.</p>}
+              <div className="row-actions">
+                <button className="ghost" type="button" disabled={!offerDirty || busy} onClick={discardOffer}>Discard</button>
+                {selectedAgent && savedOffer.flags[selectedAgent.id] && (
+                  <button className="ghost" type="button" disabled={busy} onClick={() => void loadOptions(selectedAgent.id)}>
+                    Load modes and models
+                  </button>
+                )}
+                <button className="primary" type="submit" form="agent-offer" disabled={busy}>Save agents</button>
+              </div>
+            </footer>
           </div>
         )}
 
@@ -1514,51 +1647,122 @@ function AgentOptions({
   config,
   draft,
   enabled,
-  busy,
-  onLoad,
   onToggle,
+  onClearModels,
 }: {
   label: string;
   config: AgentOptionsState[AgentId];
   draft: { modes: string[]; models: string[] };
   enabled: boolean;
-  busy: boolean;
-  onLoad: () => void;
   onToggle: (kind: "modes" | "models", id: string) => void;
+  onClearModels: (ids: string[]) => void;
 }) {
+  const [filter, setFilter] = useState("");
+  const modes = config?.discovered.modes ?? [];
+  const models = config?.discovered.models ?? [];
+  const query = filter.trim().toLowerCase();
+  const visible = models.filter((model) => {
+    if (!query) return true;
+    return model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
+  });
+  const groups = groupModels(visible);
+  const selectedCount = models.filter((model) => draft.models.includes(model.id)).length;
+  const visibleSelected = visible.filter((model) => draft.models.includes(model.id));
+
+  if (!config) {
+    return (
+      <section className="agents-card">
+        <h3>Modes and models</h3>
+        <p className="muted">
+          {enabled
+            ? `Load modes and models to choose what ${label} can use.`
+            : `Save ${label} before loading its modes and models.`}
+        </p>
+      </section>
+    );
+  }
+  if (modes.length === 0 && models.length === 0) {
+    return (
+      <section className="agents-card">
+        <h3>Modes and models</h3>
+        <p className="muted">This agent did not report any modes or models.</p>
+      </section>
+    );
+  }
   return (
     <>
-      {enabled ? (
-        <button className="ghost" type="button" disabled={busy} onClick={onLoad}>
-          Load modes and models
-        </button>
-      ) : (
-        <p className="muted">Save {label} before loading its modes and models.</p>
+      {modes.length > 0 && (
+        <section className="agents-card" aria-label="Execution modes">
+          <div className="agents-section-head">
+            <h3>Execution modes</h3>
+            <p className="muted">Choose the modes allowed for {label}.</p>
+          </div>
+          <div className="mode-grid">
+            {modes.map((mode) => (
+              <label className={draft.modes.includes(mode.id) ? "choice-card on" : "choice-card"} key={mode.id}>
+                <input type="checkbox" checked={draft.modes.includes(mode.id)} onChange={() => onToggle("modes", mode.id)} />
+                <span className="choice-copy">
+                  <strong>{mode.name}</strong>
+                  {mode.description && <span className="choice-sub">{mode.description}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </section>
       )}
-      {config && config.discovered.modes.length === 0 && config.discovered.models.length === 0 && (
-        <p className="muted">This agent did not report any modes or models.</p>
-      )}
-      {config && config.discovered.modes.length > 0 && (
-        <div className="admin-checks">
-          <span className="muted">Modes</span>
-          {config.discovered.modes.map((mode) => (
-            <label className="check" key={mode.id}>
-              <input type="checkbox" checked={draft.modes.includes(mode.id)} onChange={() => onToggle("modes", mode.id)} />
-              {mode.name}
-            </label>
-          ))}
-        </div>
-      )}
-      {config && config.discovered.models.length > 0 && (
-        <div className="admin-checks">
-          <span className="muted">Models</span>
-          {config.discovered.models.map((model) => (
-            <label className="check" key={model.id}>
-              <input type="checkbox" checked={draft.models.includes(model.id)} onChange={() => onToggle("models", model.id)} />
-              {model.name}
-            </label>
-          ))}
-        </div>
+      {models.length > 0 && (
+        <section className="agents-card" aria-label="Models">
+          <div className="model-head">
+            <div className="agents-section-head">
+              <h3>
+                Models
+                <span className="agents-count">{selectedCount} selected</span>
+              </h3>
+              <p className="muted">Choose which models {label} can use.</p>
+            </div>
+            <div className="model-tools">
+              <input
+                aria-label="Filter models"
+                placeholder="Filter models"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.preventDefault();
+                }}
+              />
+              <button
+                className="ghost"
+                type="button"
+                disabled={visibleSelected.length === 0}
+                onClick={() => onClearModels(visibleSelected.map((model) => model.id))}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          {visible.length === 0 ? (
+            <p className="muted">No models match that filter.</p>
+          ) : (
+            <div className="model-groups">
+              {groups.map((group) => (
+                <div className="model-group" key={group.label || "all"}>
+                  {group.label && <h4 className="model-group-label">{group.label}</h4>}
+                  <div className="model-grid">
+                    {group.models.map((model) => (
+                      <label className={draft.models.includes(model.id) ? "choice-card on" : "choice-card"} key={model.id}>
+                        <input type="checkbox" checked={draft.models.includes(model.id)} onChange={() => onToggle("models", model.id)} />
+                        <span className="choice-copy">
+                          <strong>{model.name}</strong>
+                          {model.description && <span className="choice-sub">{model.description}</span>}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
     </>
   );
@@ -1568,4 +1772,95 @@ function agentFlags(agents: AgentId[]): Record<string, boolean> {
   const flags: Record<string, boolean> = {};
   for (const agent of AGENTS) flags[agent] = agents.includes(agent);
   return flags;
+}
+
+function sessionOffer(session: Session): OfferSnapshot {
+  return {
+    flags: agentFlags(session.agents),
+    rawTerminal: session.rawTerminal,
+    cliImport: session.cliImport,
+    fileManager: session.fileManagerOffered ?? false,
+    fileEditor: session.fileEditor ?? true,
+    fileDownload: session.fileDownloadOffered ?? false,
+    fileUpload: session.fileUploadOffered ?? false,
+    piInstall: "user",
+    piAuth: "user",
+    piProvider: "",
+    piModel: "",
+    offered: {},
+  };
+}
+
+function cloneOffered(
+  offered: Partial<Record<string, { modes: string[]; models: string[] }>>,
+): Partial<Record<string, { modes: string[]; models: string[] }>> {
+  const copy: Partial<Record<string, { modes: string[]; models: string[] }>> = {};
+  for (const [agent, list] of Object.entries(offered)) {
+    if (!list) continue;
+    copy[agent] = { modes: [...list.modes], models: [...list.models] };
+  }
+  return copy;
+}
+
+function listsEqual(left: string[] = [], right: string[] = []): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(right);
+  return left.every((item) => seen.has(item));
+}
+
+function flagsEqual(left: Record<string, boolean>, right: Record<string, boolean>): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (Boolean(left[key]) !== Boolean(right[key])) return false;
+  }
+  return true;
+}
+
+function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
+  if (!flagsEqual(left.flags, right.flags)) return false;
+  if (left.rawTerminal !== right.rawTerminal) return false;
+  if (left.cliImport !== right.cliImport) return false;
+  if (left.fileManager !== right.fileManager) return false;
+  if (left.fileEditor !== right.fileEditor) return false;
+  if (left.fileDownload !== right.fileDownload) return false;
+  if (left.fileUpload !== right.fileUpload) return false;
+  if (left.piInstall !== right.piInstall) return false;
+  if (left.piAuth !== right.piAuth) return false;
+  if (left.piProvider !== right.piProvider) return false;
+  if (left.piModel !== right.piModel) return false;
+  const keys = new Set([...Object.keys(left.offered), ...Object.keys(right.offered)]);
+  for (const key of keys) {
+    const a = left.offered[key] ?? { modes: [], models: [] };
+    const b = right.offered[key] ?? { modes: [], models: [] };
+    if (!listsEqual(a.modes, b.modes) || !listsEqual(a.models, b.models)) return false;
+  }
+  return true;
+}
+
+const MODEL_FAMILIES = ["claude", "gpt", "gemini", "grok", "composer", "kimi", "glm"];
+
+function modelGroup(id: string): string {
+  const slash = id.indexOf("/");
+  if (slash > 0) return id.slice(0, slash);
+  const lower = id.toLowerCase();
+  for (const family of MODEL_FAMILIES) {
+    if (lower === family || lower.startsWith(`${family}-`)) return family;
+  }
+  const dash = lower.indexOf("-");
+  return dash > 0 ? lower.slice(0, dash) : "";
+}
+
+function groupModels(models: AgentOptionChoice[]): { label: string; models: AgentOptionChoice[] }[] {
+  const order: string[] = [];
+  const buckets = new Map<string, AgentOptionChoice[]>();
+  for (const model of models) {
+    const key = modelGroup(model.id);
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+    }
+    buckets.get(key)!.push(model);
+  }
+  if (buckets.size <= 1) return [{ label: "", models }];
+  return order.map((key) => ({ label: key || "Other", models: buckets.get(key) ?? [] }));
 }

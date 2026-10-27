@@ -6,3 +6,4 @@ deploy/pam/engineroom-pam-auth
 deploy/pam/engineroom-peercred
 apps/web/dist/
 .DS_Store
+.engineroom/
