@@ -13,6 +13,7 @@ import {
   parsePiValue,
   type AgentDefinition,
   type AgentId,
+  type AgentName,
   type PiAuth,
 } from "@engineroom/protocol";
 import { findCommand, SYSTEM_COMMAND_DIRS } from "./overview.ts";
@@ -30,6 +31,8 @@ export interface ListedAgent extends AgentDefinition {
   enabled: boolean;
   allowOverride: boolean;
   pathSource: "detected" | "manual" | null;
+  /** Set when the agent is contributed by an enabled site package. */
+  packageName?: string;
 }
 
 export interface StoredAgentBinary {
@@ -303,13 +306,21 @@ export function removeCustomAgent(file: string, id: string): CustomAgent[] {
   return next;
 }
 
-export async function listAgents(file: string, dirs: string[] = SYSTEM_COMMAND_DIRS, home?: string): Promise<ListedAgent[]> {
+export async function listAgents(
+  file: string,
+  dirs: string[] = SYSTEM_COMMAND_DIRS,
+  home?: string,
+  extras: Array<AgentDefinition & { packageName: string }> = [],
+): Promise<ListedAgent[]> {
   const flags = loadAgentFlags(file);
   const saved = loadAgentBinaries(file);
   const custom = loadCustomAgents(file);
+  const taken = new Set<string>([...AGENTS, ...custom.map((agent) => agent.id)]);
+  const packaged = extras.filter((agent) => !taken.has(agent.id) && !isBuiltinAgent(agent.id));
   const specs = [
-    ...AGENT_CATALOG.map((agent) => ({ ...agent, builtin: true })),
-    ...custom.map((agent) => ({ id: agent.id, label: agent.label, binary: agent.binary, builtin: false })),
+    ...AGENT_CATALOG.map((agent) => ({ ...agent, builtin: true, packageName: undefined as string | undefined })),
+    ...custom.map((agent) => ({ id: agent.id, label: agent.label, binary: agent.binary, builtin: false, packageName: undefined as string | undefined })),
+    ...packaged.map((agent) => ({ id: agent.id, label: agent.label, binary: agent.binary, builtin: false, packageName: agent.packageName })),
   ];
   const found = await Promise.all(specs.map((spec) => findCommand(spec.binary, dirs)));
   return specs.map((spec, index) => {
@@ -321,9 +332,10 @@ export async function listAgents(file: string, dirs: string[] = SYSTEM_COMMAND_D
       ...spec,
       available: Boolean(full),
       path: full || null,
-      enabled: Boolean(flags[spec.id]),
+      enabled: spec.packageName ? true : Boolean(flags[spec.id]),
       allowOverride: Boolean(record?.allowOverride),
       pathSource: record?.path ? record.source : serverProbe ? "detected" : null,
+      ...(spec.packageName ? { packageName: spec.packageName } : {}),
     };
   });
 }
@@ -478,10 +490,15 @@ export function withResolvedCommands(listed: ListedAgent[], resolved: ReadonlyMa
 }
 
 export function offeredAgentIds(flags: AgentFlags, listed: ListedAgent[]): AgentId[] {
-  const availableCustom = new Set(listed.filter((agent) => !agent.builtin && agent.available).map((agent) => agent.id));
+  const availableCustom = new Set(
+    listed.filter((agent) => !agent.builtin && agent.available && !agent.packageName).map((agent) => agent.id),
+  );
+  const byId = new Map(listed.map((agent) => [agent.id, agent]));
   return listed
     .map((agent) => agent.id)
     .filter((id) => {
+      const agent = byId.get(id);
+      if (agent?.packageName) return agent.enabled && agent.available;
       if (!flags[id]) return false;
       if (isBuiltinAgent(id)) return true;
       return availableCustom.has(id);
@@ -565,8 +582,8 @@ function quietPiValue(value: string): string {
   return /^[A-Za-z0-9._:/-]*$/.test(value) && value.length <= 200 ? value : "";
 }
 
-export function namesFor(ids: AgentId[], file: string): { id: string; label: string }[] {
-  const custom = loadCustomAgents(file);
+export function namesFor(ids: AgentId[], file: string, extras: AgentName[] = []): { id: string; label: string }[] {
+  const custom = [...loadCustomAgents(file), ...extras];
   return ids.map((id) => ({ id, label: agentLabel(id, custom) }));
 }
 

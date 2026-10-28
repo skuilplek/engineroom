@@ -35,6 +35,7 @@ import { gitClone } from "./clone.ts";
 import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
 import { loadEnv, saveEnv } from "./envfile.ts";
+import { appendActionError, clearActionErrors, deleteActionError, listActionErrors } from "./errors.ts";
 import { TranscriptWriter } from "./persist.ts";
 import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
 import { PtyManager, ptyCommand, type PtyProcess } from "./pty.ts";
@@ -64,12 +65,22 @@ import {
   detectRepositories,
   deleteRepository,
   listRepositories,
+  dataRoot,
   loadSettings,
   saveSettings,
   setEnabledRepositories,
   setRepositoryArchived,
   updateChat,
 } from "./store.ts";
+import {
+  installExtension,
+  listExtensions,
+  readExtensionDoc,
+  readScopedTheme,
+  removeExtension,
+  setExtensionEnabled,
+  updateExtension,
+} from "@engineroom/protocol/extensions";
 
 export interface RunnerOptions {
   home: string;
@@ -99,12 +110,42 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   const home = options.home;
   const drivers = options.drivers ?? defaultDrivers();
   const acp = options.acp === undefined ? (options.drivers ? null : new AcpManager()) : options.acp;
-  let agentCatalog: AgentDefinition[] = await loadAgentCatalog(home);
-  acp?.setCatalog?.(agentCatalog);
+  let agentCatalog: AgentDefinition[] = [];
+  await refreshCatalog(await loadAgentCatalog(home));
 
   function driverFor(agent: string): AgentDriver | undefined {
     if (!isBuiltinAgent(agent)) return undefined;
     return drivers[agent];
+  }
+
+  async function refreshCatalog(base?: AgentDefinition[]) {
+    const saved = base ?? (await loadAgentCatalog(home));
+    const extras = await userPackageAgents();
+    const merged = [...saved];
+    const seen = new Set(merged.map((agent) => agent.id));
+    for (const agent of extras) {
+      if (seen.has(agent.id) || isBuiltinAgent(agent.id)) continue;
+      merged.push(agent);
+      seen.add(agent.id);
+    }
+    agentCatalog = merged;
+    acp?.setCatalog?.(agentCatalog);
+  }
+
+  async function userPackageAgents(): Promise<AgentDefinition[]> {
+    const records = await listExtensions(dataRoot(home), "user");
+    const agents: AgentDefinition[] = [];
+    for (const record of records) {
+      if (!record.enabled || record.error) continue;
+      for (const agent of record.agents) agents.push({ id: agent.id, label: agent.label, binary: agent.binary });
+    }
+    return agents;
+  }
+
+  async function allowsAgent(agent: string, allowed: readonly string[]): Promise<boolean> {
+    if (allowed.includes(agent)) return true;
+    const extras = await userPackageAgents();
+    return extras.some((item) => item.id === agent);
   }
   const pty = options.pty ?? new PtyManager();
   const runs = new Map<string, RunState>();
@@ -340,7 +381,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         const policy = await loadPolicy(home);
         const settings = await loadSettings(home);
         const agent = request.agent ?? settings.defaultAgent;
-        if (!policy.agents.includes(agent)) throw new Error("invalid agent");
+        if (!(await allowsAgent(agent, policy.agents))) throw new Error("invalid agent");
         return createChat(home, request);
       }
       case "set_mode":
@@ -367,6 +408,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return readGitIdentity(home);
       case "git_identity_set":
         return writeGitIdentity(home, request.name, request.email);
+      case "list_errors":
+        return listActionErrors(home);
+      case "append_error":
+        return appendActionError(home, request.action, request.message);
+      case "delete_error":
+        await deleteActionError(home, request.errorId);
+        return { ok: true };
+      case "clear_errors":
+        await clearActionErrors(home);
+        return { ok: true };
       case "git_status":
         return gitStatus(home, request.workspace);
       case "git_init":
@@ -400,10 +451,39 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "import_session":
         return importSession(request.agent, request.agentSessionId, request.workspace);
       case "put_agent_catalog": {
-        agentCatalog = await saveAgentCatalog(home, request.agents);
-        acp?.setCatalog?.(agentCatalog);
+        await refreshCatalog(await saveAgentCatalog(home, request.agents));
         return { ok: true };
       }
+      case "list_extensions":
+        return { packages: await listExtensions(dataRoot(home), "user") };
+      case "install_extension": {
+        const installed = await installExtension(dataRoot(home), "user", request.source);
+        await refreshCatalog();
+        return installed;
+      }
+      case "update_extension": {
+        const updated = await updateExtension(dataRoot(home), "user", request.name);
+        await refreshCatalog();
+        return updated;
+      }
+      case "remove_extension": {
+        await removeExtension(dataRoot(home), request.name);
+        await refreshCatalog();
+        return { ok: true };
+      }
+      case "set_extension_enabled": {
+        const saved = await setExtensionEnabled(dataRoot(home), "user", request.name, request.enabled, {
+          themes: request.reservedThemes ?? [],
+          docs: request.reservedDocs ?? [],
+          agents: request.reservedAgents ?? [],
+        });
+        await refreshCatalog();
+        return saved;
+      }
+      case "read_extension_theme":
+        return { css: await readScopedTheme(dataRoot(home), "user", request.themeId) };
+      case "read_extension_doc":
+        return readExtensionDoc(dataRoot(home), "user", request.name, request.docId);
       case "list_repo_files":
         return listRepositoryFiles(home, request.workspace, request.visibility);
       case "read_repo_file":
@@ -655,7 +735,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       });
       publishEvent({ type: "turn_start" });
       const policy = await loadPolicy(home);
-      if (!policy.agents.includes(chat.agent)) throw new Error("invalid agent");
+      if (!(await allowsAgent(chat.agent, policy.agents))) throw new Error("invalid agent");
       const settings = withLocks(await loadSettings(home), policy, home);
       const ctx: DriverContext = {
         home,
@@ -805,7 +885,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   async function importSession(agent: AgentId | undefined, agentSessionId: string, workspace?: string) {
     const chosen = agent ?? "cursor";
     const policy = await loadPolicy(home);
-    if (!policy.agents.includes(chosen)) throw new Error("invalid agent");
+    if (!(await allowsAgent(chosen, policy.agents))) throw new Error("invalid agent");
     const chat = await createChat(home, { agent: chosen, workspace, title: "Imported chat" });
     return updateChat(home, chat.id, { agentSessionId, needsResync: true });
   }

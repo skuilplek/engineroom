@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { isTheme, type ChatMeta, type PromptAttachment, type RepositoryEntry } from "@engineroom/protocol";
+import { isThemeId, type ChatMeta, type PromptAttachment, type RepositoryEntry } from "@engineroom/protocol";
 import { createRepository, deleteRepository, listChats, listRepositories, login, logout, me, setRepositoryArchived, type Session } from "./api.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
@@ -7,8 +7,11 @@ import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./cha
 import { clearProjectDownload, saveProjectDownload, useProjectDownload } from "./chat/projectDownload.ts";
 import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
-import { message, strip } from "./format.ts";
+import { ErrorProvider, useErrors, useReportError } from "./errors.tsx";
+import { strip } from "./format.ts";
 import { AdminView } from "./settings/AdminView.tsx";
+import { DocsView } from "./settings/DocsView.tsx";
+import { ErrorsView } from "./settings/ErrorsView.tsx";
 import { SettingsView } from "./settings/SettingsView.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { onAgent, startAgentSocket, stopAgentSocket } from "./socket.ts";
@@ -19,7 +22,7 @@ function applyWrap(wrapText: boolean) {
   else delete document.documentElement.dataset.wrap;
 }
 
-type View = "chat" | "settings" | "start" | "admin";
+type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -30,12 +33,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (session && isTheme(session.theme)) rememberTheme(session.theme);
+    if (session && isThemeId(session.theme)) rememberTheme(session.theme);
   }, [session?.theme]);
 
   if (!ready) return <main className="login-screen"><p className="muted">Loading…</p></main>;
   if (!session) return <Login onSuccess={setSession} />;
-  return <Shell session={session} onLogout={() => setSession(null)} onSession={setSession} />;
+  return (
+    <ErrorProvider>
+      <Shell session={session} onLogout={() => setSession(null)} onSession={setSession} />
+    </ErrorProvider>
+  );
 }
 
 function Login({ onSuccess }: { onSuccess: (session: Session) => void }) {
@@ -99,7 +106,8 @@ function Shell({
   const [target, setTarget] = useState(session.home);
   const [view, setView] = useState<View>("start");
   const [checkingChat, setCheckingChat] = useState(() => readLastChat(session.username) != null);
-  const [error, setError] = useState("");
+  const report = useReportError();
+  const { errors } = useErrors();
   const [filesOpen, setFilesOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem("engineroom.filesOpen") === "1";
@@ -128,6 +136,7 @@ function Shell({
   const restoredRef = useRef(false);
   const choseRef = useRef(false);
   const deliveredDownload = useRef<string | null>(null);
+  const reportedDownload = useRef("");
   const usernameRef = useRef(session.username);
   const homeRef = useRef(session.home);
   const reposRef = useRef<RepositoryEntry[]>([]);
@@ -230,16 +239,16 @@ function Shell({
   useEffect(() => {
     refresh().catch((err) => {
       setCheckingChat(false);
-      setError(message(err));
+      report("Conversations", err);
     });
     return onAgent((incoming) => {
       if (incoming.type === "chats_changed") refresh().catch(() => undefined);
     });
-  }, [refresh]);
+  }, [refresh, report]);
 
   useEffect(() => {
     if (view === "settings") return;
-    if (isTheme(session.theme)) applyTheme(session.theme);
+    if (isThemeId(session.theme)) applyTheme(session.theme);
     applyWrap(Boolean(session.wrapText));
   }, [view, session.theme, session.wrapText]);
 
@@ -261,6 +270,14 @@ function Shell({
     saveProjectDownload(downloadJob.id, downloadJob.filename);
     clearProjectDownload();
   }, [downloadJob, onDownloadPage]);
+  useEffect(() => {
+    if (!downloadJob || downloadJob.phase !== "failed") return;
+    const key = `${downloadJob.workspace}\n${downloadJob.error ?? ""}`;
+    if (reportedDownload.current === key) return;
+    reportedDownload.current = key;
+    report("Download project", downloadJob.error || "The project zip could not be created.");
+    clearProjectDownload();
+  }, [downloadJob, report]);
   const filesEnabled = session.fileManager;
   const showFileManager = filesEnabled && (view === "chat" || view === "start") && Boolean(selectedRepo);
 
@@ -295,19 +312,16 @@ function Shell({
     setActiveId(null);
     setTarget(homeRef.current);
     setView("start");
-    setError("");
     setCheckingChat(false);
   }
 
   async function archiveProject() {
     if (!selectedRepo) return;
-    setError("");
     await setRepositoryArchived(selectedRepo.path, !selectedRepo.archived);
     await refresh();
   }
 
   async function removeProject(name: string) {
-    setError("");
     await deleteRepository(target, name);
     const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
     setChats(nextChats);
@@ -321,14 +335,13 @@ function Shell({
 
   async function createProject(name: string, url: string) {
     try {
-      setError("");
       const repo = await createRepository(name, url);
       const [nextChats, nextRepos] = await Promise.all([listChats(), listRepositories()]);
       setChats(nextChats);
       setRepos(nextRepos);
       choose(repo.path);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "could not create the project");
+      report("Create project", err);
       throw err;
     }
   }
@@ -365,7 +378,7 @@ function Shell({
         view={view}
         activeId={activeId}
         target={target}
-        error={error}
+        errorCount={errors.length}
         collapsed={sidebarCollapsed}
         onToggleCollapsed={toggleSidebar}
         onNew={choose}
@@ -373,6 +386,14 @@ function Shell({
         onSettings={() => {
           choseRef.current = true;
           setView("settings");
+        }}
+        onDocs={() => {
+          choseRef.current = true;
+          setView("docs");
+        }}
+        onErrors={() => {
+          choseRef.current = true;
+          setView("errors");
         }}
         onAdmin={() => {
           choseRef.current = true;
@@ -397,12 +418,18 @@ function Shell({
             options={session.options}
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
+            themes={session.themes}
+            onPackagesChanged={() => {
+              me().then(onSession).catch(() => undefined);
+            }}
             onTheme={applyTheme}
             onWrap={applyWrap}
             onSaved={(theme, filesReadOnly, visibleChats, commandBlockStyle, wrapText) => onSession({ ...session, theme, filesReadOnly, visibleChats, commandBlockStyle, wrapText })}
             onSession={onSession}
           />
         )}
+        {view === "docs" && <DocsView />}
+        {view === "errors" && <ErrorsView />}
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
@@ -508,28 +535,16 @@ function Shell({
           onClose={toggleFiles}
         />
       )}
-      {downloadJob && downloadJob.phase !== "creating" && !onDownloadPage && (
+      {downloadJob?.phase === "ready" && !onDownloadPage && (
         <div className="download-popup" role="dialog" aria-labelledby="download-popup-title">
-          {downloadJob.phase === "ready" ? (
-            <>
-              <p id="download-popup-title">The project download is ready.</p>
-              <div className="actions">
-                <button className="ghost" type="button" onClick={clearProjectDownload}>Dismiss</button>
-                <button className="primary" type="button" onClick={() => {
-                  saveProjectDownload(downloadJob.id, downloadJob.filename);
-                  clearProjectDownload();
-                }}>Download</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p id="download-popup-title">The project zip could not be created.</p>
-              {downloadJob.error && <p className="muted">{downloadJob.error}</p>}
-              <div className="actions">
-                <button className="ghost" type="button" onClick={clearProjectDownload}>Dismiss</button>
-              </div>
-            </>
-          )}
+          <p id="download-popup-title">The project download is ready.</p>
+          <div className="actions">
+            <button className="ghost" type="button" onClick={clearProjectDownload}>Dismiss</button>
+            <button className="primary" type="button" onClick={() => {
+              saveProjectDownload(downloadJob.id, downloadJob.filename);
+              clearProjectDownload();
+            }}>Download</button>
+          </div>
         </div>
       )}
     </div>

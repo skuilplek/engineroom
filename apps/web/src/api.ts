@@ -6,6 +6,7 @@ import type {
   ChatMeta,
   EnvEntry,
   FileVisibility,
+  ActionError,
   GitIdentity,
   GitStatus,
   PromptAttachment,
@@ -15,6 +16,9 @@ import type {
   CommandBlockStyle,
   Settings,
   SettingsPatch,
+  ExtensionDoc,
+  ExtensionRecord,
+  ExtensionTheme,
   ThemePreference,
   UserAccess,
   UserPolicy,
@@ -46,6 +50,7 @@ export interface Session {
   cliImport: boolean;
   appName: string;
   theme: ThemePreference;
+  themes?: ExtensionTheme[];
   commandBlockStyle?: CommandBlockStyle;
   fileVisibility?: FileVisibility;
   projectCreate: boolean;
@@ -66,6 +71,7 @@ export interface AdminAgent {
   pathSource?: "detected" | "manual" | null;
   allowOverride?: boolean;
   enabled: boolean;
+  packageName?: string;
 }
 
 export interface AgentInventory {
@@ -161,6 +167,22 @@ export function getGitIdentity() {
 
 export function saveGitIdentity(identity: GitIdentity) {
   return api<GitIdentity>("/api/git-identity", { method: "PUT", body: JSON.stringify(identity) });
+}
+
+export function listActionErrors() {
+  return api<ActionError[]>("/api/errors");
+}
+
+export function saveActionError(action: string, message: string) {
+  return api<ActionError>("/api/errors", { method: "POST", body: JSON.stringify({ action, message }) });
+}
+
+export function deleteActionError(id: string) {
+  return api<{ ok: boolean }>(`/api/errors/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function clearActionErrors() {
+  return api<{ ok: boolean }>("/api/errors", { method: "DELETE" });
 }
 
 export function saveSettings(settings: SettingsPatch) {
@@ -594,3 +616,47 @@ export function setupPi() {
 export function cancelChat(id: string) {
   return api<{ ok: boolean }>(`/api/chats/${id}/cancel`, { method: "POST" });
 }
+
+export interface ExtensionLists {
+  site: ExtensionRecord[];
+  user: ExtensionRecord[];
+}
+
+export interface ExtensionDocPage {
+  title: string;
+  markdown: string;
+}
+
+export function listExtensions() {
+  return api<ExtensionLists>("/api/extensions");
+}
+
+export function installExtension(source: string, scope: "site" | "user") {
+  const path = scope === "site" ? "/api/admin/extensions" : "/api/extensions";
+  return api<ExtensionRecord>(path, { method: "POST", body: JSON.stringify({ source }) });
+}
+
+export function updateExtension(name: string, scope: "site" | "user") {
+  const path = scope === "site" ? `/api/admin/extensions/${name}/update` : `/api/extensions/${name}/update`;
+  return api<ExtensionRecord>(path, { method: "POST" });
+}
+
+export function removeExtension(name: string, scope: "site" | "user") {
+  const path = scope === "site" ? `/api/admin/extensions/${name}` : `/api/extensions/${name}`;
+  return api<{ ok: boolean }>(path, { method: "DELETE" });
+}
+
+export function setExtensionEnabled(name: string, enabled: boolean, scope: "site" | "user") {
+  const path = scope === "site" ? `/api/admin/extensions/${name}/enabled` : `/api/extensions/${name}/enabled`;
+  return api<ExtensionRecord>(path, { method: "POST", body: JSON.stringify({ enabled }) });
+}
+
+export function listAdminExtensions() {
+  return api<{ packages: ExtensionRecord[] }>("/api/admin/extensions");
+}
+
+export function readExtensionDoc(scope: "site" | "user", name: string, id: string) {
+  return api<ExtensionDocPage>(`/api/extensions/docs/${scope}/${name}/${id}`);
+}
+
+export type { ExtensionDoc };

@@ -1,3 +1,5 @@
+import { isExtensionSlug, parseExtensionSource, parseSlugList } from "./extensions.ts";
+
 export const AGENTS = ["cursor", "claude", "pi"] as const;
 
 export type BuiltinAgentId = (typeof AGENTS)[number];
@@ -47,10 +49,24 @@ export type PermissionPolicy = "ask" | "allow" | "edits";
 
 export const THEMES = ["dark", "light", "haxor", "midnight", "engine", "pi"] as const;
 
-export type ThemePreference = (typeof THEMES)[number];
+export type BuiltinTheme = (typeof THEMES)[number];
 
-export function isTheme(value: unknown): value is ThemePreference {
+/** A built-in theme id, or a theme id contributed by an enabled package. */
+export type ThemePreference = string;
+
+export function isTheme(value: unknown): value is BuiltinTheme {
   return typeof value === "string" && (THEMES as readonly string[]).includes(value);
+}
+
+export function isThemeId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,31}$/.test(value);
+}
+
+/** Built-in themes stay. A package theme is kept only while that package is enabled. */
+export function resolveTheme(value: unknown, installed: readonly string[] = []): string {
+  if (isTheme(value)) return value;
+  if (isThemeId(value) && installed.includes(value)) return value;
+  return "dark";
 }
 
 export const COMMAND_BLOCK_STYLES = ["prompt", "window"] as const;
@@ -160,6 +176,13 @@ export interface ChatDetail {
   transcript: TranscriptEntry[];
 }
 
+export interface ActionError {
+  id: string;
+  at: string;
+  action: string;
+  message: string;
+}
+
 export interface WorkspaceEntry {
   path: string;
   name: string;
@@ -240,6 +263,8 @@ export const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
 /** Files pasted or picked in the prompt box. */
 export const MAX_PROMPT_ATTACHMENTS = 8;
 export const MAX_PROMPT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ACTION_ERRORS = 200;
+export const MAX_ACTION_ERROR_CHARS = 8_000;
 export const PROMPT_UPLOAD_DIR = ".engineroom/uploads";
 export const ATTACHED_PROMPT = "Attached files.";
 
@@ -431,6 +456,10 @@ export type RunnerRequest =
     }
   | { id: string; type: "git_identity_get" }
   | { id: string; type: "git_identity_set"; name: string; email: string }
+  | { id: string; type: "list_errors" }
+  | { id: string; type: "append_error"; action: string; message: string }
+  | { id: string; type: "delete_error"; errorId: string }
+  | { id: string; type: "clear_errors" }
   | { id: string; type: "pty_open"; chatId: string; cols: number; rows: number }
   | { id: string; type: "pty_input"; chatId: string; data: string }
   | { id: string; type: "pty_resize"; chatId: string; cols: number; rows: number }
@@ -444,6 +473,21 @@ export type RunnerRequest =
   | { id: string; type: "put_agent_binaries"; binaries: Partial<Record<AgentId, string>>; allowOverride: AgentId[] }
   | { id: string; type: "setup_pi"; provider: string; model: string; linkShared: boolean }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
+  | { id: string; type: "list_extensions" }
+  | { id: string; type: "install_extension"; source: string }
+  | { id: string; type: "update_extension"; name: string }
+  | { id: string; type: "remove_extension"; name: string }
+  | {
+      id: string;
+      type: "set_extension_enabled";
+      name: string;
+      enabled: boolean;
+      reservedThemes?: string[];
+      reservedDocs?: string[];
+      reservedAgents?: string[];
+    }
+  | { id: string; type: "read_extension_theme"; themeId: string }
+  | { id: string; type: "read_extension_doc"; name: string; docId: string }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
   | { id: string; type: "read_home_file"; path: string }
@@ -804,6 +848,35 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
+    case "list_extensions":
+      return { id: body.id, type: "list_extensions" };
+    case "install_extension":
+      parseExtensionSource(body.source);
+      return { id: body.id, type: "install_extension", source: String(body.source).trim() };
+    case "update_extension":
+      if (!isExtensionSlug(body.name)) throw new Error("invalid extension name");
+      return { id: body.id, type: "update_extension", name: body.name };
+    case "remove_extension":
+      if (!isExtensionSlug(body.name)) throw new Error("invalid extension name");
+      return { id: body.id, type: "remove_extension", name: body.name };
+    case "set_extension_enabled":
+      if (!isExtensionSlug(body.name)) throw new Error("invalid extension name");
+      if (typeof body.enabled !== "boolean") throw new Error("invalid extension");
+      return {
+        id: body.id,
+        type: "set_extension_enabled",
+        name: body.name,
+        enabled: body.enabled,
+        reservedThemes: parseSlugList(body.reservedThemes, "theme"),
+        reservedDocs: parseSlugList(body.reservedDocs, "doc"),
+        reservedAgents: parseSlugList(body.reservedAgents, "agent"),
+      };
+    case "read_extension_theme":
+      if (!isExtensionSlug(body.themeId)) throw new Error("invalid extension theme");
+      return { id: body.id, type: "read_extension_theme", themeId: body.themeId };
+    case "read_extension_doc":
+      if (!isExtensionSlug(body.name) || !isExtensionSlug(body.docId)) throw new Error("invalid extension doc");
+      return { id: body.id, type: "read_extension_doc", name: body.name, docId: body.docId };
     case "set_model":
       return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
     case "dequeue":
@@ -858,6 +931,13 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "git_identity_get" };
     case "git_identity_set":
       return { id: body.id, type: "git_identity_set", name: parseGitName(body.name), email: parseGitEmail(body.email) };
+    case "list_errors":
+    case "clear_errors":
+      return { id: body.id, type: body.type };
+    case "append_error":
+      return { id: body.id, type: "append_error", action: parseActionLabel(body.action), message: parseActionMessage(body.message) };
+    case "delete_error":
+      return { id: body.id, type: "delete_error", errorId: token(body.errorId, "error") };
     case "pty_open":
     case "pty_resize":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), cols: parseDim(body.cols), rows: parseDim(body.rows) };
@@ -1198,6 +1278,20 @@ function parseDim(value: unknown): number {
     throw new Error("invalid terminal size");
   }
   return value;
+}
+
+function parseActionLabel(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid action");
+  const action = value.replace(/\s+/g, " ").trim();
+  if (!action || action.length > 80) throw new Error("invalid action");
+  return action;
+}
+
+function parseActionMessage(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid error");
+  const message = value.replace(/\0/g, "").trim();
+  if (!message || message.length > MAX_ACTION_ERROR_CHARS) throw new Error("invalid error");
+  return message;
 }
 
 function token(value: unknown, label: string): string {
@@ -1577,7 +1671,7 @@ export function parseSettingsPatch(value: unknown): SettingsPatch {
     patch.permission = body.permission;
   }
   if (body.theme != null) {
-    if (!isTheme(body.theme)) throw new Error("invalid theme");
+    if (!isThemeId(body.theme)) throw new Error("invalid theme");
     patch.theme = body.theme;
   }
   if (body.commandBlockStyle != null) {
@@ -1642,3 +1736,24 @@ export function clip(text: string, max = 4000): string {
 }
 
 export { createCliParser, summarizeInput, type CliParser } from "./normalize.ts";
+export {
+  assertContributionsFree,
+  emptyReserved,
+  EXTENSION_AGENT_IDS,
+  EXTENSION_SLUG_RE,
+  EXTENSION_THEME_IDS,
+  isExtensionSlug,
+  MAX_EXTENSION_CSS_BYTES,
+  MAX_EXTENSION_DOC_BYTES,
+  parseExtensionManifest,
+  parseExtensionSource,
+  parseSlugList,
+  type ExtensionAgent,
+  type ExtensionDoc,
+  type ExtensionManifest,
+  type ExtensionRecord,
+  type ExtensionScope,
+  type ExtensionTheme,
+  type ReservedIds,
+  type ThemeSwatches,
+} from "./extensions.ts";

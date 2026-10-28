@@ -102,3 +102,9 @@ export function message(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "request failed";
 }
+
+export function errorSummary(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const line = lines[lines.length - 1] || "Something went wrong";
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+}

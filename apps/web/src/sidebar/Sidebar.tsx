@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { getGitIdentity, saveGitIdentity } from "../api.ts";
+import { useReportError } from "../errors.tsx";
 import { buildGroups, message, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
-import { IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
+import { IconAlert, IconBook, IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
-type View = "chat" | "settings" | "start" | "admin";
+type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
 
 export function Sidebar({
   session,
@@ -15,12 +16,14 @@ export function Sidebar({
   view,
   activeId,
   target,
-  error,
+  errorCount,
   collapsed,
   onToggleCollapsed,
   onNew,
   onOpen,
   onSettings,
+  onDocs,
+  onErrors,
   onAdmin,
   onLogout,
   onCreateProject,
@@ -33,12 +36,14 @@ export function Sidebar({
   view: View;
   activeId: string | null;
   target: string;
-  error: string;
+  errorCount: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
   onSettings: () => void;
+  onDocs: () => void;
+  onErrors: () => void;
   onAdmin: () => void;
   onLogout: () => void;
   onCreateProject: (name: string, url: string) => Promise<void>;
@@ -163,7 +168,6 @@ export function Sidebar({
               />
             ))}
           </div>
-          {error && <p className="alert" role="alert">{error}</p>}
         </>
       )}
       <UserMenu
@@ -171,7 +175,10 @@ export function Sidebar({
         admin={session.admin}
         collapsed={collapsed}
         view={view}
+        errorCount={errorCount}
         onSettings={onSettings}
+        onDocs={onDocs}
+        onErrors={onErrors}
         onAdmin={onAdmin}
         onLogout={onLogout}
       />
@@ -184,7 +191,10 @@ function UserMenu({
   admin,
   collapsed,
   view,
+  errorCount,
   onSettings,
+  onDocs,
+  onErrors,
   onAdmin,
   onLogout,
 }: {
@@ -192,7 +202,10 @@ function UserMenu({
   admin: boolean;
   collapsed: boolean;
   view: View;
+  errorCount: number;
   onSettings: () => void;
+  onDocs: () => void;
+  onErrors: () => void;
   onAdmin: () => void;
   onLogout: () => void;
 }) {
@@ -203,8 +216,11 @@ function UserMenu({
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftEmail, setDraftEmail] = useState("");
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const report = useReportError();
+  function setError(value: string) {
+    if (value) report("Git identity", value);
+  }
   const displayName = identity?.name || username;
   const complete = Boolean(identity?.name && identity?.email);
 
@@ -304,7 +320,6 @@ function UserMenu({
                 />
               </label>
               <p className="muted user-menu-note">Saved as your global git name and email.</p>
-              {error && <p className="alert" role="alert">{error}</p>}
               <div className="user-menu-actions">
                 <button className="primary" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
                 {complete && (
@@ -353,6 +368,25 @@ function UserMenu({
             <IconGear />
             Customize
           </button>
+          <button
+            className={view === "docs" ? "user-menu-item active" : "user-menu-item"}
+            type="button"
+            onClick={() => choose(onDocs)}
+          >
+            <IconBook />
+            Docs
+          </button>
+          {errorCount > 0 && (
+            <button
+              className={view === "errors" ? "user-menu-item active" : "user-menu-item"}
+              type="button"
+              onClick={() => choose(onErrors)}
+            >
+              <IconAlert />
+              Errors
+              <span className="user-menu-count">{errorCount}</span>
+            </button>
+          )}
           {admin && (
             <button
               className={view === "admin" ? "user-menu-item active" : "user-menu-item"}
@@ -411,7 +445,7 @@ function NewProject({ onCreate }: { onCreate: (name: string, url: string) => Pro
       setUrl("");
       setOpen(false);
     } catch {
-      /* the sidebar alert shows the reason */
+      /* the notice shows the reason */
     } finally {
       setBusy(false);
     }

@@ -29,6 +29,8 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 | `ENGINEROOM_REPOS_FILE` | `/var/lib/engineroom/repos.json` | Repository directory name under each home, and file visibility. |
 | `ENGINEROOM_CHECKS_FILE` | `/etc/engineroom/checks.json` | Command names probed for the admin overview. |
 
+Site packages are stored in `extensions/` next to `agents.json`, with `extensions.json` beside that directory. Per-user packages are `~/.engineroom/extensions/` and `~/.engineroom/extensions.json`. See [extensions.md](extensions.md).
+
 `setup.sh` creates `checks.json` only when it is absent, with:
 
 ```json

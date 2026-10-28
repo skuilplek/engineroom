@@ -3,10 +3,12 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseUserPolicy, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentBinaries, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, serverBinariesFor, storeDetectedBinaries, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentBinaries, loadAgentFlags, loadAppName, loadCliImport, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, serverBinariesFor, storeDetectedBinaries, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { SYSTEM_COMMAND_DIRS, serverOverview } from "./overview.ts";
@@ -50,7 +52,7 @@ interface RunnerCall {
   prompt?: string;
   attachments?: PromptAttachment[];
   mimeType?: string;
-  enabled?: string[];
+  enabled?: string[] | boolean;
   policy?: UserPolicy;
   entries?: EnvEntry[];
   repos?: CatalogEntry[];
@@ -79,9 +81,17 @@ interface RunnerCall {
   url?: string;
   branch?: string;
   message?: string;
+  action?: string;
+  errorId?: string;
   stageVisible?: boolean;
   archiveId?: string;
   archived?: boolean;
+  source?: string;
+  themeId?: string;
+  docId?: string;
+  reservedThemes?: string[];
+  reservedDocs?: string[];
+  reservedAgents?: string[];
 }
 
 export function createHub(options: HubOptions) {
@@ -228,6 +238,10 @@ export function createHub(options: HubOptions) {
   async function profile(user: LinuxUser) {
     const access = await loadAccess(user, true);
     const settings = (await call(user, { type: "get_settings" })) as Settings;
+    const personal = await userPackages(user);
+    const sitePackages = await siteExtensionRecords(agentsFile);
+    const themes = enabledThemes([...personal, ...sitePackages]);
+    const themeIds = themes.map((theme) => theme.id);
     return {
       username: user.username,
       home: user.home,
@@ -245,7 +259,8 @@ export function createHub(options: HubOptions) {
       wrapText: Boolean(settings.wrapText),
       visibleChats: Number.isInteger(settings.visibleChats) ? settings.visibleChats : 5,
       options: access.options,
-      theme: isTheme(settings.theme) ? settings.theme : "dark",
+      theme: resolveTheme(settings.theme, themeIds),
+      themes,
       commandBlockStyle: isCommandBlockStyle(settings.commandBlockStyle) ? settings.commandBlockStyle : "prompt",
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
@@ -254,7 +269,7 @@ export function createHub(options: HubOptions) {
       fileVisibility: loadFileVisibility(reposFile),
       projectCreate: access.projectCreate,
       projectDownloads: loadProjectDownloads(reposFile),
-      agentCatalog: namesFor(access.agents, agentsFile),
+      agentCatalog: namesFor(access.agents, agentsFile, [...packageAgentNames(sitePackages), ...packageAgentNames(personal)]),
     };
   }
 
@@ -274,6 +289,7 @@ export function createHub(options: HubOptions) {
     const pi = loadPiConfig(agentsFile);
     await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth }).catch(() => undefined);
     await pushAgentBinaries(user);
+    await syncAgentCatalog(user).catch(() => undefined);
     const listed = await visibleAgents(user, refresh);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
@@ -291,7 +307,11 @@ export function createHub(options: HubOptions) {
       const resolved = await resolveCommands(user, paths);
       for (const [name, found] of resolved) resolvedOverrides.set(name, found.path);
     }
+    const personalAgents = enabledPackageAgents(await userPackages(user)).map((agent) => agent.id);
     const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides, globalPaths);
+    for (const agent of personalAgents) {
+      if (!agents.includes(agent)) agents.push(agent);
+    }
     const piInstalled = listed.some((item) => item.id === "pi" && item.available);
     const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, piInstalled);
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
@@ -415,6 +435,10 @@ export function createHub(options: HubOptions) {
       return;
     }
     const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[2] === "extensions") {
+      await adminExtensionRoute(req, res, parts, user);
+      return;
+    }
     if (parts[2] === "overview" && parts.length === 3 && req.method === "GET") {
       const overview = await serverOverview({ configFile: checksFile, commandDirs });
       const resolved = await resolveCommands(
@@ -464,7 +488,11 @@ export function createHub(options: HubOptions) {
         fileEditor: loadFileEditor(agentsFile),
         fileDownload: loadFileDownload(agentsFile),
         fileUpload: loadFileUpload(agentsFile),
-        agentCatalog: namesFor(offeredAgentIds(flags, listed), agentsFile),
+        agentCatalog: namesFor(
+          offeredAgentIds(flags, listed),
+          agentsFile,
+          listed.filter((agent) => agent.packageName).map((agent) => ({ id: agent.id, label: agent.label })),
+        ),
         ...piPayload(agentsFile),
       });
       return;
@@ -575,7 +603,8 @@ export function createHub(options: HubOptions) {
         const body = (await readJson(req)) as SettingsPatch;
         if (body.defaultAgent) await assertAgentAllowed(target, body.defaultAgent);
         await assertSettingsModel(target, body);
-        sendJson(res, 200, await call(target, { type: "put_settings", settings: body }));
+        await assertThemeChoice(target, body.theme);
+        sendJson(res, 200, await presentSettings(target, (await call(target, { type: "put_settings", settings: body })) as Settings));
         return;
       }
       if (action === "repositories" && req.method === "GET") {
@@ -648,6 +677,27 @@ export function createHub(options: HubOptions) {
 
   async function proxy(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
     const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[1] === "errors" && parts.length === 2 && req.method === "GET") {
+      sendJson(res, 200, await call(user, { type: "list_errors" }));
+      return;
+    }
+    if (parts[1] === "errors" && parts.length === 2 && req.method === "POST") {
+      const body = (await readJson(req)) as { action?: unknown; message?: unknown };
+      sendJson(res, 201, await call(user, {
+        type: "append_error",
+        action: typeof body.action === "string" ? body.action : "",
+        message: typeof body.message === "string" ? body.message : "",
+      }));
+      return;
+    }
+    if (parts[1] === "errors" && parts.length === 2 && req.method === "DELETE") {
+      sendJson(res, 200, await call(user, { type: "clear_errors" }));
+      return;
+    }
+    if (parts[1] === "errors" && parts.length === 3 && req.method === "DELETE") {
+      sendJson(res, 200, await call(user, { type: "delete_error", errorId: parts[2] || "" }));
+      return;
+    }
     if (parts[1] === "git-identity" && parts.length === 2 && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "git_identity_get" }));
       return;
@@ -663,7 +713,7 @@ export function createHub(options: HubOptions) {
     }
     if (parts[1] === "settings" && parts.length === 2 && req.method === "GET") {
       await pushAgentBinaries(user);
-      sendJson(res, 200, await call(user, { type: "get_settings" }));
+      sendJson(res, 200, await presentSettings(user, (await call(user, { type: "get_settings" })) as Settings));
       return;
     }
     if (parts[1] === "settings" && parts.length === 2 && req.method === "PUT") {
@@ -671,8 +721,13 @@ export function createHub(options: HubOptions) {
       const patch = (body.settings ?? body) as SettingsPatch;
       if (patch.defaultAgent) await assertAgentAllowed(user, patch.defaultAgent);
       await assertSettingsModel(user, patch);
+      await assertThemeChoice(user, patch.theme);
       await pushAgentBinaries(user);
-      sendJson(res, 200, await call(user, { type: "put_settings", settings: patch }));
+      sendJson(res, 200, await presentSettings(user, (await call(user, { type: "put_settings", settings: patch })) as Settings));
+      return;
+    }
+    if (parts[1] === "extensions") {
+      await extensionRoute(req, res, parts, user);
       return;
     }
     if (parts[1] === "workspaces" && req.method === "GET") {
@@ -1098,6 +1153,13 @@ export function createHub(options: HubOptions) {
     }
     const command = parseClientCommand(JSON.parse(Buffer.from(rawBytes(data)).toString("utf8")));
     if (
+      command.type === "list_extensions" ||
+      command.type === "install_extension" ||
+      command.type === "update_extension" ||
+      command.type === "remove_extension" ||
+      command.type === "set_extension_enabled" ||
+      command.type === "read_extension_theme" ||
+      command.type === "read_extension_doc" ||
       command.type === "get_policy" ||
       command.type === "put_policy" ||
       command.type === "get_env" ||
@@ -1206,7 +1268,7 @@ export function createHub(options: HubOptions) {
 
   async function agentState(user: LinuxUser) {
     await refreshDetectedBinaries(user);
-    const listed = await listAgents(agentsFile, commandDirs, user.home);
+    const listed = await listAgents(agentsFile, commandDirs, user.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
     return {
       agents: listed,
       rawTerminal: loadRawTerminal(agentsFile),
@@ -1220,7 +1282,7 @@ export function createHub(options: HubOptions) {
   }
 
   async function visibleAgents(user: LinuxUser, refresh = false) {
-    const listed = await listAgents(agentsFile, commandDirs, user.home);
+    const listed = await listAgents(agentsFile, commandDirs, user.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
     const names = [...new Set(listed.filter((agent) => !agent.available).flatMap((agent) => detectionNames(agent)))];
     const resolved = await resolveCommands(user, names, refresh);
     const first = new Map<string, string>();
@@ -1251,7 +1313,7 @@ export function createHub(options: HubOptions) {
   }
 
   async function detectedBinaries(admin: LinuxUser): Promise<Record<string, string>> {
-    const specs = await listAgents(agentsFile, commandDirs, admin.home);
+    const specs = await listAgents(agentsFile, commandDirs, admin.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
     const names = [...new Set(specs.flatMap((agent) => detectionNames(agent)))];
     const resolved = await resolveCommands(admin, names, false);
     const paths = new Map<string, string[]>();
@@ -1276,8 +1338,148 @@ export function createHub(options: HubOptions) {
     return call(user, { type: "put_agent_binaries", binaries, allowOverride }).catch(() => undefined);
   }
 
-  function syncAgentCatalog(user: LinuxUser) {
-    return call(user, { type: "put_agent_catalog", agents: customCatalog(agentsFile) });
+  async function syncAgentCatalog(user: LinuxUser) {
+    const agents = [...customCatalog(agentsFile)];
+    for (const agent of enabledPackageAgents(await siteExtensionRecords(agentsFile))) {
+      if (!agents.some((item) => item.id === agent.id)) agents.push({ id: agent.id, label: agent.label, binary: agent.binary });
+    }
+    return call(user, { type: "put_agent_catalog", agents });
+  }
+
+  async function userPackages(user: LinuxUser): Promise<ExtensionRecord[]> {
+    try {
+      const result = (await call(user, { type: "list_extensions" })) as { packages?: ExtensionRecord[] };
+      return result.packages ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function installedThemeIds(user: LinuxUser): Promise<string[]> {
+    const personal = await userPackages(user);
+    const sitePackages = await siteExtensionRecords(agentsFile);
+    return enabledThemes([...personal, ...sitePackages]).map((theme) => theme.id);
+  }
+
+  async function presentSettings(user: LinuxUser, settings: Settings): Promise<Settings> {
+    return { ...settings, theme: resolveTheme(settings.theme, await installedThemeIds(user)) };
+  }
+
+  async function assertThemeChoice(user: LinuxUser, theme: string | undefined) {
+    if (theme == null) return;
+    if (resolveTheme(theme, await installedThemeIds(user)) !== theme) throw new Error("invalid theme");
+  }
+
+  async function extensionRoute(req: IncomingMessage, res: ServerResponse, parts: string[], user: LinuxUser) {
+    if (parts[2] === "themes" && parts.length === 4 && req.method === "GET") {
+      const themeId = parts[3].endsWith(".css") ? parts[3].slice(0, -4) : parts[3];
+      if (!isExtensionSlug(themeId)) throw new Error("invalid extension theme");
+      const personal = (await call(user, { type: "read_extension_theme", themeId })) as { css?: string | null };
+      if (personal.css) {
+        sendCss(res, personal.css);
+        return;
+      }
+      const css = await readScopedTheme(siteExtensionRoot(agentsFile), "site", themeId);
+      if (!css) throw new Error("extension theme not found");
+      sendCss(res, css);
+      return;
+    }
+    if (parts[2] === "docs" && parts.length === 6 && req.method === "GET") {
+      const scope = parts[3];
+      const name = parts[4];
+      const docId = parts[5];
+      if (scope === "site") {
+        sendJson(res, 200, await readExtensionDoc(siteExtensionRoot(agentsFile), "site", name, docId));
+        return;
+      }
+      if (scope !== "user") throw new Error("invalid extension doc");
+      sendJson(res, 200, await call(user, { type: "read_extension_doc", name, docId }));
+      return;
+    }
+    if (parts.length === 2 && req.method === "GET") {
+      sendJson(res, 200, { site: await siteExtensionRecords(agentsFile), user: await userPackages(user) });
+      return;
+    }
+    if (parts.length === 2 && req.method === "POST") {
+      const body = (await readJson(req)) as { source?: unknown };
+      parseExtensionSource(body.source);
+      const reserved = await siteReserved(agentsFile);
+      const installed = await call(user, {
+        type: "install_extension",
+        source: String(body.source).trim(),
+        reservedThemes: reserved.themes,
+        reservedDocs: reserved.docs,
+        reservedAgents: reserved.agents,
+      });
+      sendJson(res, 201, installed);
+      return;
+    }
+    const name = parts[2] || "";
+    if (!isExtensionSlug(name)) throw new Error("invalid extension name");
+    if (parts.length === 3 && req.method === "DELETE") {
+      sendJson(res, 200, await call(user, { type: "remove_extension", name }));
+      return;
+    }
+    if (parts[3] === "update" && parts.length === 4 && req.method === "POST") {
+      sendJson(res, 200, await call(user, { type: "update_extension", name }));
+      return;
+    }
+    if (parts[3] === "enabled" && parts.length === 4 && req.method === "POST") {
+      const body = (await readJson(req)) as { enabled?: unknown };
+      if (typeof body.enabled !== "boolean") throw new Error("invalid extension");
+      const reserved = await siteReserved(agentsFile);
+      sendJson(res, 200, await call(user, {
+        type: "set_extension_enabled",
+        name,
+        enabled: body.enabled,
+        reservedThemes: reserved.themes,
+        reservedDocs: reserved.docs,
+        reservedAgents: reserved.agents,
+      }));
+      return;
+    }
+    throw new Error("not found");
+  }
+
+  async function adminExtensionRoute(req: IncomingMessage, res: ServerResponse, parts: string[], user: LinuxUser) {
+    const root = siteExtensionRoot(agentsFile);
+    if (!root) throw new Error("extensions are not configured");
+    if (parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, { packages: await siteExtensionRecords(agentsFile) });
+      return;
+    }
+    if (parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { source?: unknown };
+      parseExtensionSource(body.source);
+      const installed = await installExtension(root, "site", String(body.source).trim());
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 201, installed);
+      return;
+    }
+    const name = parts[3] || "";
+    if (!isExtensionSlug(name)) throw new Error("invalid extension name");
+    const reserved = { themes: [] as string[], docs: [] as string[], agents: loadCustomAgents(agentsFile).map((agent) => agent.id) };
+    if (parts.length === 4 && req.method === "DELETE") {
+      await removeExtension(root, name);
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (parts[4] === "update" && parts.length === 5 && req.method === "POST") {
+      const updated = await updateExtension(root, "site", name);
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 200, updated);
+      return;
+    }
+    if (parts[4] === "enabled" && parts.length === 5 && req.method === "POST") {
+      const body = (await readJson(req)) as { enabled?: unknown };
+      if (typeof body.enabled !== "boolean") throw new Error("invalid extension");
+      const saved = await setExtensionEnabled(root, "site", name, body.enabled, reserved);
+      await syncAgentCatalog(user).catch(() => undefined);
+      sendJson(res, 200, saved);
+      return;
+    }
+    throw new Error("not found");
   }
 
   function call(user: LinuxUser, request: RunnerCall) {
@@ -1504,7 +1706,7 @@ function statusFor(message: string): number {
     message.includes("not staged") ||
     message.includes("not a git repository")
   ) return 400;
-  if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT")) return 404;
+  if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT") || message.includes("not configured")) return 404;
   if (message.includes("not ready")) return 409;
   if (message.includes("already running")) return 409;
   return 500;
@@ -1561,6 +1763,15 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new Error("invalid JSON");
   }
+}
+
+function sendCss(res: ServerResponse, css: string) {
+  res.writeHead(200, {
+    "Content-Type": "text/css; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(css);
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {

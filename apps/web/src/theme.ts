@@ -1,4 +1,4 @@
-import { isTheme, type ThemePreference } from "@engineroom/protocol";
+import { isTheme, isThemeId, resolveTheme, type ThemePreference } from "@engineroom/protocol";
 
 export const THEME_STORAGE_KEY = "engineroom-theme";
 
@@ -106,16 +106,27 @@ export const THEME_CATALOG: readonly ThemeDescriptor[] = [
   },
 ];
 
-export function normalizeTheme(value: unknown): ThemePreference {
-  return isTheme(value) ? value : "dark";
+export function normalizeTheme(value: unknown, installed: readonly string[] = []): string {
+  return resolveTheme(value, installed);
 }
 
 export function applyTheme(theme: ThemePreference) {
-  document.documentElement.dataset.theme = normalizeTheme(theme);
+  const id = isThemeId(theme) ? theme : "dark";
+  document.documentElement.dataset.theme = id;
+  const current = document.getElementById("extension-theme");
+  if (isTheme(id)) {
+    current?.remove();
+    return;
+  }
+  const link = current instanceof HTMLLinkElement ? current : document.createElement("link");
+  link.id = "extension-theme";
+  link.rel = "stylesheet";
+  link.href = `/api/extensions/themes/${id}.css`;
+  if (!current) document.head.append(link);
 }
 
 export function rememberTheme(theme: ThemePreference) {
-  const normalized = normalizeTheme(theme);
+  const normalized = isThemeId(theme) ? theme : "dark";
   applyTheme(normalized);
   try {
     localStorage.setItem(THEME_STORAGE_KEY, normalized);

@@ -13,6 +13,8 @@ import {
   isCommandBlockStyle,
   isInsidePath,
   isTheme,
+  isThemeId,
+  resolveTheme,
   loginAllowed,
   parseCatalogEntries,
   parseEnvEntries,
@@ -335,8 +337,13 @@ test("settings patch keeps the chosen agent and clears a blank binary", () => {
   assert.equal(applySettings(themed, { defaultModel: "opus" }).theme, "engine");
   assert.equal(isTheme("sepia"), false);
   assert.equal(isTheme(""), false);
-  assert.throws(() => parseSettingsPatch({ theme: "sepia" }), /invalid theme/);
-  assert.throws(() => parseSettingsPatch({ theme: "custom" }), /invalid theme/);
+  assert.equal(isThemeId("sepia"), true);
+  assert.equal(parseSettingsPatch({ theme: "sepia" }).theme, "sepia");
+  assert.equal(resolveTheme("sepia", []), "dark");
+  assert.equal(resolveTheme("sepia", ["sepia"]), "sepia");
+  assert.equal(resolveTheme("engine", []), "engine");
+  assert.throws(() => parseSettingsPatch({ theme: "Sepia" }), /invalid theme/);
+  assert.throws(() => parseSettingsPatch({ theme: "../custom" }), /invalid theme/);
   assert.equal(next.visibleChats, 5);
   assert.equal(parseSettingsPatch({ visibleChats: 0 }).visibleChats, 0);
   assert.equal(parseSettingsPatch({ visibleChats: 100 }).visibleChats, 100);

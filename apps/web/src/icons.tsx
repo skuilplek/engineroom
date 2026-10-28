@@ -272,6 +272,25 @@ export function IconUpload() {
   );
 }
 
+export function IconAlert() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M8 2.2 14.2 13H1.8L8 2.2Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M8 6.2v3.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="8" cy="11.2" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function IconBook() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M3.2 2.6h4.2c.7.6 1.5.9 2.4.9h3v9.2h-3c-.9 0-1.7-.3-2.4-.9H3.2V2.6Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M8 3.4v8.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
 export function IconEdit() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">

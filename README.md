@@ -59,6 +59,7 @@ Check the hub with `systemctl status engineroom-hub`.
 | Scripts, tests, local hub and UI | [docs/development.md](docs/development.md) |
 | Hub, runner, and security model | [docs/architecture.md](docs/architecture.md) |
 | `ENGINEROOM_*` variables and files | [docs/configuration.md](docs/configuration.md) |
+| Themes, docs, and agents from packages | [docs/extensions.md](docs/extensions.md) |
 
 ## Layout
 

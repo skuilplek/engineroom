@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { isCommandBlockStyle, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
+import { isCommandBlockStyle, isTheme, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type ExtensionTheme, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
 import { getSettings, saveSettings, type Session } from "../api.ts";
+import { useReportError } from "../errors.tsx";
 import { message } from "../format.ts";
+import { PackagesSection } from "./PackagesSection.tsx";
 import { PiSetupNotice } from "./PiSetup.tsx";
 import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
@@ -12,6 +14,8 @@ export function SettingsView({
   options,
   fileEditorAllowed = true,
   piSetup = false,
+  themes = [],
+  onPackagesChanged,
   onTheme,
   onWrap,
   onSaved,
@@ -22,15 +26,32 @@ export function SettingsView({
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
+  themes?: ExtensionTheme[];
+  onPackagesChanged?: () => void;
   onTheme: (theme: ThemePreference) => void;
   onWrap: (wrapText: boolean) => void;
   onSaved: (theme: ThemePreference, filesReadOnly: boolean, visibleChats: number, commandBlockStyle: CommandBlockStyle, wrapText: boolean) => void;
   onSession: (session: Session) => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [error, setError] = useState("");
+  const [failed, setFailed] = useState(false);
   const [saved, setSaved] = useState("");
+  const report = useReportError();
+  function setError(value: string) {
+    if (value) report("Settings", value);
+  }
   const [busy, setBusy] = useState(false);
+  const installedIds = themes.map((theme) => theme.id).filter((id) => !isTheme(id));
+  const themeCards = [
+    ...THEME_CATALOG,
+    ...themes.filter((theme) => !isTheme(theme.id)).map((theme) => ({
+      id: theme.id,
+      name: theme.name,
+      tagline: theme.tagline,
+      tier: theme.tier,
+      swatches: theme.swatches,
+    })),
+  ];
 
   useEffect(() => {
     getSettings().then((next) => {
@@ -42,13 +63,16 @@ export function SettingsView({
         defaultAgent: agent,
         defaultModel,
         permission: next.permission || "ask",
-        theme: normalizeTheme(next.theme),
+        theme: normalizeTheme(next.theme, installedIds),
         commandBlockStyle: normalizeCommandBlockStyle(next.commandBlockStyle),
         wrapText: Boolean(next.wrapText),
         visibleChats: normalizeVisibleChats(next.visibleChats),
       });
-    }).catch((err) => setError(message(err)));
-  }, [agents, options]);
+    }).catch((err) => {
+      setFailed(true);
+      setError(message(err));
+    });
+  }, [agents, options, installedIds.join(",")]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -58,7 +82,7 @@ export function SettingsView({
     setError("");
     try {
       const savedSettings = await saveSettings(settingsPayload(settings, agents));
-      const nextTheme = normalizeTheme(savedSettings.theme);
+      const nextTheme = normalizeTheme(savedSettings.theme, installedIds);
       const commandBlockStyle = normalizeCommandBlockStyle(savedSettings.commandBlockStyle);
       const wrapText = Boolean(savedSettings.wrapText);
       setSettings({
@@ -90,20 +114,23 @@ export function SettingsView({
     onTheme(theme);
   }
 
-  if (!settings) return <p className="settings muted">Loading settings…</p>;
+  if (!settings) {
+    return <p className="settings muted">{failed ? "Settings could not be loaded." : "Loading settings…"}</p>;
+  }
   const models = options[settings.defaultAgent]?.models ?? [];
   const pathAgents = agents.filter((agent) => (settings.lockedBinaries?.includes(agent) ?? false) || (settings.binaryOverride?.includes(agent) ?? false));
-  const activeTheme = normalizeTheme(settings.theme);
+  const activeTheme = normalizeTheme(settings.theme, installedIds);
 
   return (
-    <form className="settings" onSubmit={submit}>
+    <div className="settings">
+    <form onSubmit={submit}>
       <p className="eyebrow">Customize</p>
       <h2>Appearance</h2>
       <p className="muted theme-lede">
         Choose a prebuilt theme for your workspace. Select any simple or elaborate theme and save to make it your default.
       </p>
       <div className="theme-grid" role="radiogroup" aria-label="Theme">
-        {THEME_CATALOG.map((item) => {
+        {themeCards.map((item) => {
           const selected = activeTheme === item.id;
           return (
             <button
@@ -151,7 +178,7 @@ export function SettingsView({
                 <div className="theme-title-row">
                   <strong>{item.name}</strong>
                   <span className={item.tier === "elaborate" ? "theme-badge elaborate" : "theme-badge"}>
-                    {item.default ? "Default" : item.tier}
+                    {"default" in item && item.default ? "Default" : item.tier}
                   </span>
                 </div>
                 <span className="theme-tagline">{item.tagline}</span>
@@ -288,10 +315,11 @@ export function SettingsView({
           })}
         </details>
       )}
-      <p className="alert" role="alert">{error}</p>
       {saved && <p className="muted">{saved}</p>}
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
+    <PackagesSection scope="user" onChanged={onPackagesChanged} />
+    </div>
   );
 }
 

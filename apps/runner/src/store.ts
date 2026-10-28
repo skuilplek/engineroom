@@ -9,7 +9,7 @@ import {
   DEFAULT_SETTINGS,
   isAgentId,
   isCommandBlockStyle,
-  isTheme,
+  isThemeId,
   parseVisibleChats,
   type AgentId,
   type ChatDetail,
@@ -49,7 +49,7 @@ export async function loadSettings(home: string): Promise<Settings> {
     if (parsed.permission === "ask" || parsed.permission === "allow" || parsed.permission === "edits") {
       patch.permission = parsed.permission;
     }
-    if (isTheme(parsed.theme)) patch.theme = parsed.theme;
+    if (isThemeId(parsed.theme)) patch.theme = parsed.theme;
     if (isCommandBlockStyle(parsed.commandBlockStyle)) patch.commandBlockStyle = parsed.commandBlockStyle;
     if (typeof parsed.filesReadOnly === "boolean") patch.filesReadOnly = parsed.filesReadOnly;
     if (typeof parsed.wrapText === "boolean") patch.wrapText = parsed.wrapText;

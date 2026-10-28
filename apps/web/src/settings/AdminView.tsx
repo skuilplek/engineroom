@@ -15,6 +15,7 @@ import {
   type Settings,
   type UserPolicy,
 } from "@engineroom/protocol";
+import { PackagesSection } from "./PackagesSection.tsx";
 import {
   addAccount,
   addCatalog,
@@ -53,7 +54,7 @@ import { CopyResponse } from "../chat/CopyResponse.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
 import { message, relativeTime } from "../format.ts";
 
-type AdminTab = "overview" | "agents" | "repositories" | "users";
+type AdminTab = "overview" | "agents" | "packages" | "repositories" | "users";
 
 type FolderBaseline = {
   directory: string;
@@ -81,6 +82,7 @@ type OfferSnapshot = {
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "agents", label: "Agents" },
+  { id: "packages", label: "Packages" },
   { id: "repositories", label: "Repositories" },
   { id: "users", label: "Users" },
 ];
@@ -615,6 +617,11 @@ export function AdminView({
                 <strong>{offered.length}</strong>
                 <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
               </button>
+              <button className="overview-link" type="button" onClick={() => openTab("packages")}>
+                <span>Packages</span>
+                <strong>Install</strong>
+                <span className="muted">Themes, docs, and agents from outside this checkout.</span>
+              </button>
               <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
                 <span>Repositories</span>
                 <strong>{catalog.length}</strong>
@@ -626,6 +633,12 @@ export function AdminView({
                 <span className="muted">{accounts.length === 0 ? "No accounts yet." : "Linux accounts on this machine."}</span>
               </button>
             </div>
+          </div>
+        )}
+
+        {tab === "packages" && (
+          <div className="admin-pane">
+            <PackagesSection scope="site" />
           </div>
         )}
 
@@ -698,12 +711,15 @@ export function AdminView({
                     + Add agent
                   </button>
                 </div>
-                {selectedAgent && (
+                {selectedAgent && !selectedAgent.packageName && (
                   <label className="offer-switch">
                     <span>Offer {selectedAgent.label}</span>
                     <input type="checkbox" checked={Boolean(flags[selectedAgent.id])} onChange={() => toggle(selectedAgent.id)} />
                     <span className="switch-track" aria-hidden="true" />
                   </label>
+                )}
+                {selectedAgent?.packageName && (
+                  <p className="muted">Offered while the {selectedAgent.packageName} package is enabled.</p>
                 )}
               </div>
               {installed.length === 0 && agentTab !== "+" && <p className="muted">No agents are installed on this machine.</p>}
@@ -744,8 +760,11 @@ export function AdminView({
                       <span className="switch-track" aria-hidden="true" />
                     </label>
                     <p className="muted">When this is on, a person can set a different binary path in their settings.</p>
-                    {!selectedAgent.builtin && (
+                    {!selectedAgent.builtin && !selectedAgent.packageName && (
                       <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
+                    )}
+                    {selectedAgent.packageName && (
+                      <p className="muted">This agent comes from the {selectedAgent.packageName} package. Remove that package to drop it.</p>
                     )}
                   </section>
                   {selectedAgent.id === "pi" && (
