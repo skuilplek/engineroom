@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { getGitIdentity, saveGitIdentity } from "../api.ts";
 import { useReportError } from "../errors.tsx";
-import { buildGroups, message, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
+import { buildGroups, message, modeTone, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
 import { IconAlert, IconBook, IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
@@ -566,7 +566,7 @@ function Group({
           type="button"
           onClick={() => onOpen(chat)}
         >
-          <span className={chat.running ? "dot" : "dot dot-idle"} />
+          <span className={chatDotClass(chat)} data-mode={modeTone(chat.mode) || undefined} />
           <span className="chat-title">{chat.title}</span>
           <span className="chat-time">{relativeTime(chat.updatedAt)}</span>
         </button>
@@ -579,4 +579,10 @@ function Group({
       )}
     </div>
   );
+}
+
+function chatDotClass(chat: ChatMeta): string {
+  const tone = modeTone(chat.mode);
+  if (tone) return chat.running ? "dot dot-live" : "dot";
+  return chat.running ? "dot" : "dot dot-idle";
 }

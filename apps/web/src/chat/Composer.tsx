@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, type DragEvent, type FormEvent, type React
 import type { GitStatus, QueuedPrompt } from "@engineroom/protocol";
 import { gitWorkspace, initGitWorkspace, switchGitBranch } from "../api.ts";
 import { useReportError } from "../errors.tsx";
+import { modeTone } from "../format.ts";
 import { IconArrow, IconBranch, IconClip } from "../icons.tsx";
 import { addComposerFiles, removeComposerFile, type ComposerAttachment } from "./attachments.ts";
 import { usePromptHeight } from "./promptHeight.ts";
@@ -162,6 +163,7 @@ export function Composer({
   const branchNames = git?.branch && !branches.includes(git.branch) ? [git.branch, ...branches] : branches;
   const showBranch = Boolean(git?.repo && (git.branch || branchNames.length > 0));
   const showCreate = Boolean(git && !git.repo && projectCreate);
+  const tone = modeTone(mode);
 
   return (
     <div className={frame === "dock" ? "composer" : "launch-composer"}>
@@ -189,6 +191,7 @@ export function Composer({
       )}
       <form
         className={dragging ? "composer-card dropping" : "composer-card"}
+        data-mode={tone || undefined}
         onSubmit={onSubmit}
         onDragEnter={onDragOver}
         onDragOver={onDragOver}
@@ -237,7 +240,7 @@ export function Composer({
           <div className="composer-choices">
             {children}
             {modes.length > 0 && (
-              <select aria-label="Mode" value={mode} onChange={(event) => onMode?.(event.target.value)}>
+              <select className="mode-choice" data-mode={tone || undefined} aria-label="Mode" value={mode} onChange={(event) => onMode?.(event.target.value)}>
                 {modes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             )}

@@ -58,18 +58,41 @@ export function buildGroups(
   return groups.filter((group) => !needle || group.chats.length > 0 || group.label.toLowerCase().includes(needle));
 }
 
+export function modeTone(mode: string | undefined): "plan" | "ask" | "" {
+  const id = (mode ?? "").trim().toLowerCase();
+  if (id === "plan" || id === "ask") return id;
+  return "";
+}
+
+function byCreated(a: ChatMeta, b: ChatMeta): number {
+  const created = (b.createdAt || "").localeCompare(a.createdAt || "");
+  if (created !== 0) return created;
+  return a.id.localeCompare(b.id);
+}
+
+function byUpdated(a: ChatMeta, b: ChatMeta): number {
+  const updated = (b.updatedAt || "").localeCompare(a.updatedAt || "");
+  if (updated !== 0) return updated;
+  return a.id.localeCompare(b.id);
+}
+
 export function visibleProjectChats(
   chats: ChatMeta[],
   limit: number,
   activeId: string | null,
   options: { expanded: boolean; uncapped: boolean },
 ): { shown: ChatMeta[]; older: number } {
-  const sorted = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  if (options.uncapped || limit <= 0) return { shown: sorted, older: 0 };
-  const capped = sorted.filter((chat, index) => index < limit || chat.id === activeId);
-  const older = sorted.length - capped.length;
-  if (options.expanded) return { shown: sorted, older };
-  return { shown: capped, older };
+  const ordered = [...chats].sort(byCreated);
+  if (options.uncapped || limit <= 0) return { shown: ordered, older: 0 };
+  const active = new Set(
+    [...chats]
+      .sort(byUpdated)
+      .filter((chat, index) => index < limit || chat.id === activeId)
+      .map((chat) => chat.id),
+  );
+  const older = ordered.length - active.size;
+  if (options.expanded) return { shown: ordered, older };
+  return { shown: ordered.filter((chat) => active.has(chat.id)), older };
 }
 
 export function workspaceLabel(workspace: string, home: string, repos: RepositoryEntry[]): string {

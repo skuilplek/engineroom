@@ -531,6 +531,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   async function applyMode(chatId: string, modeId: string) {
     await assertPersonalOption(chatId, "mode", modeId);
     await updateChat(home, chatId, { mode: modeId });
+    bus.changed();
     // A running turn is already inside session/prompt. Another set_mode on that
     // process waits behind the turn and blocks every other chat on this connection.
     if (modeId && !runs.get(chatId)?.busy) await acp?.setMode(chatId, modeId).catch(() => undefined);
@@ -751,7 +752,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           if (event.type === "title" && event.text.trim()) {
             void updateChat(home, chatId, { title: event.text.trim().slice(0, 120) }).catch(() => undefined);
           }
-          if (event.type === "mode") void updateChat(home, chatId, { mode: event.modeId }).catch(() => undefined);
+          if (event.type === "mode") {
+            void updateChat(home, chatId, { mode: event.modeId }).then(() => bus.changed(), () => undefined);
+          }
           publishEvent(event);
         },
       };
