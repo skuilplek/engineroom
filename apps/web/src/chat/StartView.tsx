@@ -7,6 +7,7 @@ import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
 import { message, strip } from "../format.ts";
 import { composerFilesFromSaved, promptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
+import { IconArchive, IconDownload, IconTrash } from "../icons.tsx";
 import { Composer } from "./Composer.tsx";
 import { startProjectDownload, useProjectDownload } from "./projectDownload.ts";
 import { RepoManage } from "./RepoManage.tsx";
@@ -156,13 +157,48 @@ export function StartView({
     setModel(available.some((item) => item.id === model) ? model : available[0]?.id || "");
   }
 
+  const archiveLabel = archived ? "Unarchive" : "Archive";
+
   return (
     <div className="start">
-      {onToggleFiles && !filesOpen && (
-        <div className="start-topbar">
-          <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
-        </div>
-      )}
+      <div className="start-topbar">
+        {projectDownloads && !creatingZip && (
+          <button
+            className="ghost icon-toggle"
+            type="button"
+            title="Download project"
+            aria-label="Download project"
+            onClick={() => void startProjectDownload(workspace, targetLabel)}
+          >
+            <IconDownload />
+          </button>
+        )}
+        <button
+          className="ghost icon-toggle"
+          type="button"
+          title={archiveLabel}
+          aria-label={archiveLabel}
+          disabled={action !== ""}
+          onClick={() => void archiveProject()}
+        >
+          <IconArchive />
+        </button>
+        <button
+          className="danger icon-toggle"
+          type="button"
+          title="Delete"
+          aria-label="Delete"
+          disabled={action !== ""}
+          onClick={() => {
+            setTyped("");
+            setActionError("");
+            setConfirming(true);
+          }}
+        >
+          <IconTrash />
+        </button>
+        <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
+      </div>
       <h1>Let's Start Building!</h1>
       <Composer
         frame="launch"
@@ -201,40 +237,20 @@ export function StartView({
         )}
       </Composer>
       <p className="context-line">{targetLabel}</p>
-      <div className="download-project">
-        {creatingZip && <p className="zip-progress" role="status">..creating project zip file..</p>}
-        {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
-        {actionError && !confirming && <p className="alert" role="alert">{actionError}</p>}
-        <div className="project-actions">
-          {projectDownloads && !creatingZip && (
-            <button className="primary" type="button" onClick={() => void startProjectDownload(workspace, targetLabel)}>
-              Download project
-            </button>
+      {(creatingZip || (downloadHere && download?.phase === "failed") || (actionError && !confirming) || projectCreate) && (
+        <div className="download-project">
+          {creatingZip && <p className="zip-progress" role="status">..creating project zip file..</p>}
+          {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
+          {actionError && !confirming && <p className="alert" role="alert">{actionError}</p>}
+          {projectCreate && (
+            <RepoManage
+              workspace={workspace}
+              refreshToken={repoTick}
+              onBranchChanged={onBranchChanged}
+            />
           )}
-          <button className="ghost" type="button" disabled={action !== ""} onClick={() => void archiveProject()}>
-            {archived ? "Unarchive" : "Archive"}
-          </button>
-          <button
-            className="danger"
-            type="button"
-            disabled={action !== ""}
-            onClick={() => {
-              setTyped("");
-              setActionError("");
-              setConfirming(true);
-            }}
-          >
-            Delete
-          </button>
         </div>
-        {projectCreate && (
-          <RepoManage
-            workspace={workspace}
-            refreshToken={repoTick}
-            onBranchChanged={onBranchChanged}
-          />
-        )}
-      </div>
+      )}
       {confirming && (
         <div className="modal-backdrop">
           <div className="confirm-dialog" role="dialog" aria-labelledby="delete-project-title" aria-modal="true">

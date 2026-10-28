@@ -229,6 +229,16 @@ export function IconNewFolder() {
   );
 }
 
+export function IconArchive() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M2.2 3.2h11.6v2.4H2.2z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M3.2 5.6v7.2h9.6V5.6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M6.2 8.4h3.6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconTrash() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">

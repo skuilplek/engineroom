@@ -931,12 +931,6 @@ textarea { resize: vertical; }
   align-items: center;
   gap: 8px;
 }
-.project-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-}
 .repo-manage {
   width: 100%;
   margin-top: 8px;
@@ -1377,7 +1371,7 @@ html[data-wrap="1"] .diff-line {
     right: 0;
   }
   .file-drawer { max-height: 55vh; border-left: 0; border-top: 1px solid var(--line); }
-  .start { padding-top: 48px; }
+  .start { padding-top: 16px; }
 }
 
 .settings.admin-view {
@@ -2116,12 +2110,24 @@ html[data-wrap="1"] .diff-line {
   top: 16px;
   right: 20px;
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 .icon-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+.icon-toggle svg { width: 16px; height: 16px; }
+@media (max-width: 800px) {
+  .start-topbar {
+    position: static;
+    align-self: flex-end;
+    margin-bottom: 8px;
+  }
 }
 .icon-toggle.active {
   background: var(--active);

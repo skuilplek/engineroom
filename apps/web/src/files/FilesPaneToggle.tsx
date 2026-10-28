@@ -13,12 +13,11 @@ export function FilesPaneToggle({
       className="ghost icon-toggle"
       type="button"
       aria-pressed={false}
-      aria-label="Show repository files"
-      title="Show repository files"
+      aria-label="Files"
+      title="Files"
       onClick={onToggle}
     >
       <IconPanelRight />
-      <span>Files</span>
     </button>
   );
 }
