@@ -294,6 +294,16 @@ test("policy options stay optional and narrow the offered catalog", () => {
   assert.equal(probed.type, "probe_agent");
   assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "Nope" }));
   assert.equal(parseRunnerRequest({ id: "3", type: "probe_agent", agent: "codex" }).type, "probe_agent");
+  const binarySite = parseRunnerRequest({
+    id: "4b",
+    type: "put_agent_binaries",
+    binaries: { pi: "/usr/local/bin/pi" },
+    allowOverride: ["pi"],
+  });
+  if (binarySite.type === "put_agent_binaries") {
+    assert.equal(binarySite.binaries.pi, "/usr/local/bin/pi");
+    assert.deepEqual(binarySite.allowOverride, ["pi"]);
+  }
   const resolved = parseRunnerRequest({ id: "4", type: "resolve_commands", names: ["agent", "agent", "/usr/local/bin/codex"] });
   if (resolved.type === "resolve_commands") assert.deepEqual(resolved.names, ["agent", "/usr/local/bin/codex"]);
   assert.throws(() => parseRunnerRequest({ id: "5", type: "resolve_commands", names: [] }));
@@ -677,6 +687,43 @@ test("branch names and queue indexes stay narrow", () => {
   assert.throws(() => parseRunnerRequest({ id: "23", type: "git_switch", workspace: "/home/alice", branch: "foo..bar" }));
   const switched = parseClientCommand({ type: "git_switch", workspace: "/home/alice/Sites/proj", branch: "main" });
   assert.equal(switched.type, "git_switch");
+  const remote = parseRunnerRequest({
+    id: "24",
+    type: "git_remote_set",
+    workspace: "  /home/alice/Sites/proj  ",
+    url: " https://github.com/org/repo.git ",
+  });
+  assert.equal(remote.type, "git_remote_set");
+  if (remote.type === "git_remote_set") {
+    assert.equal(remote.workspace, "/home/alice/Sites/proj");
+    assert.equal(remote.url, "https://github.com/org/repo.git");
+  }
+  const created = parseRunnerRequest({
+    id: "25",
+    type: "git_branch_create",
+    workspace: "/home/alice/Sites/proj",
+    branch: " feature/widget ",
+  });
+  assert.equal(created.type, "git_branch_create");
+  if (created.type === "git_branch_create") assert.equal(created.branch, "feature/widget");
+  const pull = parseRunnerRequest({ id: "26", type: "git_pull", workspace: "/home/alice/Sites/proj" });
+  assert.equal(pull.type, "git_pull");
+  const push = parseRunnerRequest({ id: "27", type: "git_push", workspace: "/home/alice/Sites/proj" });
+  assert.equal(push.type, "git_push");
+  assert.throws(() => parseRunnerRequest({
+    id: "28",
+    type: "git_remote_set",
+    workspace: "/home/alice/Sites/proj",
+    url: "file:///tmp/repo.git",
+  }));
+  assert.throws(() => parseRunnerRequest({
+    id: "29",
+    type: "git_branch_create",
+    workspace: "/home/alice/Sites/proj",
+    branch: "foo..bar",
+  }));
+  assert.throws(() => parseRunnerRequest({ id: "30", type: "git_pull", workspace: "   " }));
+  assert.throws(() => parseRunnerRequest({ id: "31", type: "git_push", workspace: "   " }));
 });
 
 test("project archive requests keep a workspace and an archive id", () => {
@@ -784,6 +831,22 @@ test("git change requests keep paths inside the repo and reject an empty commit"
     stageVisible: false,
   });
   if (plain.type === "git_commit") assert.equal(plain.stageVisible, undefined);
+  const identity = parseRunnerRequest({ id: "g9", type: "git_identity_get" });
+  assert.equal(identity.type, "git_identity_get");
+  const savedIdentity = parseRunnerRequest({
+    id: "g10",
+    type: "git_identity_set",
+    name: "  Ada Lovelace  ",
+    email: "ada@example.com",
+  });
+  assert.equal(savedIdentity.type, "git_identity_set");
+  if (savedIdentity.type === "git_identity_set") {
+    assert.equal(savedIdentity.name, "Ada Lovelace");
+    assert.equal(savedIdentity.email, "ada@example.com");
+  }
+  assert.throws(() => parseRunnerRequest({ id: "g11", type: "git_identity_set", name: "-Ada", email: "ada@example.com" }));
+  assert.throws(() => parseRunnerRequest({ id: "g12", type: "git_identity_set", name: "Ada", email: "not-an-email" }));
+  assert.throws(() => parseRunnerRequest({ id: "g13", type: "git_identity_set", name: "Ada\nLovelace", email: "ada@example.com" }));
 });
 
 test("prompt attachments must live in the upload folder", () => {

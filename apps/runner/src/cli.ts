@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
-import { access, lstat, open, readFile, readdir, readlink, realpath } from "node:fs/promises";
+import { access, lstat, open, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
@@ -170,6 +170,29 @@ function runPathProbe(home: string, base: NodeJS.ProcessEnv, shell: string, args
 }
 
 const PI_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** Every executable `which` would list for this name, in PATH order. */
+export async function whichAll(name: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  if (path.isAbsolute(name)) return (await executableFile(name)) ? [name] : [];
+  if (!name || name.includes("/") || name.includes("\0")) return [];
+  const found: string[] = [];
+  for (const dir of (env.PATH || "").split(":")) {
+    if (!dir) continue;
+    const full = path.join(dir, name);
+    if (found.includes(full)) continue;
+    if (await executableFile(full)) found.push(full);
+  }
+  return found;
+}
+
+async function executableFile(full: string): Promise<boolean> {
+  try {
+    await access(full, constants.X_OK);
+    return (await stat(full)).isFile();
+  } catch {
+    return false;
+  }
+}
 
 export async function resolveBinary(
   override: string | undefined,

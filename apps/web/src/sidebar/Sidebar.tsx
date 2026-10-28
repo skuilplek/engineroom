@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { agentLabel, type AgentId, type ChatMeta, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
-import { buildGroups, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
+import { getGitIdentity, saveGitIdentity } from "../api.ts";
+import { buildGroups, message, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
 import { IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
@@ -95,33 +96,11 @@ export function Sidebar({
           <input value={query} placeholder="Search chats" onChange={(event) => setQuery(event.target.value)} />
         </label>
       )}
-      <div className="side-nav">
-        <button
-          className={view === "settings" ? "nav-item active" : "nav-item"}
-          type="button"
-          aria-label="Customize"
-          title="Customize"
-          onClick={onSettings}
-        >
-          <IconGear />
-          {!collapsed && "Customize"}
-        </button>
-        {session.admin && (
-          <button
-            className={view === "admin" ? "nav-item active" : "nav-item"}
-            type="button"
-            aria-label="Admin"
-            title="Admin"
-            onClick={onAdmin}
-          >
-            <IconSliders />
-            {!collapsed && "Admin"}
-          </button>
-        )}
-        {!collapsed && session.cliImport && (
+      {!collapsed && session.cliImport && (
+        <div className="side-nav">
           <button className="nav-item" type="button" onClick={importList}>Import CLI sessions</button>
-        )}
-      </div>
+        </div>
+      )}
       {!collapsed && session.cliImport && sessions && (
         <ImportList
           agent={agent}
@@ -187,19 +166,234 @@ export function Sidebar({
           {error && <p className="alert" role="alert">{error}</p>}
         </>
       )}
-      <div className="sidebar-foot">
-        {!collapsed && (
-          <div className="presence">
-            <span className="dot" />
-            <span>{session.username}</span>
-          </div>
-        )}
-        <button className="sign-out" type="button" aria-label="Sign out" title="Sign out" onClick={onLogout}>
-          {collapsed ? <IconSignOut /> : "Sign out"}
-        </button>
-      </div>
+      <UserMenu
+        username={session.username}
+        admin={session.admin}
+        collapsed={collapsed}
+        view={view}
+        onSettings={onSettings}
+        onAdmin={onAdmin}
+        onLogout={onLogout}
+      />
     </aside>
   );
+}
+
+function UserMenu({
+  username,
+  admin,
+  collapsed,
+  view,
+  onSettings,
+  onAdmin,
+  onLogout,
+}: {
+  username: string;
+  admin: boolean;
+  collapsed: boolean;
+  view: View;
+  onSettings: () => void;
+  onAdmin: () => void;
+  onLogout: () => void;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [identity, setIdentity] = useState<GitIdentity | null>(null);
+  const [ready, setReady] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftEmail, setDraftEmail] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const displayName = identity?.name || username;
+  const complete = Boolean(identity?.name && identity?.email);
+
+  useEffect(() => {
+    let active = true;
+    getGitIdentity().then((next) => {
+      if (!active) return;
+      setIdentity(next);
+      setDraftName(next.name);
+      setDraftEmail(next.email);
+    }).catch((err) => {
+      if (active) setError(message(err));
+    }).finally(() => {
+      if (active) setReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function toggle() {
+    setOpen((current) => {
+      const next = !current;
+      if (next) {
+        setEditing(ready && (!identity?.name || !identity?.email));
+        setDraftName(identity?.name ?? "");
+        setDraftEmail(identity?.email ?? "");
+      }
+      return next;
+    });
+  }
+
+  function choose(action: () => void) {
+    setOpen(false);
+    action();
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await saveGitIdentity({ name: draftName.trim(), email: draftEmail.trim() });
+      setIdentity(saved);
+      setDraftName(saved.name);
+      setDraftEmail(saved.email);
+      setEditing(false);
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sidebar-foot" ref={root}>
+      {open && (
+        <div className="user-menu" aria-label="Account">
+          {!ready ? (
+            <p className="muted user-menu-identity">Loading…</p>
+          ) : editing || !complete ? (
+            <form className="user-menu-form" onSubmit={(event) => void save(event)}>
+              <label>
+                Name
+                <input
+                  value={draftName}
+                  autoComplete="name"
+                  autoFocus
+                  required
+                  onChange={(event) => setDraftName(event.target.value)}
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={draftEmail}
+                  autoComplete="email"
+                  required
+                  onChange={(event) => setDraftEmail(event.target.value)}
+                />
+              </label>
+              <p className="muted user-menu-note">Saved as your global git name and email.</p>
+              {error && <p className="alert" role="alert">{error}</p>}
+              <div className="user-menu-actions">
+                <button className="primary" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+                {complete && (
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => {
+                      setDraftName(identity?.name ?? "");
+                      setDraftEmail(identity?.email ?? "");
+                      setEditing(false);
+                      setError("");
+                    }}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          ) : (
+            <div className="user-menu-identity">
+              <div className="user-menu-id">
+                <strong>{identity?.name}</strong>
+                <span className="muted">{identity?.email}</span>
+              </div>
+              <button
+                className="user-menu-edit"
+                type="button"
+                onClick={() => {
+                  setDraftName(identity?.name ?? "");
+                  setDraftEmail(identity?.email ?? "");
+                  setEditing(true);
+                  setError("");
+                }}
+              >
+                Edit
+              </button>
+            </div>
+          )}
+          <div className="user-menu-sep" />
+          <button
+            className={view === "settings" ? "user-menu-item active" : "user-menu-item"}
+            type="button"
+            onClick={() => choose(onSettings)}
+          >
+            <IconGear />
+            Customize
+          </button>
+          {admin && (
+            <button
+              className={view === "admin" ? "user-menu-item active" : "user-menu-item"}
+              type="button"
+              onClick={() => choose(onAdmin)}
+            >
+              <IconSliders />
+              Admin
+            </button>
+          )}
+          <div className="user-menu-sep" />
+          <button className="user-menu-item" type="button" onClick={onLogout}>
+            <IconSignOut />
+            Sign out
+          </button>
+        </div>
+      )}
+      <button
+        className={open ? "account-button open" : "account-button"}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account menu for ${displayName}`}
+        title={displayName}
+        onClick={toggle}
+      >
+        <span className="account-avatar" aria-hidden="true">{initialOf(displayName)}</span>
+        {!collapsed && (
+          <span className="account-meta">
+            <span className="account-name">{displayName}</span>
+            {identity?.name ? <span className="account-user">{username}</span> : null}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+function initialOf(value: string): string {
+  const match = value.trim().match(/\p{L}|\p{N}/u);
+  return (match ? match[0] : "?").toLocaleUpperCase();
 }
 
 function NewProject({ onCreate }: { onCreate: (name: string, url: string) => Promise<void> }) {

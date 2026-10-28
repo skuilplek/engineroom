@@ -30,9 +30,9 @@ import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
-import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture } from "./cli.ts";
+import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture, whichAll } from "./cli.ts";
 import { gitClone } from "./clone.ts";
-import { gitInitWorkspace, gitStatus, gitSwitch } from "./git.ts";
+import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
 import { loadEnv, saveEnv } from "./envfile.ts";
 import { TranscriptWriter } from "./persist.ts";
@@ -297,7 +297,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         await writer.flush(request.chatId);
         return getChat(home, request.chatId, runs.has(request.chatId));
       case "get_settings":
-        return withLocks(await loadSettings(home), await loadPolicy(home));
+        return withLocks(await loadSettings(home), await loadPolicy(home), home);
       case "put_settings":
         return saveSettings(home, request.settings);
       case "get_policy":
@@ -312,7 +312,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         const policy = await loadPolicy(home);
         return {
           policy,
-          settings: withLocks(await loadSettings(home), policy),
+          settings: withLocks(await loadSettings(home), policy, home),
           grants: await loadGrants(home),
           env: await loadEnv(home),
         };
@@ -353,6 +353,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return resolveCommands(request.names, request.refresh === true);
       case "put_pi_site":
         return putPiSite(request.install, request.auth);
+      case "put_agent_binaries":
+        return putAgentBinaries(request.binaries, request.allowOverride);
       case "setup_pi":
         return runPiSetup(request.provider, request.model, request.linkShared);
       case "cancel":
@@ -361,12 +363,24 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "dequeue":
         dequeue(request.chatId, request.index);
         return { ok: true };
+      case "git_identity_get":
+        return readGitIdentity(home);
+      case "git_identity_set":
+        return writeGitIdentity(home, request.name, request.email);
       case "git_status":
         return gitStatus(home, request.workspace);
       case "git_init":
         return gitInitWorkspace(home, request.workspace);
       case "git_switch":
         return gitSwitch(home, request.workspace, request.branch);
+      case "git_remote_set":
+        return gitSetRemote(home, request.workspace, request.url);
+      case "git_branch_create":
+        return gitCreateBranch(home, request.workspace, request.branch);
+      case "git_pull":
+        return gitPull(home, request.workspace);
+      case "git_push":
+        return gitPush(home, request.workspace);
       case "git_stage":
         return stageRepositoryChange(home, request.workspace, request.path, request.visibility);
       case "git_unstage":
@@ -463,6 +477,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
 
   let commandPathAt = 0;
 
+  async function putAgentBinaries(binaries: Partial<Record<string, string>>, allowOverride: readonly string[]) {
+    const root = path.join(home, ".engineroom");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const file = path.join(root, "agent-binaries.json");
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile(tmp, `${JSON.stringify({ binaries, allowOverride })}\n`, { mode: 0o600 });
+    await rename(tmp, file);
+    return { ok: true };
+  }
+
   async function putPiSite(install: "user" | "global", auth: "user" | "shared") {
     const root = path.join(home, ".engineroom");
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -508,12 +532,14 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     const env = childEnv(process.env, home);
     const commands = [];
     for (const name of names) {
+      const paths = await whichAll(name, env);
+      let found: string | null = null;
       try {
-        const found = await resolveBinary(path.isAbsolute(name) ? name : undefined, [name], env);
-        commands.push({ name, path: found });
+        found = await resolveBinary(path.isAbsolute(name) ? name : undefined, [name], env);
       } catch {
-        commands.push({ name, path: null });
+        found = null;
       }
+      commands.push({ name, path: found, paths });
     }
     return { commands };
   }
@@ -630,7 +656,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       publishEvent({ type: "turn_start" });
       const policy = await loadPolicy(home);
       if (!policy.agents.includes(chat.agent)) throw new Error("invalid agent");
-      const settings = withLocks(await loadSettings(home), policy);
+      const settings = withLocks(await loadSettings(home), policy, home);
       const ctx: DriverContext = {
         home,
         workspace: chat.workspace,
@@ -727,7 +753,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     const settings = await loadSettings(home);
     const env = childEnv(process.env, home);
     env.TERM = "xterm-256color";
-    const binary = await resolveBinary(binaryFor(policy, settings, chat.agent), binaryNames(chat.agent, agentCatalog), env);
+    const binary = await resolveBinary(binaryFor(policy, settings, chat.agent, home), binaryNames(chat.agent, agentCatalog), env);
     const command = ptyCommand(chat.agent, chat.agentSessionId, chat.workspace);
     const scroll = await pty.open(
       chatId,

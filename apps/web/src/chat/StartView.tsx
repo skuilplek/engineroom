@@ -9,6 +9,7 @@ import { composerFilesFromSaved, promptText, uploadPendingAttachments, type Comp
 import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
 import { Composer } from "./Composer.tsx";
 import { startProjectDownload, useProjectDownload } from "./projectDownload.ts";
+import { RepoManage } from "./RepoManage.tsx";
 
 export function StartView({
   agents,
@@ -63,6 +64,7 @@ export function StartView({
   const download = useProjectDownload();
   const downloadHere = Boolean(download && strip(download.workspace) === strip(workspace));
   const creatingZip = Boolean(downloadHere && download?.phase === "creating");
+  const [repoTick, setRepoTick] = useState(0);
 
   useEffect(() => {
     alive.current = true;
@@ -180,8 +182,14 @@ export function StartView({
         onModel={setModel}
         workspace={workspace}
         projectCreate={projectCreate}
-        onReposChanged={onReposChanged}
-        onBranchChanged={onBranchChanged}
+        onReposChanged={() => {
+          setRepoTick((value) => value + 1);
+          onReposChanged?.();
+        }}
+        onBranchChanged={() => {
+          setRepoTick((value) => value + 1);
+          onBranchChanged?.();
+        }}
         error={error}
       >
         {agents.length === 0 && <p className="muted">No agents available</p>}
@@ -219,6 +227,13 @@ export function StartView({
             Delete
           </button>
         </div>
+        {projectCreate && (
+          <RepoManage
+            workspace={workspace}
+            refreshToken={repoTick}
+            onBranchChanged={onBranchChanged}
+          />
+        )}
       </div>
       {confirming && (
         <div className="modal-backdrop">

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import {
   AGENT_CATALOG,
   AGENTS,
@@ -27,6 +28,39 @@ export interface ListedAgent extends AgentDefinition {
   available: boolean;
   path: string | null;
   enabled: boolean;
+  allowOverride: boolean;
+  pathSource: "detected" | "manual" | null;
+}
+
+export interface StoredAgentBinary {
+  path: string;
+  source: "detected" | "manual";
+  allowOverride: boolean;
+}
+
+export interface BinarySubmission {
+  binaries: Record<string, string>;
+  allowOverride: Record<string, boolean>;
+}
+
+/** A path inside an account home is that person's binary, not a server install. */
+export function isAccountPath(full: string, home?: string): boolean {
+  const resolved = path.resolve(full);
+  if (home) {
+    const root = path.resolve(home);
+    if (resolved === root || resolved.startsWith(`${root}${path.sep}`)) return true;
+  }
+  if (resolved === "/root" || resolved.startsWith(`${path.sep}root${path.sep}`)) return true;
+  if (resolved === "/home" || resolved.startsWith(`${path.sep}home${path.sep}`)) return true;
+  return false;
+}
+
+export function chooseServerPath(paths: readonly string[], home?: string): string | null {
+  for (const item of paths) {
+    if (!item.startsWith("/") || isAccountPath(item, home)) continue;
+    return item;
+  }
+  return null;
 }
 
 export const DEFAULT_APP_NAME = "AgentWrapper";
@@ -191,6 +225,7 @@ export function saveAgentFlags(
   fileEditor?: boolean,
   fileDownload?: boolean,
   fileUpload?: boolean,
+  detected: Record<string, string> = {},
 ): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
@@ -203,6 +238,12 @@ export function saveAgentFlags(
   }
   if (!Object.values(next).some(Boolean)) throw new Error("at least one agent must stay on");
   const pi = piFieldsFromBody(record, loadPiConfig(file));
+  const binaries = mergeAgentBinaries(
+    loadAgentBinaries(file),
+    [...AGENTS, ...custom.map((agent) => agent.id)],
+    detected,
+    binarySubmission(record),
+  );
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
@@ -221,7 +262,8 @@ export function saveAgentFlags(
     fileEditor: editor,
     fileDownload: download,
     fileUpload: upload,
-    piInstall: pi.install,
+    piInstall: binaries.pi?.path ? "global" : "user",
+    agentBinaries: binaries,
     piAuth: pi.auth,
     piProvider: pi.provider,
     piModel: pi.model,
@@ -261,20 +303,159 @@ export function removeCustomAgent(file: string, id: string): CustomAgent[] {
   return next;
 }
 
-export async function listAgents(file: string, dirs: string[] = SYSTEM_COMMAND_DIRS): Promise<ListedAgent[]> {
+export async function listAgents(file: string, dirs: string[] = SYSTEM_COMMAND_DIRS, home?: string): Promise<ListedAgent[]> {
   const flags = loadAgentFlags(file);
+  const saved = loadAgentBinaries(file);
   const custom = loadCustomAgents(file);
   const specs = [
     ...AGENT_CATALOG.map((agent) => ({ ...agent, builtin: true })),
     ...custom.map((agent) => ({ id: agent.id, label: agent.label, binary: agent.binary, builtin: false })),
   ];
   const found = await Promise.all(specs.map((spec) => findCommand(spec.binary, dirs)));
-  return specs.map((spec, index) => ({
-    ...spec,
-    available: found[index] !== null,
-    path: found[index] ?? null,
-    enabled: Boolean(flags[spec.id]),
-  }));
+  return specs.map((spec, index) => {
+    const record = saved[spec.id];
+    const probed = found[index];
+    const serverProbe = probed && !isAccountPath(probed, home) ? probed : null;
+    const full = record?.path || serverProbe;
+    return {
+      ...spec,
+      available: Boolean(full),
+      path: full || null,
+      enabled: Boolean(flags[spec.id]),
+      allowOverride: Boolean(record?.allowOverride),
+      pathSource: record?.path ? record.source : serverProbe ? "detected" : null,
+    };
+  });
+}
+
+export async function serverBinariesFor(
+  agents: readonly { id: string; binary: string }[],
+  home: string,
+  resolved: ReadonlyMap<string, readonly string[]>,
+  dirs: string[] = SYSTEM_COMMAND_DIRS,
+): Promise<Record<string, string>> {
+  const found: Record<string, string> = {};
+  for (const agent of agents) {
+    for (const name of detectionNames(agent)) {
+      const server = chooseServerPath(resolved.get(name) ?? [], home);
+      if (!server) continue;
+      found[agent.id] = server;
+      break;
+    }
+    if (found[agent.id]) continue;
+    const local = await findCommand(agent.binary, dirs);
+    if (local && !isAccountPath(local, home)) found[agent.id] = local;
+  }
+  return found;
+}
+
+export function loadAgentBinaries(file: string): Record<string, StoredAgentBinary> {
+  const raw = readAgentFile(file).agentBinaries;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const binaries: Record<string, StoredAgentBinary> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isAgentId(id) || !value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    let full = "";
+    if (typeof record.path === "string" && record.path.startsWith("/") && record.path.length <= 4096 && !record.path.includes("\0")) {
+      try {
+        full = parseAgentCommand(record.path);
+      } catch {
+        full = "";
+      }
+    }
+    if (full && isAccountPath(full)) full = "";
+    const source = record.source === "manual" ? "manual" : "detected";
+    const allowOverride = record.allowOverride === true;
+    if (!full && !allowOverride) continue;
+    binaries[id] = { path: full, source: full ? source : "detected", allowOverride };
+  }
+  return binaries;
+}
+
+export function storeDetectedBinaries(file: string, detected: Record<string, string>) {
+  const custom = loadCustomAgents(file);
+  const merged = mergeAgentBinaries(
+    loadAgentBinaries(file),
+    [...AGENTS, ...custom.map((agent) => agent.id)],
+    detected,
+    null,
+  );
+  const current = readAgentFile(file);
+  writeAgentFile(file, {
+    ...current,
+    agentBinaries: merged,
+    piInstall: merged.pi?.path ? "global" : "user",
+  });
+}
+
+export function binarySubmission(body: Record<string, unknown>): BinarySubmission | null {
+  if (body.binaries == null && body.allowOverride == null) return null;
+  const binaries: Record<string, string> = {};
+  if (body.binaries != null) {
+    if (typeof body.binaries !== "object" || Array.isArray(body.binaries)) throw new Error("invalid binaries");
+    for (const [agent, raw] of Object.entries(body.binaries as Record<string, unknown>)) {
+      if (!isAgentId(agent)) continue;
+      if (raw == null || raw === "") {
+        binaries[agent] = "";
+        continue;
+      }
+      if (typeof raw !== "string") throw new Error("invalid binaries");
+      const command = parseAgentCommand(raw.trim());
+      if (!command.startsWith("/")) throw new Error(`${agent} binary must be an absolute path`);
+      if (isAccountPath(command)) throw new Error(`${agent} binary must be a server path`);
+      binaries[agent] = command;
+    }
+  }
+  const allowOverride: Record<string, boolean> = {};
+  if (body.allowOverride != null) {
+    if (typeof body.allowOverride !== "object" || Array.isArray(body.allowOverride)) throw new Error("invalid binaries");
+    for (const [agent, raw] of Object.entries(body.allowOverride as Record<string, unknown>)) {
+      if (!isAgentId(agent)) continue;
+      allowOverride[agent] = raw === true;
+    }
+  }
+  return { binaries, allowOverride };
+}
+
+export function mergeAgentBinaries(
+  current: Record<string, StoredAgentBinary>,
+  agents: readonly string[],
+  detected: Record<string, string>,
+  submitted: BinarySubmission | null,
+): Record<string, StoredAgentBinary> {
+  const next: Record<string, StoredAgentBinary> = {};
+  for (const id of agents) {
+    if (!isAgentId(id)) continue;
+    const prev = current[id];
+    const allow = submitted ? Boolean(submitted.allowOverride[id]) : Boolean(prev?.allowOverride);
+    const found = detected[id] && !isAccountPath(detected[id]) ? detected[id] : "";
+    let full = "";
+    let source: StoredAgentBinary["source"] = "detected";
+    const explicit = submitted != null && Object.prototype.hasOwnProperty.call(submitted.binaries, id);
+    if (explicit && submitted.binaries[id]) {
+      const manual = submitted.binaries[id];
+      if (found && manual === found) {
+        full = found;
+        source = "detected";
+      } else {
+        full = manual;
+        source = "manual";
+      }
+    } else if (explicit) {
+      full = found;
+      source = "detected";
+    } else if (prev?.source === "manual" && prev.path) {
+      full = prev.path;
+      source = "manual";
+    } else {
+      full = found;
+      source = "detected";
+    }
+    if (!full && !allow) continue;
+    next[id] = { path: full, source, allowOverride: allow };
+  }
+  return next;
 }
 
 // Names a launch will actually try. Claude's ACP adapter is a different command
@@ -315,12 +496,13 @@ export function usableAgentIds(
   allowed: readonly AgentId[],
   overrides: Partial<Record<string, string>> = {},
   resolvedOverrides: ReadonlyMap<string, string> = new Map(),
+  globalPaths: ReadonlySet<string> = new Set(),
 ): AgentId[] {
   const offerable = new Set(offeredAgentIds(flags, listed));
   const byId = new Map(listed.map((agent) => [agent.id, agent]));
   return allowed.filter((agent) => {
     if (!offerable.has(agent)) return false;
-    if (byId.get(agent)?.available) return true;
+    if (globalPaths.has(agent) || byId.get(agent)?.available) return true;
     const override = overrides[agent];
     return Boolean(override && resolvedOverrides.has(override));
   });
@@ -339,7 +521,7 @@ export function loadPiConfig(file: string): PiSiteConfig {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
     return {
-      install: parsed.piInstall === "global" ? "global" : "user",
+      install: loadAgentBinaries(file).pi?.path ? "global" : "user",
       auth: parsed.piAuth === "shared" ? "shared" : "user",
       provider: typeof parsed.piProvider === "string" ? quietPiValue(parsed.piProvider) : "",
       model: typeof parsed.piModel === "string" ? quietPiValue(parsed.piModel) : "",
@@ -353,10 +535,6 @@ export function piFieldsFromBody(body: unknown, current: PiSiteConfig): PiSiteCo
   if (!body || typeof body !== "object") return current;
   const record = body as Record<string, unknown>;
   const next = { ...current };
-  if (record.piInstall != null) {
-    if (record.piInstall !== "user" && record.piInstall !== "global") throw new Error("invalid pi install");
-    next.install = record.piInstall;
-  }
   if (record.piAuth != null) {
     if (record.piAuth !== "user" && record.piAuth !== "shared") throw new Error("invalid pi auth");
     next.auth = record.piAuth;

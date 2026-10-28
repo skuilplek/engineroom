@@ -6,6 +6,7 @@ import type {
   ChatMeta,
   EnvEntry,
   FileVisibility,
+  GitIdentity,
   GitStatus,
   PromptAttachment,
   RepoFileContent,
@@ -62,6 +63,8 @@ export interface AdminAgent {
   builtin: boolean;
   available: boolean;
   path: string | null;
+  pathSource?: "detected" | "manual" | null;
+  allowOverride?: boolean;
   enabled: boolean;
 }
 
@@ -152,6 +155,14 @@ export function getSettings() {
   return api<Settings>("/api/settings");
 }
 
+export function getGitIdentity() {
+  return api<GitIdentity>("/api/git-identity");
+}
+
+export function saveGitIdentity(identity: GitIdentity) {
+  return api<GitIdentity>("/api/git-identity", { method: "PUT", body: JSON.stringify(identity) });
+}
+
 export function saveSettings(settings: SettingsPatch) {
   return api<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(settings) });
 }
@@ -196,6 +207,34 @@ export function switchGitBranch(workspace: string, branch: string) {
   return api<GitStatus>("/api/repositories/git", {
     method: "POST",
     body: JSON.stringify({ workspace, action: "switch", branch }),
+  });
+}
+
+export function setGitRemote(workspace: string, url: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "remote", url }),
+  });
+}
+
+export function createGitBranch(workspace: string, branch: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "branch", branch }),
+  });
+}
+
+export function pullGit(workspace: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "pull" }),
+  });
+}
+
+export function pushGit(workspace: string) {
+  return api<GitStatus>("/api/repositories/git", {
+    method: "POST",
+    body: JSON.stringify({ workspace, action: "push" }),
   });
 }
 
@@ -521,7 +560,13 @@ export function saveAgents(
   fileEditor?: boolean,
   fileDownload?: boolean,
   fileUpload?: boolean,
-  pi?: { piInstall: "user" | "global"; piAuth: "user" | "shared"; piProvider: string; piModel: string },
+  extra?: {
+    piAuth?: "user" | "shared";
+    piProvider?: string;
+    piModel?: string;
+    binaries?: Record<string, string>;
+    allowOverride?: Record<string, boolean>;
+  },
 ) {
   return api<{
     agents: AgentId[];
@@ -538,7 +583,7 @@ export function saveAgents(
     piModel?: string;
   }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...pi }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...extra }),
   });
 }
 

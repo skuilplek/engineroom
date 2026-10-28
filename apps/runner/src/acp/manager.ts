@@ -262,7 +262,7 @@ export class AcpManager {
     if (this.options.launch) return this.options.launch(agent, ctx);
     const command = acpCommand(agent, this.commands);
     const [policy, settings] = await Promise.all([loadPolicy(ctx.home), loadSettings(ctx.home)]);
-    const binary = await resolveBinary(binaryFor(policy, settings, agent), command.names, childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
+    const binary = await resolveBinary(binaryFor(policy, settings, agent, ctx.home), command.names, childEnv(ctx.env ?? process.env, ctx.home)).catch(() => {
       throw new AcpUnavailable(`could not find ${command.names[0]} on PATH`);
     });
     return { binary, args: command.args };

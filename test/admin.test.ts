@@ -618,10 +618,23 @@ test("the administrator sets one person's access, environment, and password", as
     const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
 
+    const agentSave = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        cursor: true,
+        claude: true,
+        pi: true,
+        binaries: { cursor: "/bin/true" },
+        allowOverride: { cursor: false },
+      }),
+    });
+    assert.equal(agentSave.status, 200);
+
     const policy = await fetch(`${base}/api/admin/users/carol/policy`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ agents: ["cursor"], binaries: { cursor: "/opt/admin/agent" }, rawTerminal: false }),
+      body: JSON.stringify({ agents: ["cursor"], binaries: {}, rawTerminal: false }),
     });
     assert.equal(policy.status, 200);
 
@@ -644,11 +657,39 @@ test("the administrator sets one person's access, environment, and password", as
     const settings = (await (await fetch(`${base}/api/settings`, { headers: carolHeaders })).json()) as {
       binaries: { cursor?: string };
       lockedBinaries?: string[];
+      binaryOverride?: string[];
     };
-    assert.equal(settings.binaries.cursor, "/opt/admin/agent");
+    assert.equal(settings.binaries.cursor, "/bin/true");
     assert.deepEqual(settings.lockedBinaries, ["cursor"]);
+    assert.equal(settings.binaryOverride?.includes("cursor"), false);
     const stored = JSON.parse(await readFile(path.join(carolHome, ".engineroom", "settings.json"), "utf8")) as { binaries?: { cursor?: string } };
     assert.equal(stored.binaries?.cursor, undefined);
+
+    const opened = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        cursor: true,
+        claude: true,
+        pi: true,
+        binaries: { cursor: "/bin/true" },
+        allowOverride: { cursor: true },
+      }),
+    });
+    assert.equal(opened.status, 200);
+    await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: carolHeaders,
+      body: JSON.stringify({ binaries: { cursor: "/bin/echo" } }),
+    });
+    const overridden = (await (await fetch(`${base}/api/settings`, { headers: carolHeaders })).json()) as {
+      binaries: { cursor?: string };
+      lockedBinaries?: string[];
+      binaryOverride?: string[];
+    };
+    assert.equal(overridden.binaries.cursor, "/bin/echo");
+    assert.equal(overridden.lockedBinaries?.includes("cursor"), false);
+    assert.equal(overridden.binaryOverride?.includes("cursor"), true);
 
     const env = await fetch(`${base}/api/admin/users/carol/env`, {
       method: "PUT",
@@ -1754,7 +1795,7 @@ test("the administrator can read another user's chats and transcripts", async ()
   }
 });
 
-test("an agent command in the person's home counts as installed", async () => {
+test("an agent command in the person's home stays theirs", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-home-agent-"));
   const home = path.join(root, "home");
   const bin = path.join(home, ".local", "bin");
@@ -1799,8 +1840,9 @@ test("an agent command in the person's home counts as installed", async () => {
     assert.equal(listed.status, 200);
     const body = (await listed.json()) as { agents: { id: string; available: boolean; path: string | null }[] };
     const cursor = body.agents.find((agent) => agent.id === "cursor");
-    assert.equal(cursor?.available, true);
-    assert.equal(cursor?.path, path.join(bin, "agent"));
+    assert.notEqual(cursor?.path, path.join(bin, "agent"));
+    const mine = (await (await fetch(`${base}/api/me`, { headers: { Cookie: cookie! } })).json()) as { agents: string[] };
+    assert.ok(mine.agents.includes("cursor"));
   } finally {
     hub.close();
     await runner.close();

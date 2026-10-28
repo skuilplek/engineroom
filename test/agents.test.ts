@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { effectivePiAuth, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
+import { chooseServerPath, effectivePiAuth, isAccountPath, loadAgentBinaries, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
 
 function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
   return {
@@ -14,6 +14,8 @@ function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
     available,
     path: available ? `/usr/bin/${id}` : null,
     enabled: true,
+    allowOverride: false,
+    pathSource: available ? "detected" : null,
   };
 }
 
@@ -60,6 +62,25 @@ test("a resolved binary override keeps an agent that is not on PATH", () => {
   assert.deepEqual(agents, ["pi"]);
 });
 
+test("a saved server path keeps an agent available when the person has no copy", () => {
+  const agents = usableAgentIds(
+    { cursor: true, claude: true, pi: true },
+    [listed("cursor", false), listed("claude", false), listed("pi", false)],
+    ["pi"],
+    {},
+    new Map(),
+    new Set(["pi"]),
+  );
+  assert.deepEqual(agents, ["pi"]);
+});
+
+test("which keeps a server path and ignores an account path", () => {
+  assert.equal(chooseServerPath(["/home/admin/.local/bin/pi", "/usr/local/bin/pi"], "/home/admin"), "/usr/local/bin/pi");
+  assert.equal(chooseServerPath(["/home/admin/.local/bin/pi"], "/home/admin"), null);
+  assert.equal(isAccountPath("/root/.local/bin/pi"), true);
+  assert.equal(isAccountPath("/usr/local/bin/pi", "/home/admin"), false);
+});
+
 test("pi install, login, and model survive a later agent save", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "er-pi-"));
   const file = path.join(dir, "agents.json");
@@ -68,10 +89,11 @@ test("pi install, login, and model survive a later agent save", async () => {
       cursor: true,
       claude: false,
       pi: true,
-      piInstall: "global",
       piAuth: "shared",
       piProvider: "openrouter",
       piModel: "recursive/flint-v1.0:free",
+      binaries: { pi: "/usr/local/bin/pi" },
+      allowOverride: { pi: true },
     });
     const saved = loadPiConfig(file);
     assert.deepEqual(saved, {
@@ -82,6 +104,9 @@ test("pi install, login, and model survive a later agent save", async () => {
     });
     saveAgentFlags(file, { cursor: true, claude: false, pi: true });
     assert.equal(loadPiConfig(file).model, "recursive/flint-v1.0:free");
+    assert.equal(loadAgentBinaries(file).pi?.path, "/usr/local/bin/pi");
+    assert.equal(loadAgentBinaries(file).pi?.allowOverride, true);
+    assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, binaries: { pi: "/home/admin/.local/bin/pi" } }));
     assert.equal(effectivePiAuth(saved), "shared");
     assert.equal(effectivePiAuth(saved, "user"), "user");
     assert.equal(piSetupAllowed(saved, true, true, "user", false), true);

@@ -71,7 +71,10 @@ export interface Settings {
   filesReadOnly?: boolean;
   wrapText: boolean;
   visibleChats: number;
+  /** Server binaries the person cannot change. Filled in when settings are read. */
   lockedBinaries?: AgentId[];
+  /** Agents whose binary path the person may set. Filled in when settings are read. */
+  binaryOverride?: AgentId[];
 }
 
 export interface SettingsPatch {
@@ -212,6 +215,14 @@ export interface GitStatus {
   repo: boolean;
   branch: string;
   branches: string[];
+  /** `origin` URL, or empty when the repository has no origin. */
+  remote: string;
+}
+
+/** Global `user.name` and `user.email` for the signed-in account. */
+export interface GitIdentity {
+  name: string;
+  email: string;
 }
 
 export interface RepoFileContent {
@@ -403,6 +414,10 @@ export type RunnerRequest =
   | { id: string; type: "git_status"; workspace: string }
   | { id: string; type: "git_init"; workspace: string }
   | { id: string; type: "git_switch"; workspace: string; branch: string }
+  | { id: string; type: "git_remote_set"; workspace: string; url: string }
+  | { id: string; type: "git_branch_create"; workspace: string; branch: string }
+  | { id: string; type: "git_pull"; workspace: string }
+  | { id: string; type: "git_push"; workspace: string }
   | { id: string; type: "git_stage"; workspace: string; path: string; visibility?: FileVisibility }
   | { id: string; type: "git_unstage"; workspace: string; path: string; visibility?: FileVisibility }
   | { id: string; type: "git_discard"; workspace: string; path: string; visibility?: FileVisibility }
@@ -414,6 +429,8 @@ export type RunnerRequest =
       stageVisible?: boolean;
       visibility?: FileVisibility;
     }
+  | { id: string; type: "git_identity_get" }
+  | { id: string; type: "git_identity_set"; name: string; email: string }
   | { id: string; type: "pty_open"; chatId: string; cols: number; rows: number }
   | { id: string; type: "pty_input"; chatId: string; data: string }
   | { id: string; type: "pty_resize"; chatId: string; cols: number; rows: number }
@@ -424,6 +441,7 @@ export type RunnerRequest =
   | { id: string; type: "probe_agent"; agent: AgentId }
   | { id: string; type: "resolve_commands"; names: string[]; refresh?: boolean }
   | { id: string; type: "put_pi_site"; install: "user" | "global"; auth: PiAuth }
+  | { id: string; type: "put_agent_binaries"; binaries: Partial<Record<AgentId, string>>; allowOverride: AgentId[] }
   | { id: string; type: "setup_pi"; provider: string; model: string; linkShared: boolean }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
@@ -772,6 +790,10 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       if (body.install !== "user" && body.install !== "global") throw new Error("invalid pi install");
       if (body.auth !== "user" && body.auth !== "shared") throw new Error("invalid pi auth");
       return { id: body.id, type: "put_pi_site", install: body.install, auth: body.auth };
+    case "put_agent_binaries": {
+      const site = parseAgentBinarySite(body);
+      return { id: body.id, type: "put_agent_binaries", binaries: site.binaries, allowOverride: site.allowOverride };
+    }
     case "setup_pi":
       return {
         id: body.id,
@@ -796,6 +818,23 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         workspace: requiredWorkspace(body.workspace),
         branch: assertBranchName(body.branch),
       };
+    case "git_remote_set":
+      return {
+        id: body.id,
+        type: "git_remote_set",
+        workspace: requiredWorkspace(body.workspace),
+        url: assertGitUrl(body.url),
+      };
+    case "git_branch_create":
+      return {
+        id: body.id,
+        type: "git_branch_create",
+        workspace: requiredWorkspace(body.workspace),
+        branch: assertBranchName(body.branch),
+      };
+    case "git_pull":
+    case "git_push":
+      return { id: body.id, type: body.type, workspace: requiredWorkspace(body.workspace) };
     case "git_stage":
     case "git_unstage":
     case "git_discard":
@@ -815,6 +854,10 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         ...(body.stageVisible === true ? { stageVisible: true } : {}),
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
+    case "git_identity_get":
+      return { id: body.id, type: "git_identity_get" };
+    case "git_identity_set":
+      return { id: body.id, type: "git_identity_set", name: parseGitName(body.name), email: parseGitEmail(body.email) };
     case "pty_open":
     case "pty_resize":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId), cols: parseDim(body.cols), rows: parseDim(body.rows) };
@@ -1063,6 +1106,33 @@ function parsePromptAttachment(value: unknown): PromptAttachment {
 
 const MAX_COMMIT_MESSAGE = 50_000;
 
+const GIT_NAME_MAX = 200;
+const GIT_EMAIL_MAX = 200;
+
+export function parseGitName(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid git name");
+  const name = value.trim();
+  if (!name || name.length > GIT_NAME_MAX || name.startsWith("-") || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new Error("invalid git name");
+  }
+  return name;
+}
+
+export function parseGitEmail(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid git email");
+  const email = value.trim();
+  if (
+    !email ||
+    email.length > GIT_EMAIL_MAX ||
+    email.startsWith("-") ||
+    /[\s\u0000-\u001f\u007f]/.test(email) ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    throw new Error("invalid git email");
+  }
+  return email;
+}
+
 export function parseCommitMessage(value: unknown): string {
   if (typeof value !== "string" || value.includes("\0")) throw new Error("invalid commit message");
   const message = value.trim();
@@ -1292,6 +1362,25 @@ function agentKeys(value: unknown): string[] {
     keys.push(key);
   }
   return keys;
+}
+
+export interface AgentBinarySite {
+  binaries: Partial<Record<AgentId, string>>;
+  allowOverride: AgentId[];
+}
+
+export function parseAgentBinarySite(value: unknown): AgentBinarySite {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid binaries");
+  const body = value as Record<string, unknown>;
+  const binaries = parsePolicyBinaries(body.binaries ?? {});
+  if (body.allowOverride == null) return { binaries, allowOverride: [] };
+  if (!Array.isArray(body.allowOverride) || body.allowOverride.length > MAX_AGENTS) throw new Error("invalid binaries");
+  const allowOverride: AgentId[] = [];
+  for (const item of body.allowOverride) {
+    if (!isAgentId(item) || allowOverride.includes(item)) throw new Error("invalid agent");
+    allowOverride.push(item);
+  }
+  return { binaries, allowOverride };
 }
 
 export function parsePolicyBinaries(value: unknown): Partial<Record<AgentId, string>> {

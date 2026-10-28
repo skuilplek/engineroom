@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { lstat, mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -13,7 +13,7 @@ import { createRepository, syncGrantedRepositories } from "../apps/runner/src/re
 import { createChat, deleteRepository, getChat, listChats, listRepositories, setEnabledRepositories, setRepositoryArchived, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import { assertBranchName, MAX_TRANSFER_BYTES } from "@engineroom/protocol";
-import { gitInitWorkspace, gitStatus, gitSwitch } from "../apps/runner/src/git.ts";
+import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "../apps/runner/src/git.ts";
 import "./peercred-helper.ts";
 
 const execFileAsync = promisify(execFile);
@@ -672,10 +672,139 @@ test("git status, init, and branch switch stay inside an allowed workspace", asy
     await assert.rejects(() => gitSwitch(home, repo, "nope"), /invalid branch/);
     await assert.rejects(() => gitSwitch(home, repo, "foo..bar"), /invalid branch/);
     await assert.rejects(() => gitInitWorkspace(home, repo), /already exists/);
+    assert.equal(status.remote, "");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("git remote, branch, pull, and push stay inside an enabled workspace", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-git-remote-"));
+  const repo = path.join(home, "Sites", "proj");
+  const bare = path.join(home, "bare.git");
+  const other = path.join(home, "other");
+  let daemon: ChildProcess | undefined;
+  try {
+    await mkdir(path.join(home, "notes"), { recursive: true });
+    await mkdir(path.join(repo, "src"), { recursive: true });
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.email", "alice@example.com"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "Alice"], { cwd: repo });
+    await writeFile(path.join(repo, "src", "index.ts"), "export const x = 1;\n");
+    await execFileAsync("git", ["add", "src/index.ts"], { cwd: repo });
+    await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repo });
+    await setEnabledRepositories(home, [repo]);
+
+    assert.equal((await gitStatus(home, repo)).remote, "");
+    await assert.rejects(() => gitPull(home, repo), /no remote/);
+    await assert.rejects(() => gitPush(home, repo), /no remote/);
+    await assert.rejects(() => gitSetRemote(home, repo, "file:///tmp/repo.git"), /invalid repository url/);
+    await assert.rejects(() => gitSetRemote(home, path.join(home, "notes"), "https://example.com/proj.git"), /not enabled/);
+
+    const set = await gitSetRemote(home, repo, "https://example.com/proj.git");
+    assert.equal(set.remote, "https://example.com/proj.git");
+    const updated = await gitSetRemote(home, repo, "https://example.com/other.git");
+    assert.equal(updated.remote, "https://example.com/other.git");
+
+    await execFileAsync("git", ["init", "--bare", "-b", "main", bare]);
+    await execFileAsync("git", ["remote", "set-url", "origin", bare], { cwd: repo });
+    await execFileAsync("git", ["push", "-u", "origin", "HEAD:refs/heads/main"], { cwd: repo });
+    const port = await freePort();
+    daemon = spawn("git", [
+      "daemon",
+      "--verbose",
+      "--reuseaddr",
+      "--listen=127.0.0.1",
+      `--port=${port}`,
+      `--base-path=${home}`,
+      "--export-all",
+      "--enable=receive-pack",
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    await waitForGitDaemon(daemon);
+    const remoteUrl = `git://127.0.0.1:${port}/bare.git`;
+    await execFileAsync("git", ["remote", "set-url", "origin", remoteUrl], { cwd: repo });
+    const pushed = await gitPush(home, repo);
+    assert.equal(pushed.branch, "main");
+    assert.equal(pushed.remote, remoteUrl);
+
+    await execFileAsync("git", ["clone", bare, other]);
+    await execFileAsync("git", ["config", "user.email", "bob@example.com"], { cwd: other });
+    await execFileAsync("git", ["config", "user.name", "Bob"], { cwd: other });
+    await writeFile(path.join(other, "src", "index.ts"), "export const x = 2;\n");
+    await execFileAsync("git", ["add", "src/index.ts"], { cwd: other });
+    await execFileAsync("git", ["commit", "-m", "update"], { cwd: other });
+    await execFileAsync("git", ["push", "origin", "main"], { cwd: other });
+    const pulled = await gitPull(home, repo);
+    assert.equal(pulled.branch, "main");
+    assert.match(await readFile(path.join(repo, "src", "index.ts"), "utf8"), /x = 2/);
+
+    const created = await gitCreateBranch(home, repo, "feature");
+    assert.equal(created.branch, "feature");
+    assert.equal(created.branches.includes("feature"), true);
+    await assert.rejects(() => gitCreateBranch(home, repo, "feature"), /already exists/);
+    await assert.rejects(() => gitCreateBranch(home, repo, "foo..bar"), /invalid branch/);
+    const feature = await gitPush(home, repo);
+    assert.equal(feature.branch, "feature");
+    assert.match((await execFileAsync("git", ["branch", "--list", "feature"], { cwd: bare })).stdout, /feature/);
+
+    await execFileAsync("git", ["checkout", "--detach"], { cwd: repo });
+    await assert.rejects(() => gitPull(home, repo), /checkout a branch first/);
+    await assert.rejects(() => gitPush(home, repo), /checkout a branch first/);
+    await assert.rejects(() => gitCreateBranch(home, repo, "more"), /checkout a branch first/);
+  } finally {
+    if (daemon) {
+      daemon.kill("SIGKILL");
+      daemon.stderr?.destroy();
+      daemon.unref();
+    }
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = address && typeof address === "object" ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+function waitForGitDaemon(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(stderr.trim() || "git daemon did not start"));
+    }, 5_000);
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-500);
+      if (!settled && stderr.includes("Ready to rumble")) {
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(stderr.trim() || `git daemon exited ${code}`));
+    });
+  });
+}
 
 test("a queued prompt can be removed and a model change is announced", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-queue-"));
@@ -1224,5 +1353,24 @@ test("archiving a project keeps the folder and deleting it requires the folder n
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("global git identity is stored in the account home", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-git-id-"));
+  try {
+    assert.deepEqual(await readGitIdentity(home), { name: "", email: "" });
+    assert.deepEqual(await writeGitIdentity(home, " Ada Lovelace ", "ada@example.com"), {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+    });
+    const stored = await readFile(path.join(home, ".gitconfig"), "utf8");
+    assert.match(stored, /name = Ada Lovelace/);
+    assert.match(stored, /email = ada@example.com/);
+    await assert.rejects(() => writeGitIdentity(home, "Ada", "not-an-email"), /invalid git email/);
+    await assert.rejects(() => writeGitIdentity(home, "-Ada", "ada@example.com"), /invalid git name/);
+    assert.deepEqual(await readGitIdentity(home), { name: "Ada Lovelace", email: "ada@example.com" });
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });

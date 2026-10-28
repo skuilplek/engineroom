@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   defaultPolicy,
   isAgentId,
+  parseAgentBinarySite,
   parseUserPolicy,
+  type AgentBinarySite,
   type AgentId,
   type Settings,
   type UserPolicy,
@@ -37,19 +40,32 @@ export async function savePolicy(home: string, policy: UserPolicy): Promise<User
   return next;
 }
 
-export function withLocks(settings: Settings, policy: UserPolicy): Settings {
-  const binaries = { ...settings.binaries };
-  const lockedBinaries: AgentId[] = [];
-  for (const agent of Object.keys(policy.binaries)) {
-    if (!isAgentId(agent)) continue;
-    const override = policy.binaries[agent];
-    if (!override) continue;
-    binaries[agent] = override;
-    lockedBinaries.push(agent);
+export function loadAgentBinarySiteSync(home: string): AgentBinarySite {
+  try {
+    return parseAgentBinarySite(JSON.parse(readFileSync(path.join(home, ".engineroom", "agent-binaries.json"), "utf8")));
+  } catch {
+    return { binaries: {}, allowOverride: [] };
   }
-  return { ...settings, binaries, lockedBinaries };
 }
 
-export function binaryFor(policy: UserPolicy, settings: Settings, agent: AgentId): string | undefined {
-  return policy.binaries[agent] || settings.binaries[agent];
+export function withLocks(settings: Settings, _policy: UserPolicy, home?: string): Settings {
+  const site = home ? loadAgentBinarySiteSync(home) : { binaries: {}, allowOverride: [] as AgentId[] };
+  const binaries = { ...settings.binaries };
+  const lockedBinaries: AgentId[] = [];
+  const allow = new Set(site.allowOverride);
+  for (const agent of Object.keys(site.binaries)) {
+    if (!isAgentId(agent) || allow.has(agent)) continue;
+    const global = site.binaries[agent];
+    if (!global) continue;
+    binaries[agent] = global;
+    lockedBinaries.push(agent);
+  }
+  return { ...settings, binaries, lockedBinaries, binaryOverride: [...site.allowOverride] };
+}
+
+export function binaryFor(_policy: UserPolicy, settings: Settings, agent: AgentId, home?: string): string | undefined {
+  const site = home ? loadAgentBinarySiteSync(home) : { binaries: {}, allowOverride: [] as AgentId[] };
+  const personal = settings.binaries[agent];
+  if (site.allowOverride.includes(agent) && personal) return personal;
+  return site.binaries[agent] || undefined;
 }

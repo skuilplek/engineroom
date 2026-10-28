@@ -466,3 +466,75 @@ test("a fresh watch shows saved modes and models before ACP starts", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("git identity is read and written for the signed-in user", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-git-id-hub-"));
+  const home = path.join(root, "home");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("hub-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    lookup: (username) => (username === "alice" ? user : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const anonymous = await fetch(`${base}/api/git-identity`);
+    assert.equal(anonymous.status, 401);
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    assert.equal(loggedIn.status, 200);
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const empty = (await (await fetch(`${base}/api/git-identity`, { headers })).json()) as { name: string; email: string };
+    assert.deepEqual(empty, { name: "", email: "" });
+    const rejected = await fetch(`${base}/api/git-identity`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name: "Ada", email: "not-an-email" }),
+    });
+    assert.equal(rejected.status, 400);
+    const saved = await fetch(`${base}/api/git-identity`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com" }),
+    });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), { name: "Ada Lovelace", email: "ada@example.com" });
+    const again = (await (await fetch(`${base}/api/git-identity`, { headers })).json()) as { name: string; email: string };
+    assert.deepEqual(again, { name: "Ada Lovelace", email: "ada@example.com" });
+  } finally {
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

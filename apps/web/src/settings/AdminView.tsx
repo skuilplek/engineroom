@@ -70,7 +70,8 @@ type OfferSnapshot = {
   fileEditor: boolean;
   fileDownload: boolean;
   fileUpload: boolean;
-  piInstall: "user" | "global";
+  binaries: Record<string, string>;
+  allowOverride: Record<string, boolean>;
   piAuth: "user" | "shared";
   piProvider: string;
   piModel: string;
@@ -116,7 +117,8 @@ export function AdminView({
   const [fileEditor, setFileEditor] = useState(session.fileEditor ?? true);
   const [fileDownload, setFileDownload] = useState(session.fileDownloadOffered ?? false);
   const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
-  const [piInstall, setPiInstall] = useState<"user" | "global">("user");
+  const [binaryDraft, setBinaryDraft] = useState<Record<string, string>>({});
+  const [allowOverride, setAllowOverride] = useState<Record<string, boolean>>({});
   const [piAuth, setPiAuth] = useState<"user" | "shared">("user");
   const [piProvider, setPiProvider] = useState("");
   const [piModel, setPiModel] = useState("");
@@ -195,7 +197,9 @@ export function AdminView({
       setFileEditor(body.fileEditor ?? true);
       setFileDownload(body.fileDownload ?? false);
       setFileUpload(body.fileUpload ?? false);
-      setPiInstall(body.piInstall === "global" ? "global" : "user");
+      const drafts = draftsFrom(body.agents);
+      setBinaryDraft(drafts.binaries);
+      setAllowOverride(drafts.allowOverride);
       setPiAuth(body.piAuth === "shared" ? "shared" : "user");
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
@@ -208,7 +212,8 @@ export function AdminView({
         fileEditor: body.fileEditor ?? true,
         fileDownload: body.fileDownload ?? false,
         fileUpload: body.fileUpload ?? false,
-        piInstall: body.piInstall === "global" ? "global" : "user",
+        binaries: drafts.binaries,
+        allowOverride: drafts.allowOverride,
         piAuth: body.piAuth === "shared" ? "shared" : "user",
         piProvider: body.piProvider ?? "",
         piModel: body.piModel ?? "",
@@ -240,7 +245,10 @@ export function AdminView({
   function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
+    const drafts = draftsFrom(body.agents);
     setFlags(nextFlags);
+    setBinaryDraft(drafts.binaries);
+    setAllowOverride(drafts.allowOverride);
     setRawTerminal(body.rawTerminal);
     setCliImport(body.cliImport);
     if (typeof body.fileManager === "boolean") setFileManager(body.fileManager);
@@ -256,6 +264,8 @@ export function AdminView({
       fileEditor: typeof body.fileEditor === "boolean" ? body.fileEditor : current.fileEditor,
       fileDownload: typeof body.fileDownload === "boolean" ? body.fileDownload : current.fileDownload,
       fileUpload: typeof body.fileUpload === "boolean" ? body.fileUpload : current.fileUpload,
+      binaries: drafts.binaries,
+      allowOverride: drafts.allowOverride,
     }));
     if (select) setAgentTab(select);
   }
@@ -283,11 +293,13 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
+      const binaries = binaryPayload(inventory, binaryDraft);
       const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, {
-        piInstall,
         piAuth,
         piProvider: piProvider.trim(),
         piModel: piModel.trim(),
+        binaries,
+        allowOverride,
       });
       onAgents(
         savedAgents.agents,
@@ -314,6 +326,11 @@ export function AdminView({
       }
       setPiProvider(provider);
       setPiModel(model);
+      const listed = await listAdminAgents();
+      const drafts = draftsFrom(listed.agents);
+      setInventory(listed.agents);
+      setBinaryDraft(drafts.binaries);
+      setAllowOverride(drafts.allowOverride);
       setSavedOffer({
         flags,
         rawTerminal: savedAgents.rawTerminal ?? rawTerminal,
@@ -322,13 +339,13 @@ export function AdminView({
         fileEditor: savedAgents.fileEditor ?? fileEditor,
         fileDownload: savedAgents.fileDownload ?? fileDownload,
         fileUpload: savedAgents.fileUpload ?? fileUpload,
-        piInstall: savedAgents.piInstall === "global" ? "global" : piInstall,
+        binaries: drafts.binaries,
+        allowOverride: drafts.allowOverride,
         piAuth: savedAgents.piAuth === "shared" ? "shared" : piAuth,
         piProvider: savedAgents.piProvider ?? provider,
         piModel: savedAgents.piModel ?? model,
         offered: cloneOffered(offered),
       });
-      setInventory((current) => current.map((agent) => ({ ...agent, enabled: Boolean(flags[agent.id]) })));
       onAccess();
       setSaved("Agents saved");
     } catch (err) {
@@ -346,7 +363,8 @@ export function AdminView({
     setFileEditor(savedOffer.fileEditor);
     setFileDownload(savedOffer.fileDownload);
     setFileUpload(savedOffer.fileUpload);
-    setPiInstall(savedOffer.piInstall);
+    setBinaryDraft(savedOffer.binaries);
+    setAllowOverride(savedOffer.allowOverride);
     setPiAuth(savedOffer.piAuth);
     setPiProvider(savedOffer.piProvider);
     setPiModel(savedOffer.piModel);
@@ -370,7 +388,8 @@ export function AdminView({
     fileEditor,
     fileDownload,
     fileUpload,
-    piInstall,
+    binaries: binaryDraft,
+    allowOverride,
     piAuth,
     piProvider,
     piModel,
@@ -546,6 +565,9 @@ export function AdminView({
     : session.agents.map((agent) => agentLabel(agent, session.agentCatalog));
   const installed = inventory.filter((agent) => agent.builtin || agent.available);
   const selectedAgent = installed.find((agent) => agent.id === agentTab);
+  const piRecord = inventory.find((agent) => agent.id === "pi");
+  const piDraft = (binaryDraft.pi ?? "").trim();
+  const piGlobal = Boolean(piDraft || (piRecord?.pathSource === "detected" && piRecord.path));
   const missingCustom = inventory.filter((agent) => !agent.builtin && !agent.available);
 
   return (
@@ -613,7 +635,7 @@ export function AdminView({
               <section className="agents-card">
                 <div className="agents-card-head">
                   <h2>Available agents</h2>
-                  <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Each tab is an agent whose command is installed. Load an agent, then choose the modes and models people can use. Nothing is offered until you save a selection.</p>
+                  <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Each command is found with which on the admin account. A server path is saved for everyone. If there is no server path, set the full path, or leave it blank so each person with that agent uses their own command.</p>
                 </div>
                 <div className="agents-privileges">
                   <span className="eyebrow">Global tooling</span>
@@ -687,27 +709,49 @@ export function AdminView({
               {installed.length === 0 && agentTab !== "+" && <p className="muted">No agents are installed on this machine.</p>}
               {selectedAgent && (
                 <div className="agents-stack" role="tabpanel" aria-labelledby={`agent-tab-${selectedAgent.id}`}>
-                  {((selectedAgent.builtin && !selectedAgent.available) || !selectedAgent.builtin) && (
-                    <section className="agents-card">
-                      {selectedAgent.builtin && !selectedAgent.available && (
-                        <p className="muted">This command was not found in the system path. Chats still look for {selectedAgent.binary} on that person's PATH, including ~/.local/bin.</p>
-                      )}
-                      {!selectedAgent.builtin && (
-                        <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
-                      )}
-                    </section>
-                  )}
+                  <section className="agents-card">
+                    <h3>Binary</h3>
+                    {selectedAgent.pathSource === "detected" && selectedAgent.path ? (
+                      <>
+                        <p className="binary-path">{selectedAgent.path}</p>
+                        <p className="muted">Found with which on the admin account. This server path is used for everyone.</p>
+                      </>
+                    ) : (
+                      <>
+                        <label>
+                          Full path
+                          <input
+                            aria-label={`${selectedAgent.label} binary`}
+                            value={binaryDraft[selectedAgent.id] ?? ""}
+                            placeholder="/usr/local/bin/…"
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            onChange={(event) => setBinaryDraft({ ...binaryDraft, [selectedAgent.id]: event.target.value })}
+                          />
+                        </label>
+                        <p className="muted">which did not find a server install. Set the full path, or leave this blank. People with this agent enabled then use the command on their own account.</p>
+                      </>
+                    )}
+                    <label className="offer-switch">
+                      <span>Allow user override</span>
+                      <input
+                        type="checkbox"
+                        aria-label={`Allow user override for ${selectedAgent.label}`}
+                        checked={Boolean(allowOverride[selectedAgent.id])}
+                        onChange={() => setAllowOverride({ ...allowOverride, [selectedAgent.id]: !allowOverride[selectedAgent.id] })}
+                      />
+                      <span className="switch-track" aria-hidden="true" />
+                    </label>
+                    <p className="muted">When this is on, a person can set a different binary path in their settings.</p>
+                    {!selectedAgent.builtin && (
+                      <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
+                    )}
+                  </section>
                   {selectedAgent.id === "pi" && (
                     <section className="agents-card">
                       <h3>Pi setup</h3>
-                      <label>
-                        Install
-                        <select aria-label="Pi install" value={piInstall} onChange={(event) => setPiInstall(event.target.value as "user" | "global")}>
-                          <option value="user">Each person</option>
-                          <option value="global">Everyone</option>
-                        </select>
-                      </label>
-                      {piInstall === "global" && (
+                      {piGlobal && (
                         <label>
                           Login
                           <select aria-label="Pi login" value={piAuth} onChange={(event) => setPiAuth(event.target.value as "user" | "shared")}>
@@ -716,10 +760,10 @@ export function AdminView({
                           </select>
                         </label>
                       )}
-                      {piInstall === "global" && (
-                        <p className="muted">Each person keeps ~/.pi/agent/auth.json. Shared uses one auth.json unless a person overrides it. After saving, run sudo /usr/local/lib/engineroom/agents/setup_pi.sh --global. Switching back to each person leaves that install and /etc/systemd/system/engineroom-runner@.service.d/pi.conf in place until you remove them.</p>
+                      {piGlobal && (
+                        <p className="muted">Each person keeps ~/.pi/agent/auth.json. Shared uses one auth.json unless a person overrides it. After a server install, run sudo /usr/local/lib/engineroom/agents/setup_pi.sh --global if that shared directory is not in place yet.</p>
                       )}
-                      <p className="muted">Once pi is on this machine, each person runs setup_pi.sh from an SSH session. The account page offers setup only when the command is missing entirely.</p>
+                      <p className="muted">The account page offers setup when this person's pi command is missing.</p>
                       <label>
                         Provider
                         <input aria-label="Pi provider" value={piProvider} onChange={(event) => setPiProvider(event.target.value)} placeholder="openrouter" />
@@ -826,7 +870,7 @@ export function AdminView({
                         <h3>Allow users to create projects</h3>
                         <span className="repos-state">{projectCreate ? "On" : "Off"}</span>
                       </div>
-                      <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off.</p>
+                      <p className="muted">When this is on, a person can add a folder here by cloning a Git URL or starting an empty repository, unless their own access turns it off. The same switch lets them set a remote, create and switch branches, and pull or push.</p>
                     </div>
                     <label className="offer-switch">
                       <input
@@ -1003,7 +1047,7 @@ export function AdminView({
                   globalFileDownload={fileDownload}
                   globalFileUpload={fileUpload}
                   globalProjectCreate={session.projectCreate}
-                  piInstall={piInstall}
+                  piInstall={piGlobal ? "global" : "user"}
                   piAuthDefault={piAuth}
                   agentOptions={agentOptions}
                   agentNames={names}
@@ -1173,11 +1217,6 @@ function PersonPanel({
     onNote("");
     onError("");
     try {
-      const binaries: UserPolicy["binaries"] = {};
-      for (const agent of policy.agents) {
-        const value = (policy.binaries[agent] || "").trim();
-        if (value) binaries[agent] = value;
-      }
       const options: NonNullable<UserPolicy["options"]> = {};
       for (const agent of policy.agents) {
         options[agent] = policy.options?.[agent] ?? {
@@ -1187,7 +1226,7 @@ function PersonPanel({
       }
       const modelIds = options[settings.defaultAgent]?.models ?? [];
       const defaultModel = modelIds.includes(settings.defaultModel) ? settings.defaultModel : modelIds[0] || "";
-      const savedPolicy = await saveUserPolicy(username, { ...policy, binaries, options });
+      const savedPolicy = await saveUserPolicy(username, { ...policy, binaries: {}, options });
       setPolicy(savedPolicy);
       const savedSettings = await saveUserSettings(username, {
         defaultAgent: settings.defaultAgent,
@@ -1308,16 +1347,6 @@ function PersonPanel({
             </select>
           </label>
         )}
-        {allowed.map((agent) => (
-          <label key={agent}>
-            {agentLabel(agent, agentNames)} path
-            <input
-              value={policy.binaries[agent] || ""}
-              placeholder="Absolute path, or blank to use their own"
-              onChange={(event) => setPolicy({ ...policy, binaries: { ...policy.binaries, [agent]: event.target.value } })}
-            />
-          </label>
-        ))}
         <label className="check">
           <input
             type="checkbox"
@@ -1917,7 +1946,8 @@ function sessionOffer(session: Session): OfferSnapshot {
     fileEditor: session.fileEditor ?? true,
     fileDownload: session.fileDownloadOffered ?? false,
     fileUpload: session.fileUploadOffered ?? false,
-    piInstall: "user",
+    binaries: {},
+    allowOverride: {},
     piAuth: "user",
     piProvider: "",
     piModel: "",
@@ -1948,6 +1978,38 @@ function listsEqual(left: string[] = [], right: string[] = []): boolean {
   return left.every((item) => seen.has(item));
 }
 
+function draftsFrom(agents: AdminAgent[]): { binaries: Record<string, string>; allowOverride: Record<string, boolean> } {
+  const binaries: Record<string, string> = {};
+  const allowOverride: Record<string, boolean> = {};
+  for (const agent of agents) {
+    binaries[agent.id] = agent.pathSource === "manual" && agent.path ? agent.path : "";
+    allowOverride[agent.id] = Boolean(agent.allowOverride);
+  }
+  return { binaries, allowOverride };
+}
+
+function binaryPayload(agents: AdminAgent[], draft: Record<string, string>): Record<string, string> {
+  const binaries: Record<string, string> = {};
+  for (const agent of agents) binaries[agent.id] = (draft[agent.id] ?? "").trim();
+  return binaries;
+}
+
+function recordsEqual(left: Record<string, string> = {}, right: Record<string, string> = {}): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] ?? "") !== (right[key] ?? "")) return false;
+  }
+  return true;
+}
+
+function boolRecordsEqual(left: Record<string, boolean> = {}, right: Record<string, boolean> = {}): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (Boolean(left[key]) !== Boolean(right[key])) return false;
+  }
+  return true;
+}
+
 function flagsEqual(left: Record<string, boolean>, right: Record<string, boolean>): boolean {
   const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
   for (const key of keys) {
@@ -1964,7 +2026,8 @@ function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
   if (left.fileEditor !== right.fileEditor) return false;
   if (left.fileDownload !== right.fileDownload) return false;
   if (left.fileUpload !== right.fileUpload) return false;
-  if (left.piInstall !== right.piInstall) return false;
+  if (!recordsEqual(left.binaries, right.binaries)) return false;
+  if (!boolRecordsEqual(left.allowOverride, right.allowOverride)) return false;
   if (left.piAuth !== right.piAuth) return false;
   if (left.piProvider !== right.piProvider) return false;
   if (left.piModel !== right.piModel) return false;

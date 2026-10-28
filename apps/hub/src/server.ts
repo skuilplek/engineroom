@@ -3,13 +3,13 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parsePromptAttachments, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isInsidePath, isTheme, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseUserPolicy, repoUploadPath, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentBinaries, loadAgentFlags, loadAppName, loadCliImport, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, serverBinariesFor, storeDetectedBinaries, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
-import { serverOverview } from "./overview.ts";
+import { SYSTEM_COMMAND_DIRS, serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { readUpload } from "./multipart.ts";
@@ -70,9 +70,12 @@ interface RunnerCall {
   refresh?: boolean;
   install?: "user" | "global";
   auth?: "user" | "shared";
+  binaries?: Partial<Record<AgentId, string>>;
+  allowOverride?: AgentId[];
   provider?: string;
   linkShared?: boolean;
   name?: string;
+  email?: string;
   url?: string;
   branch?: string;
   message?: string;
@@ -270,22 +273,25 @@ export function createHub(options: HubOptions) {
     const flags = loadAgentFlags(agentsFile);
     const pi = loadPiConfig(agentsFile);
     await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth }).catch(() => undefined);
+    await pushAgentBinaries(user);
     const listed = await visibleAgents(user, refresh);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
-    const missing = policy.agents.filter((agent) => !listed.some((item) => item.id === agent && item.available));
-    const overrides: Partial<Record<string, string>> = { ...policy.binaries };
+    const site = loadAgentBinaries(agentsFile);
+    const globalPaths = new Set(Object.entries(site).filter(([, record]) => record.path).map(([id]) => id));
+    const missing = policy.agents.filter((agent) => !globalPaths.has(agent) && !listed.some((item) => item.id === agent && item.available));
+    const overrides: Partial<Record<string, string>> = {};
     const resolvedOverrides = new Map<string, string>();
     if (missing.length > 0) {
       const settings = (await call(user, { type: "get_settings" })) as Settings;
       for (const agent of missing) {
-        overrides[agent] = policy.binaries[agent] || settings.binaries[agent];
+        if (site[agent]?.allowOverride && settings.binaries[agent]) overrides[agent] = settings.binaries[agent];
       }
-      const paths = [...new Set(missing.map((agent) => overrides[agent]).filter((value): value is string => Boolean(value)))];
+      const paths = [...new Set(Object.values(overrides).filter((value): value is string => Boolean(value)))];
       const resolved = await resolveCommands(user, paths);
-      for (const [name, found] of resolved) resolvedOverrides.set(name, found);
+      for (const [name, found] of resolved) resolvedOverrides.set(name, found.path);
     }
-    const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides);
+    const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides, globalPaths);
     const piInstalled = listed.some((item) => item.id === "pi" && item.available);
     const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, piInstalled);
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
@@ -419,7 +425,7 @@ export function createHub(options: HubOptions) {
         ...overview,
         commands: overview.commands.map((command) => {
           const found = resolved.get(command.name);
-          return found ? { ...command, available: true, path: found } : command;
+          return found ? { ...command, available: true, path: found.path } : command;
         }),
       });
       return;
@@ -436,6 +442,7 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
+      const detected = await detectedBinaries(user);
       const flags = saveAgentFlags(
         agentsFile,
         body,
@@ -445,7 +452,9 @@ export function createHub(options: HubOptions) {
         fileEditorFrom(body),
         fileDownloadFrom(body),
         fileUploadFrom(body),
+        detected,
       );
+      await pushAgentBinaries(user);
       const listed = await visibleAgents(user);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
@@ -639,7 +648,21 @@ export function createHub(options: HubOptions) {
 
   async function proxy(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
     const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[1] === "git-identity" && parts.length === 2 && req.method === "GET") {
+      sendJson(res, 200, await call(user, { type: "git_identity_get" }));
+      return;
+    }
+    if (parts[1] === "git-identity" && parts.length === 2 && req.method === "PUT") {
+      const body = (await readJson(req)) as { name?: unknown; email?: unknown };
+      sendJson(res, 200, await call(user, {
+        type: "git_identity_set",
+        name: parseGitName(body.name),
+        email: parseGitEmail(body.email),
+      }));
+      return;
+    }
     if (parts[1] === "settings" && parts.length === 2 && req.method === "GET") {
+      await pushAgentBinaries(user);
       sendJson(res, 200, await call(user, { type: "get_settings" }));
       return;
     }
@@ -648,6 +671,7 @@ export function createHub(options: HubOptions) {
       const patch = (body.settings ?? body) as SettingsPatch;
       if (patch.defaultAgent) await assertAgentAllowed(user, patch.defaultAgent);
       await assertSettingsModel(user, patch);
+      await pushAgentBinaries(user);
       sendJson(res, 200, await call(user, { type: "put_settings", settings: patch }));
       return;
     }
@@ -701,6 +725,7 @@ export function createHub(options: HubOptions) {
         workspace?: unknown;
         action?: unknown;
         branch?: unknown;
+        url?: unknown;
         path?: unknown;
         message?: unknown;
         stageVisible?: unknown;
@@ -714,6 +739,26 @@ export function createHub(options: HubOptions) {
       }
       if (body.action === "switch") {
         sendJson(res, 200, await call(user, { type: "git_switch", workspace, branch: assertBranchName(body.branch) }));
+        return;
+      }
+      if (body.action === "remote") {
+        await assertProjectCreate(user);
+        sendJson(res, 200, await call(user, { type: "git_remote_set", workspace, url: assertGitUrl(body.url) }));
+        return;
+      }
+      if (body.action === "branch") {
+        await assertProjectCreate(user);
+        sendJson(res, 200, await call(user, { type: "git_branch_create", workspace, branch: assertBranchName(body.branch) }));
+        return;
+      }
+      if (body.action === "pull") {
+        await assertProjectCreate(user);
+        sendJson(res, 200, await call(user, { type: "git_pull", workspace }));
+        return;
+      }
+      if (body.action === "push") {
+        await assertProjectCreate(user);
+        sendJson(res, 200, await call(user, { type: "git_push", workspace }));
         return;
       }
       if (body.action === "stage" || body.action === "unstage" || body.action === "discard") {
@@ -1080,10 +1125,16 @@ export function createHub(options: HubOptions) {
       command.type === "git_status" ||
       command.type === "git_init" ||
       command.type === "git_switch" ||
+      command.type === "git_remote_set" ||
+      command.type === "git_branch_create" ||
+      command.type === "git_pull" ||
+      command.type === "git_push" ||
       command.type === "git_stage" ||
       command.type === "git_unstage" ||
       command.type === "git_discard" ||
-      command.type === "git_commit"
+      command.type === "git_commit" ||
+      command.type === "git_identity_get" ||
+      command.type === "git_identity_set"
     ) {
       throw new Error("unknown request");
     }
@@ -1154,7 +1205,8 @@ export function createHub(options: HubOptions) {
   }
 
   async function agentState(user: LinuxUser) {
-    const listed = await visibleAgents(user, true);
+    await refreshDetectedBinaries(user);
+    const listed = await listAgents(agentsFile, commandDirs, user.home);
     return {
       agents: listed,
       rawTerminal: loadRawTerminal(agentsFile),
@@ -1168,26 +1220,60 @@ export function createHub(options: HubOptions) {
   }
 
   async function visibleAgents(user: LinuxUser, refresh = false) {
-    const listed = await listAgents(agentsFile, commandDirs);
+    const listed = await listAgents(agentsFile, commandDirs, user.home);
     const names = [...new Set(listed.filter((agent) => !agent.available).flatMap((agent) => detectionNames(agent)))];
     const resolved = await resolveCommands(user, names, refresh);
-    return withResolvedCommands(listed, resolved);
+    const first = new Map<string, string>();
+    for (const [name, found] of resolved) first.set(name, found.path);
+    return withResolvedCommands(listed, first);
   }
 
-  async function resolveCommands(user: LinuxUser, names: string[], refresh = false): Promise<Map<string, string>> {
+  async function resolveCommands(
+    user: LinuxUser,
+    names: string[],
+    refresh = false,
+  ): Promise<Map<string, { path: string; paths: string[] }>> {
     if (names.length === 0) return new Map();
     try {
       const result = (await call(user, { type: "resolve_commands", names, refresh })) as {
-        commands?: { name?: string; path?: string | null }[];
+        commands?: { name?: string; path?: string | null; paths?: string[] }[];
       };
-      const found = new Map<string, string>();
+      const found = new Map<string, { path: string; paths: string[] }>();
       for (const item of result.commands ?? []) {
-        if (item.name && item.path) found.set(item.name, item.path);
+        const paths = (item.paths ?? []).filter((entry) => typeof entry === "string" && entry.startsWith("/"));
+        const full = typeof item.path === "string" && item.path.startsWith("/") ? item.path : paths[0];
+        if (item.name && full) found.set(item.name, { path: full, paths: paths.length > 0 ? paths : [full] });
       }
       return found;
     } catch {
       return new Map();
     }
+  }
+
+  async function detectedBinaries(admin: LinuxUser): Promise<Record<string, string>> {
+    const specs = await listAgents(agentsFile, commandDirs, admin.home);
+    const names = [...new Set(specs.flatMap((agent) => detectionNames(agent)))];
+    const resolved = await resolveCommands(admin, names, false);
+    const paths = new Map<string, string[]>();
+    for (const [name, found] of resolved) paths.set(name, found.paths);
+    return serverBinariesFor(specs, admin.home, paths, commandDirs ?? SYSTEM_COMMAND_DIRS);
+  }
+
+  async function refreshDetectedBinaries(admin: LinuxUser) {
+    if (!agentsFile) return;
+    storeDetectedBinaries(agentsFile, await detectedBinaries(admin));
+  }
+
+  function pushAgentBinaries(user: LinuxUser) {
+    const stored = loadAgentBinaries(agentsFile);
+    const binaries: Partial<Record<AgentId, string>> = {};
+    const allowOverride: AgentId[] = [];
+    for (const [id, record] of Object.entries(stored)) {
+      if (!isAgentId(id)) continue;
+      if (record.path) binaries[id] = record.path;
+      if (record.allowOverride) allowOverride.push(id);
+    }
+    return call(user, { type: "put_agent_binaries", binaries, allowOverride }).catch(() => undefined);
   }
 
   function syncAgentCatalog(user: LinuxUser) {

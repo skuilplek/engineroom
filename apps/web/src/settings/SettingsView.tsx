@@ -92,6 +92,7 @@ export function SettingsView({
 
   if (!settings) return <p className="settings muted">Loading settings…</p>;
   const models = options[settings.defaultAgent]?.models ?? [];
+  const pathAgents = agents.filter((agent) => (settings.lockedBinaries?.includes(agent) ?? false) || (settings.binaryOverride?.includes(agent) ?? false));
   const activeTheme = normalizeTheme(settings.theme);
 
   return (
@@ -262,29 +263,31 @@ export function SettingsView({
       {!fileEditorAllowed && (
         <p className="muted">File editing is turned off by your administrator.</p>
       )}
-      <details>
-        <summary>CLI paths</summary>
-        {agents.map((agent) => {
-          const locked = settings.lockedBinaries?.includes(agent) ?? false;
-          return (
-            <label key={agent}>
-              {agentLabel(agent, agentCatalog)}
-              <input
-                value={settings.binaries[agent] || ""}
-                placeholder="Absolute path, or blank to use PATH"
-                disabled={locked}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    binaries: { ...settings.binaries, [agent]: event.target.value },
-                  })
-                }
-              />
-              {locked && <span className="muted">Set by the administrator</span>}
-            </label>
-          );
-        })}
-      </details>
+      {pathAgents.length > 0 && (
+        <details>
+          <summary>CLI paths</summary>
+          {pathAgents.map((agent) => {
+            const locked = settings.lockedBinaries?.includes(agent) ?? false;
+            return (
+              <label key={agent}>
+                {agentLabel(agent, agentCatalog)}
+                <input
+                  value={settings.binaries[agent] || ""}
+                  placeholder={locked ? "" : "Absolute path, or blank to use the server binary or your PATH"}
+                  disabled={locked}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      binaries: { ...settings.binaries, [agent]: event.target.value },
+                    })
+                  }
+                />
+                {locked && <span className="muted">Set by the administrator</span>}
+              </label>
+            );
+          })}
+        </details>
+      )}
       <p className="alert" role="alert">{error}</p>
       {saved && <p className="muted">{saved}</p>}
       <button className="primary" type="submit" disabled={busy}>Save</button>
@@ -332,7 +335,7 @@ function normalizeVisibleChats(value: number): number {
 }
 
 function settingsPayload(settings: Settings, agents: AgentId[]): SettingsPatch {
-  const { defaultAgent, defaultModel, lockedBinaries: _locked, ...rest } = settings;
+  const { defaultAgent, defaultModel, lockedBinaries: _locked, binaryOverride: _override, ...rest } = settings;
   if (!agents.includes(defaultAgent)) return rest;
   return { ...rest, defaultAgent, defaultModel };
 }
