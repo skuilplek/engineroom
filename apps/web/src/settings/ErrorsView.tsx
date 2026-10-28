@@ -3,13 +3,15 @@ import { relativeTime } from "../format.ts";
 import { useErrors } from "../errors.tsx";
 
 export function ErrorsView() {
-  const { errors, remove, clear } = useErrors();
+  const { errors, remove, clear, report } = useErrors();
   const [busy, setBusy] = useState("");
 
   async function run(id: string, action: () => Promise<void>) {
     setBusy(id);
     try {
       await action();
+    } catch (err) {
+      report("Errors", err);
     } finally {
       setBusy("");
     }

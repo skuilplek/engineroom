@@ -532,6 +532,31 @@ test("git identity is read and written for the signed-in user", async () => {
     assert.deepEqual(await saved.json(), { name: "Ada Lovelace", email: "ada@example.com" });
     const again = (await (await fetch(`${base}/api/git-identity`, { headers })).json()) as { name: string; email: string };
     assert.deepEqual(again, { name: "Ada Lovelace", email: "ada@example.com" });
+
+    const anonymousErrors = await fetch(`${base}/api/errors`);
+    assert.equal(anonymousErrors.status, 401);
+    const emptyErrors = await fetch(`${base}/api/errors`, { headers });
+    assert.equal(emptyErrors.status, 200);
+    assert.deepEqual(await emptyErrors.json(), []);
+    const rejectedError = await fetch(`${base}/api/errors`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ action: "", message: "missing" }),
+    });
+    assert.equal(rejectedError.status, 400);
+    const savedError = await fetch(`${base}/api/errors`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ action: "Create project", message: "fatal: Could not read from remote repository." }),
+    });
+    assert.equal(savedError.status, 201);
+    const createdError = (await savedError.json()) as { id: string; action: string; message: string };
+    assert.equal(createdError.action, "Create project");
+    const storedErrors = (await (await fetch(`${base}/api/errors`, { headers })).json()) as Array<{ id: string }>;
+    assert.deepEqual(storedErrors.map((item) => item.id), [createdError.id]);
+    const removedError = await fetch(`${base}/api/errors/${createdError.id}`, { method: "DELETE", headers });
+    assert.equal(removedError.status, 200);
+    assert.deepEqual(await (await fetch(`${base}/api/errors`, { headers })).json(), []);
   } finally {
     hub.close();
     await runner.close();

@@ -105,6 +105,7 @@ export function message(error: unknown): string {
 
 export function errorSummary(text: string): string {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const line = lines[lines.length - 1] || "Something went wrong";
+  const fatal = [...lines].reverse().find((line) => /^fatal:/i.test(line));
+  const line = fatal || lines[lines.length - 1] || "Something went wrong";
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;
 }

@@ -4,6 +4,7 @@ import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardR
 import { classifyOpenedPath } from "../chat/filePaths.ts";
 import { DiffView } from "../chat/Diff.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
+import { useReportError } from "../errors.tsx";
 import { message } from "../format.ts";
 import {
   IconBranch,
@@ -69,7 +70,10 @@ export function FileManagerDrawer({
   const [files, setFiles] = useState<RepoFileEntry[]>([]);
   const [changes, setChanges] = useState<RepoChangeEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const report = useReportError();
+  function setError(value: string) {
+    if (value) report("Files", value);
+  }
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [externalPath, setExternalPath] = useState<string | null>(null);
@@ -77,7 +81,7 @@ export function FileManagerDrawer({
   const [preview, setPreview] = useState<RepoFileContent | null>(null);
   const [draftContent, setDraftContent] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState("");
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [previewMode, setPreviewMode] = useState<FileViewMode>("code");
   const [viewOnlyOverride, setViewOnlyOverride] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -123,7 +127,7 @@ export function FileManagerDrawer({
     setSelectedDir("");
     setPreview(null);
     setDraftContent("");
-    setPreviewError("");
+    setPreviewFailed(false);
     setExpandedDirs(new Set());
     setFilter("");
     setCreateKind(null);
@@ -145,7 +149,7 @@ export function FileManagerDrawer({
     if (!open || !workspace || !selectedPath) return;
     let cancelled = false;
     setPreviewLoading(true);
-    setPreviewError("");
+    setPreviewFailed(false);
     readRepoFile(workspace, selectedPath)
       .then((content) => {
         if (cancelled) return;
@@ -165,7 +169,8 @@ export function FileManagerDrawer({
         if (cancelled) return;
         setPreview(null);
         setDraftContent("");
-        setPreviewError(message(err));
+        setPreviewFailed(true);
+        report("Open file", err);
       })
       .finally(() => {
         if (!cancelled) setPreviewLoading(false);
@@ -272,7 +277,7 @@ export function FileManagerDrawer({
     if (!open || !externalPath) return;
     let cancelled = false;
     setPreviewLoading(true);
-    setPreviewError("");
+    setPreviewFailed(false);
     setPreview(null);
     setDraftContent("");
     readHomeFile(externalPath)
@@ -286,7 +291,8 @@ export function FileManagerDrawer({
         if (cancelled) return;
         setPreview(null);
         setDraftContent("");
-        setPreviewError(message(err));
+        setPreviewFailed(true);
+        report("Open file", err);
       })
       .finally(() => {
         if (!cancelled) setPreviewLoading(false);
@@ -307,7 +313,7 @@ export function FileManagerDrawer({
       setSelectedDir("");
       setPreview(null);
       setDraftContent("");
-      setPreviewError("");
+      setPreviewFailed(false);
       setPreviewMode(isPlanPath(target.path) ? "preview" : "code");
       setRenamingPath(null);
       setConfirmDeletePath(null);
@@ -414,14 +420,14 @@ export function FileManagerDrawer({
   async function handleSave() {
     if (!workspace || !preview || !canEdit || !isDirty || saving || externalPath) return;
     setSaving(true);
-    setPreviewError("");
+    setPreviewFailed(false);
     try {
       const updated = await writeRepoFile(workspace, preview.path, draftContent);
       setPreview(updated);
       setDraftContent(updated.content);
       await loadFiles(workspace);
     } catch (err) {
-      setPreviewError(message(err));
+      report("Save file", err);
     } finally {
       setSaving(false);
     }
@@ -824,8 +830,6 @@ export function FileManagerDrawer({
         </div>
       )}
 
-      {error && <p className="alert file-drawer-error" role="alert">{error}</p>}
-
       <div className="file-drawer-body">
         <div className="file-tree" role="tree" aria-label={tab === "files" ? "Repository file tree" : "Changed files"}>
           {loading && files.length === 0 && <p className="muted file-empty">Loading files…</p>}
@@ -1034,8 +1038,8 @@ export function FileManagerDrawer({
                 </header>
                 <div className="file-preview-content">
                   {previewLoading && <p className="muted file-empty">Loading file…</p>}
-                  {previewError && <p className="alert file-empty" role="alert">{previewError}</p>}
-                  {!previewLoading && !previewError && preview && (
+                  {previewFailed && !previewLoading && <p className="muted file-empty">This file could not be opened.</p>}
+                  {!previewLoading && !previewFailed && preview && (
                     preview.binary ? (
                       <p className="muted file-empty">Binary file ({formatSize(preview.size)}) cannot be previewed.</p>
                     ) : previewMode === "diff" && preview.oldContent != null ? (

@@ -4,7 +4,8 @@ import { agentLabel } from "@engineroom/protocol";
 import { createChat, getSettings, type Session } from "../api.ts";
 import { PiSetupNotice } from "../settings/PiSetup.tsx";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
-import { message, strip } from "../format.ts";
+import { useReportError } from "../errors.tsx";
+import { strip } from "../format.ts";
 import { composerFilesFromSaved, promptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
 import { IconArchive, IconDownload, IconTrash } from "../icons.tsx";
@@ -56,10 +57,9 @@ export function StartView({
   const [mode, setMode] = useState(() => options[agents[0] || ""]?.modes?.[0]?.id || "");
   const [model, setModel] = useState(() => options[agents[0] || ""]?.models?.[0]?.id || "");
   const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`start:${workspace}`);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<"archive" | "delete" | "">("");
-  const [actionError, setActionError] = useState("");
+  const report = useReportError();
   const [confirming, setConfirming] = useState(false);
   const [typed, setTyped] = useState("");
   const download = useProjectDownload();
@@ -89,8 +89,8 @@ export function StartView({
       setAgent(chosen);
       setMode(modes[0]?.id || "");
       setModel(models.some((item) => item.id === next.defaultModel) ? next.defaultModel : models[0]?.id || "");
-    }).catch((err) => setError(message(err)));
-  }, [agents, options]);
+    }).catch((err) => report("Start", err));
+  }, [agents, options, report]);
 
   const modes = options[agent]?.modes ?? [];
   const models = options[agent]?.models ?? [];
@@ -101,7 +101,6 @@ export function StartView({
     if (!text || busy || !agent) return;
     const sentPrompt = prompt;
     setBusy(true);
-    setError("");
     try {
       const saved = await uploadPendingAttachments(workspace, attachments);
       const messageText = promptText(sentPrompt, saved.length);
@@ -119,7 +118,7 @@ export function StartView({
       }
       onStarted(chat, messageText, saved);
     } catch (err) {
-      setError(message(err));
+      report("Start chat", err);
       setBusy(false);
     }
   }
@@ -127,11 +126,10 @@ export function StartView({
   async function archiveProject() {
     if (action) return;
     setAction("archive");
-    setActionError("");
     try {
       await onArchive();
     } catch (err) {
-      setActionError(message(err));
+      report(archived ? "Unarchive" : "Archive", err);
     } finally {
       setAction("");
     }
@@ -140,11 +138,10 @@ export function StartView({
   async function removeProject() {
     if (action || typed !== targetLabel) return;
     setAction("delete");
-    setActionError("");
     try {
       await onDelete(typed);
     } catch (err) {
-      setActionError(message(err));
+      report("Delete project", err);
       setAction("");
     }
   }
@@ -191,7 +188,6 @@ export function StartView({
           disabled={action !== ""}
           onClick={() => {
             setTyped("");
-            setActionError("");
             setConfirming(true);
           }}
         >
@@ -226,7 +222,6 @@ export function StartView({
           setRepoTick((value) => value + 1);
           onBranchChanged?.();
         }}
-        error={error}
       >
         {agents.length === 0 && <p className="muted">No agents available</p>}
         {piSetup && onSession && <PiSetupNotice onReady={onSession} />}
@@ -237,11 +232,9 @@ export function StartView({
         )}
       </Composer>
       <p className="context-line">{targetLabel}</p>
-      {(creatingZip || (downloadHere && download?.phase === "failed") || (actionError && !confirming) || projectCreate) && (
+      {(creatingZip || projectCreate) && (
         <div className="download-project">
           {creatingZip && <p className="zip-progress" role="status">..creating project zip file..</p>}
-          {downloadHere && download?.phase === "failed" && <p className="alert" role="alert">{download.error}</p>}
-          {actionError && !confirming && <p className="alert" role="alert">{actionError}</p>}
           {projectCreate && (
             <RepoManage
               workspace={workspace}
@@ -265,7 +258,6 @@ export function StartView({
                 disabled={action === "delete"}
               />
             </label>
-            {actionError && <p className="alert" role="alert">{actionError}</p>}
             <div className="confirm-actions">
               <button type="button" onClick={() => setConfirming(false)} disabled={action === "delete"}>Cancel</button>
               <button className="danger" type="button" disabled={typed !== targetLabel || action === "delete"} onClick={() => void removeProject()}>

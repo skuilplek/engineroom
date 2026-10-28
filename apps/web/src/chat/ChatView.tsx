@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { CommandBlockStyle, PromptAttachment, RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel, ATTACHED_PROMPT } from "@engineroom/protocol";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
-import { message, workspaceLabel } from "../format.ts";
+import { useReportError } from "../errors.tsx";
+import { workspaceLabel } from "../format.ts";
 import { isMissingChat } from "./missingChat.ts";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
@@ -55,8 +56,8 @@ export function ChatView({
   const [live, setLive] = useState<ChatLive>(() => emptyLive());
   const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`chat:${chatId}`);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
   const [raw, setRaw] = useState(false);
+  const report = useReportError();
   const [shellOpen, setShellOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
@@ -83,7 +84,6 @@ export function ChatView({
   useEffect(() => {
     setLive(emptyLive());
     setRaw(false);
-    setError("");
     opened.current = false;
     sawSnapshot.current = false;
     queued.current = [];
@@ -94,7 +94,7 @@ export function ChatView({
           unavailableRef.current();
           return;
         }
-        setError(message.error);
+        report("Chat", message.error);
         return;
       }
       if (message.type === "event" && message.chatId === chatId && !sawSnapshot.current) {
@@ -147,7 +147,7 @@ export function ChatView({
       stop();
       unwatchChat(chatId);
     };
-  }, [chatId, claimOpening]);
+  }, [chatId, claimOpening, report]);
 
   const blocks = useMemo(() => groupTranscript(live.entries), [live.entries]);
   const plan = useMemo(() => latestPlan(live.entries), [live.entries]);
@@ -169,12 +169,11 @@ export function ChatView({
     const text = promptText(prompt, attachments.length);
     if (!text || raw || sending) return;
     if (attachments.some((item) => item.file && !item.saved) && !live.workspace) {
-      setError("Loading chat…");
+      report("Send", "Loading chat…");
       return;
     }
     const sentPrompt = prompt;
     setSending(true);
-    setError("");
     try {
       const saved = await uploadPendingAttachments(live.workspace, attachments);
       const messageText = promptText(sentPrompt, saved.length);
@@ -193,7 +192,7 @@ export function ChatView({
         ...(saved.length > 0 ? { attachments: saved } : {}),
       });
     } catch (err) {
-      setError(message(err));
+      report("Send", err);
     } finally {
       setSending(false);
     }
@@ -263,7 +262,7 @@ export function ChatView({
               return <p className="status" key={index}>{block.text}</p>;
             })}
             {blocks.length === 0 && (
-              <p className="empty">{error || (live.ready ? "Send a prompt to start." : "Loading chat…")}</p>
+              <p className="empty">{live.ready ? "Send a prompt to start." : "Loading chat…"}</p>
             )}
           </div>
           {live.shell && (
@@ -314,7 +313,6 @@ export function ChatView({
             switchDisabled={live.running}
             onReposChanged={onReposChanged}
             onBranchChanged={onFilesChanged}
-            error={error}
           />
         </>
       )}

@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, type DragEvent, type FormEvent, type ReactNode } from "react";
 import type { GitStatus, QueuedPrompt } from "@engineroom/protocol";
 import { gitWorkspace, initGitWorkspace, switchGitBranch } from "../api.ts";
-import { message } from "../format.ts";
+import { useReportError } from "../errors.tsx";
 import { IconArrow, IconBranch, IconClip } from "../icons.tsx";
 import { addComposerFiles, removeComposerFile, type ComposerAttachment } from "./attachments.ts";
 import { usePromptHeight } from "./promptHeight.ts";
@@ -35,7 +35,6 @@ export function Composer({
   switchDisabled,
   onReposChanged,
   onBranchChanged,
-  error,
   children,
 }: {
   frame: "dock" | "launch";
@@ -61,16 +60,14 @@ export function Composer({
   switchDisabled?: boolean;
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
-  error?: string;
   children?: ReactNode;
 }) {
+  const report = useReportError();
   const promptHeight = usePromptHeight(username);
   const box = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [attachmentError, setAttachmentError] = useState("");
   const [git, setGit] = useState<GitStatus | null>(null);
-  const [gitError, setGitError] = useState("");
   const [gitBusy, setGitBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -91,29 +88,24 @@ export function Composer({
     }
     let cancelled = false;
     setGit(null);
-    setGitError("");
     gitWorkspace(workspace).then((status) => {
-      if (!cancelled) {
-        setGit(status);
-        setGitError("");
-      }
+      if (!cancelled) setGit(status);
     }).catch((err) => {
-      if (!cancelled) setGitError(message(err));
+      if (!cancelled) report("Repository", err);
     });
     return () => {
       cancelled = true;
     };
-  }, [workspace]);
+  }, [workspace, report]);
 
   async function createRepo() {
     if (!workspace || gitBusy) return;
     setGitBusy(true);
-    setGitError("");
     try {
       setGit(await initGitWorkspace(workspace));
       onReposChanged?.();
     } catch (err) {
-      setGitError(message(err));
+      report("Create repository", err);
     } finally {
       setGitBusy(false);
     }
@@ -122,12 +114,11 @@ export function Composer({
   async function chooseBranch(branch: string) {
     if (!workspace || !git || branch === git.branch || gitBusy) return;
     setGitBusy(true);
-    setGitError("");
     try {
       setGit(await switchGitBranch(workspace, branch));
       onBranchChanged?.();
     } catch (err) {
-      setGitError(message(err));
+      report("Switch branch", err);
     } finally {
       setGitBusy(false);
     }
@@ -141,7 +132,7 @@ export function Composer({
   function addFiles(list: FileList | File[]) {
     const result = addComposerFiles(attachments, list);
     onAttachments(result.attachments);
-    setAttachmentError(result.error);
+    if (result.error) report("Attach files", result.error);
   }
 
   function hasFiles(transfer: DataTransfer | null): boolean {
@@ -171,7 +162,6 @@ export function Composer({
   const branchNames = git?.branch && !branches.includes(git.branch) ? [git.branch, ...branches] : branches;
   const showBranch = Boolean(git?.repo && (git.branch || branchNames.length > 0));
   const showCreate = Boolean(git && !git.repo && projectCreate);
-  const alert = gitError || attachmentError || error || "";
 
   return (
     <div className={frame === "dock" ? "composer" : "launch-composer"}>
@@ -301,7 +291,6 @@ export function Composer({
           </button>
         </div>
       )}
-      {alert && <p className="alert" role="alert">{alert}</p>}
     </div>
   );
 }

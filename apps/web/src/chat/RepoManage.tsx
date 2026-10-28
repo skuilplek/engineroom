@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { GitStatus } from "@engineroom/protocol";
 import { createGitBranch, gitWorkspace, pullGit, pushGit, setGitRemote, switchGitBranch } from "../api.ts";
-import { message } from "../format.ts";
+import { useReportError } from "../errors.tsx";
 
 export function RepoManage({
   workspace,
@@ -17,14 +17,13 @@ export function RepoManage({
   const [branchName, setBranchName] = useState("");
   const [action, setAction] = useState<"remote" | "switch" | "branch" | "pull" | "push" | "">("");
   const [note, setNote] = useState("");
-  const [error, setError] = useState("");
+  const report = useReportError();
 
   useEffect(() => {
     setGit(null);
     setRemote("");
     setBranchName("");
     setNote("");
-    setError("");
   }, [workspace]);
 
   useEffect(() => {
@@ -33,19 +32,17 @@ export function RepoManage({
       if (cancelled) return;
       setGit(status);
       setRemote(status.remote || "");
-      setError("");
     }).catch((err) => {
-      if (!cancelled) setError(message(err));
+      if (!cancelled) report("Repository", err);
     });
     return () => {
       cancelled = true;
     };
-  }, [workspace, refreshToken]);
+  }, [workspace, refreshToken, report]);
 
   async function run(kind: "remote" | "switch" | "branch" | "pull" | "push", task: () => Promise<GitStatus>, done: string) {
     if (action) return;
     setAction(kind);
-    setError("");
     setNote("");
     try {
       const status = await task();
@@ -54,20 +51,19 @@ export function RepoManage({
       setNote(done);
       if (kind !== "remote") onBranchChanged?.();
     } catch (err) {
-      setError(message(err));
+      const labels = { remote: "Save remote", switch: "Switch branch", branch: "Create branch", pull: "Pull", push: "Push" };
+      report(labels[kind], err);
     } finally {
       setAction("");
     }
   }
 
-  if (!git && !error) return null;
-  if (!git?.repo) {
+  if (!git) return null;
+  if (!git.repo) {
     return (
       <section className="repo-manage" aria-label="Repository">
         <h2>Repository</h2>
-        {error
-          ? <p className="alert" role="alert">{error}</p>
-          : <p className="muted">This folder is not a git repository. Use Create repo above to start one.</p>}
+        <p className="muted">This folder is not a git repository. Use Create repo above to start one.</p>
       </section>
     );
   }
@@ -165,7 +161,6 @@ export function RepoManage({
         </button>
       </div>
       {note && <p className="muted" role="status">{note}</p>}
-      {error && <p className="alert" role="alert">{error}</p>}
     </section>
   );
 }

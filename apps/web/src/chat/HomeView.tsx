@@ -85,18 +85,16 @@ function NewProjectCard({ onCreate }: { onCreate: (name: string, url: string) =>
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
-    setError("");
     try {
       await onCreate(name.trim(), url.trim());
       setName("");
       setUrl("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "could not create the project");
+    } catch {
+      /* the notice shows the reason */
     } finally {
       setBusy(false);
     }
@@ -118,7 +116,6 @@ function NewProjectCard({ onCreate }: { onCreate: (name: string, url: string) =>
             placeholder="Leave blank to start an empty repository"
           />
         </label>
-        {error && <p className="alert" role="alert">{error}</p>}
         <button className="primary" type="submit" disabled={busy}>{busy ? "Creating…" : "Create project"}</button>
       </form>
     </section>

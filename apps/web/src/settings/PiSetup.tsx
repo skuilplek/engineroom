@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { setupPi, type Session } from "../api.ts";
+import { useReportError } from "../errors.tsx";
 import { message } from "../format.ts";
 
 export function PiSetupNotice({
@@ -8,8 +9,11 @@ export function PiSetupNotice({
   onReady: (session: Session) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  const report = useReportError();
+  function setError(value: string) {
+    if (value) report("Set up Pi", value);
+  }
 
   async function run() {
     setBusy(true);
@@ -31,7 +35,6 @@ export function PiSetupNotice({
       <p className="muted">Install Pi for this account.</p>
       <button className="primary" type="button" disabled={busy} onClick={() => void run()}>Set up Pi</button>
       {done && <p className="muted">{done}</p>}
-      {error && <p className="alert" role="alert">{error}</p>}
     </div>
   );
 }

@@ -52,6 +52,7 @@ import { groupTranscript } from "../chat/group.ts";
 import { ToolBlock } from "../chat/ToolBlock.tsx";
 import { CopyResponse } from "../chat/CopyResponse.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
+import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
 
 type AdminTab = "overview" | "agents" | "packages" | "repositories" | "users";
@@ -144,8 +145,11 @@ export function AdminView({
     projectDownloads: Boolean(session.projectDownloads),
     visibility: { ...(session.fileVisibility ?? DEFAULT_FILE_VISIBILITY) },
   }));
-  const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const report = useReportError();
+  function setError(value: string) {
+    if (value) report("Admin", value);
+  }
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<AdminTab>("overview");
   const [agentOptions, setAgentOptions] = useState<AgentOptionsState>({});
@@ -592,7 +596,6 @@ export function AdminView({
             </button>
           ))}
         </div>
-        <p className="alert" role="alert">{error}</p>
         {saved && <p className="admin-note" role="status">{saved}</p>}
       </header>
       <div className="admin-stage" role="tabpanel" id={`admin-panel-${tab}`} aria-labelledby={`admin-tab-${tab}`}>
@@ -1567,17 +1570,18 @@ function UserConversations({
   commandBlockStyle: CommandBlockStyle;
 }) {
   const [chats, setChats] = useState<ChatMeta[] | null>(null);
-  const [error, setError] = useState("");
+  const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ChatDetail | null>(null);
-  const [detailError, setDetailError] = useState("");
+  const [detailFailed, setDetailFailed] = useState(false);
+  const report = useReportError();
   const [detailBusy, setDetailBusy] = useState(false);
   const openRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
-    setError("");
+    setFailed(false);
     try {
       const next = await listUserChats(username);
       setChats(next);
@@ -1587,17 +1591,18 @@ function UserConversations({
         return kept;
       });
     } catch (err) {
-      setError(message(err));
+      setFailed(true);
+      report("Conversations", err);
     } finally {
       setBusy(false);
     }
-  }, [username]);
+  }, [username, report]);
 
   useEffect(() => {
     openRef.current = null;
     setOpenId(null);
     setDetail(null);
-    setDetailError("");
+    setDetailFailed(false);
     void load();
   }, [load]);
 
@@ -1608,7 +1613,7 @@ function UserConversations({
       openRef.current = null;
       setOpenId(null);
       setDetail(null);
-      setDetailError("");
+      setDetailFailed(false);
       setDetailBusy(false);
       return;
     }
@@ -1616,14 +1621,15 @@ function UserConversations({
     setOpenId(chat.id);
     setDetail(null);
     setDetailBusy(true);
-    setDetailError("");
+    setDetailFailed(false);
     try {
       const result = await getUserChat(username, chat.id);
       if (openRef.current !== chat.id) return;
       setDetail(result);
     } catch (err) {
       if (openRef.current !== chat.id) return;
-      setDetailError(message(err));
+      setDetailFailed(true);
+      report("Conversation", err);
     } finally {
       if (openRef.current === chat.id) setDetailBusy(false);
     }
@@ -1636,9 +1642,9 @@ function UserConversations({
         <button className="ghost" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Loading…" : "Refresh"}</button>
       </div>
       <p className="muted">What this user asked each agent, with the agent's replies.</p>
-      {error && <p className="alert" role="alert">{error}</p>}
       {chats && chats.length === 0 && <p className="muted">No conversations yet.</p>}
-      {!chats && !error && <p className="muted">Loading conversations…</p>}
+      {!chats && !failed && <p className="muted">Loading conversations…</p>}
+      {failed && !chats && <p className="muted">Conversations could not be loaded.</p>}
       <div className="user-chat-list">
         {chats?.map((chat) => (
           <div className={openId === chat.id ? "user-chat open" : "user-chat"} key={chat.id}>
@@ -1660,7 +1666,7 @@ function UserConversations({
             {openId === chat.id && (
               <div className="user-transcript" aria-live="polite">
                 {detailBusy && <p className="muted">Loading conversation…</p>}
-                {detailError && <p className="alert" role="alert">{detailError}</p>}
+                {detailFailed && !detailBusy && <p className="muted">This conversation could not be loaded.</p>}
                 {detail && blocks.length === 0 && !detailBusy && <p className="muted">This conversation has no messages yet.</p>}
                 {detail && blocks.map((block, index) => {
                   if (block.kind === "text") {
@@ -1699,20 +1705,19 @@ function workspaceName(workspace: string): string {
 
 function ServerPanel() {
   const [overview, setOverview] = useState<ServerOverview | null>(null);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const report = useReportError();
 
   const load = useCallback(async () => {
     setBusy(true);
-    setError("");
     try {
       setOverview(await serverOverview());
     } catch (err) {
-      setError(message(err));
+      report("Server", err);
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [report]);
 
   useEffect(() => {
     void load();
@@ -1767,7 +1772,6 @@ function ServerPanel() {
         </div>
       )}
       <button className="ghost server-refresh" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
-      <p className="alert" role="alert">{error}</p>
     </section>
   );
 }

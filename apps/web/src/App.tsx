@@ -271,8 +271,13 @@ function Shell({
     clearProjectDownload();
   }, [downloadJob, onDownloadPage]);
   useEffect(() => {
-    if (!downloadJob || downloadJob.phase !== "failed") return;
-    const key = `${downloadJob.workspace}\n${downloadJob.error ?? ""}`;
+    if (!downloadJob) return;
+    if (downloadJob.phase === "creating") {
+      reportedDownload.current = "";
+      return;
+    }
+    if (downloadJob.phase !== "failed") return;
+    const key = `${downloadJob.workspace}\n${downloadJob.id}\n${downloadJob.error ?? ""}`;
     if (reportedDownload.current === key) return;
     reportedDownload.current = key;
     report("Download project", downloadJob.error || "The project zip could not be created.");
