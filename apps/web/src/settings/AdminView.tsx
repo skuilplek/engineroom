@@ -16,6 +16,7 @@ import {
   type UserPolicy,
 } from "@engineroom/protocol";
 import { PackagesSection } from "./PackagesSection.tsx";
+import { ServerConfig } from "./ServerConfig.tsx";
 import {
   addAccount,
   addCatalog,
@@ -55,7 +56,7 @@ import { Markdown } from "../chat/Markdown.tsx";
 import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
 
-type AdminTab = "overview" | "agents" | "packages" | "repositories" | "users";
+type AdminTab = "overview" | "server" | "agents" | "packages" | "repositories" | "users";
 
 type FolderBaseline = {
   directory: string;
@@ -82,6 +83,7 @@ type OfferSnapshot = {
 
 const TABS: { id: AdminTab; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "server", label: "Server" },
   { id: "agents", label: "Agents" },
   { id: "packages", label: "Packages" },
   { id: "repositories", label: "Repositories" },
@@ -636,6 +638,12 @@ export function AdminView({
                 <span className="muted">{accounts.length === 0 ? "No accounts yet." : "Linux accounts on this machine."}</span>
               </button>
             </div>
+          </div>
+        )}
+
+        {tab === "server" && (
+          <div className="admin-pane">
+            <ServerConfig />
           </div>
         )}
 

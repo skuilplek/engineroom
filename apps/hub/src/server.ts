@@ -11,6 +11,7 @@ import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentBin
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
+import { cleanInterface, cleanSsid, cleanWifiPassword, normalizeHostname, runNetworkCtl } from "./network.ts";
 import { SYSTEM_COMMAND_DIRS, serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
@@ -32,6 +33,7 @@ export interface HubOptions {
   checksFile?: string;
   commandDirs?: string[];
   adminCtl?: string;
+  networkCtl?: string;
   lookup?: (username: string) => LinuxUser | null;
   authenticate?: (username: string, password: string) => Promise<boolean>;
   listAccounts?: () => Account[];
@@ -429,6 +431,41 @@ export function createHub(options: HubOptions) {
     if (settings.filesReadOnly) throw new Error("file upload is not enabled");
   }
 
+  async function adminServer(req: IncomingMessage, res: ServerResponse, parts: string[]) {
+    const ctl = options.networkCtl || "/usr/local/bin/engineroom-network";
+    if (parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, await runNetworkCtl(ctl, ["status"]));
+      return;
+    }
+    if (parts[3] === "hostname" && parts.length === 4 && req.method === "PUT") {
+      const body = (await readJson(req)) as { hostname?: unknown };
+      const hostname = normalizeHostname(body.hostname);
+      sendJson(res, 200, await runNetworkCtl(ctl, ["hostname", hostname], "", 30_000));
+      return;
+    }
+    if (parts[3] === "wifi" && parts[4] === "scan" && parts.length === 5 && req.method === "POST") {
+      const body = (await readJson(req)) as { interface?: unknown };
+      const iface = cleanInterface(body.interface);
+      sendJson(res, 200, await runNetworkCtl(ctl, ["scan", iface], "", 60_000));
+      return;
+    }
+    if (parts[3] === "wifi" && parts.length === 4 && req.method === "PUT") {
+      const body = (await readJson(req)) as { interface?: unknown; ssid?: unknown; password?: unknown };
+      const iface = cleanInterface(body.interface);
+      const ssid = cleanSsid(body.ssid);
+      const password = cleanWifiPassword(body.password);
+      sendJson(res, 200, await runNetworkCtl(ctl, ["connect", iface, ssid], `${password}\n`, 60_000));
+      return;
+    }
+    if (parts[3] === "wifi" && parts.length === 4 && req.method === "DELETE") {
+      const body = (await readJson(req)) as { interface?: unknown };
+      const iface = cleanInterface(body.interface);
+      sendJson(res, 200, await runNetworkCtl(ctl, ["disconnect", iface], "", 60_000));
+      return;
+    }
+    sendJson(res, 404, { error: "not found" });
+  }
+
   async function admin(req: IncomingMessage, res: ServerResponse, url: URL, user: LinuxUser) {
     if (user.username !== adminUser || adminUser === "") {
       sendJson(res, 403, { error: "admin only" });
@@ -452,6 +489,10 @@ export function createHub(options: HubOptions) {
           return found ? { ...command, available: true, path: found.path } : command;
         }),
       });
+      return;
+    }
+    if (parts[2] === "server") {
+      await adminServer(req, res, parts);
       return;
     }
     if (parts[2] === "branding" && parts.length === 3 && req.method === "PUT") {
@@ -1704,7 +1745,8 @@ function statusFor(message: string): number {
     message.includes("not a visible change") ||
     message.includes("no unstaged") ||
     message.includes("not staged") ||
-    message.includes("not a git repository")
+    message.includes("not a git repository") ||
+    message.includes("not a wireless interface")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT") || message.includes("not configured")) return 404;
   if (message.includes("not ready")) return 409;

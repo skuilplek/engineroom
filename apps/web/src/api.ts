@@ -537,6 +537,62 @@ export function serverOverview() {
   return api<ServerOverview>("/api/admin/overview");
 }
 
+export interface ServerWifiInterface {
+  name: string;
+  ssid: string | null;
+  signal: number | null;
+}
+
+export interface ServerNetwork {
+  hostname: string;
+  url: string;
+  avahi: boolean;
+  port80: boolean;
+  wifi: {
+    available: boolean;
+    backend: "networkmanager" | "netplan" | "none";
+    interfaces: ServerWifiInterface[];
+  };
+}
+
+export interface WifiNetwork {
+  ssid: string;
+  signal: number;
+  security: string;
+}
+
+export function getServerNetwork() {
+  return api<ServerNetwork>("/api/admin/server");
+}
+
+export function saveServerHostname(hostname: string) {
+  return api<ServerNetwork>("/api/admin/server/hostname", {
+    method: "PUT",
+    body: JSON.stringify({ hostname }),
+  });
+}
+
+export function scanServerWifi(iface: string) {
+  return api<{ interface: string; networks: WifiNetwork[] }>("/api/admin/server/wifi/scan", {
+    method: "POST",
+    body: JSON.stringify({ interface: iface }),
+  });
+}
+
+export function connectServerWifi(iface: string, ssid: string, password: string) {
+  return api<ServerNetwork>("/api/admin/server/wifi", {
+    method: "PUT",
+    body: JSON.stringify({ interface: iface, ssid, password }),
+  });
+}
+
+export function disconnectServerWifi(iface: string) {
+  return api<ServerNetwork>("/api/admin/server/wifi", {
+    method: "DELETE",
+    body: JSON.stringify({ interface: iface }),
+  });
+}
+
 export function getAgentOptions() {
   return api<AgentOptionsState>("/api/admin/agent-options");
 }

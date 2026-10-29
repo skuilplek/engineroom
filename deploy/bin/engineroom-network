@@ -1,0 +1,505 @@
+#!/bin/bash
+# Set the system hostname (Avahi publishes name.local) or a Wi-Fi network.
+# The hub is the only caller, via sudo. A Wi-Fi password is one line on stdin.
+set -euo pipefail
+
+action="${1:-}"
+name=""
+
+usage() {
+  echo "usage: engineroom-network status|hostname NAME|scan IFACE|connect IFACE SSID|disconnect IFACE" >&2
+  exit 1
+}
+
+normalize_hostname() {
+  local raw="${1-}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  raw="${raw,,}"
+  if [[ "$raw" == *.local ]]; then
+    raw="${raw%.local}"
+  fi
+  if [[ "$raw" == "localhost" || ! "$raw" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    echo "invalid hostname" >&2
+    exit 1
+  fi
+  printf '%s\n' "$raw"
+}
+
+assert_iface() {
+  local iface="${1-}"
+  if [[ ! "$iface" =~ ^[A-Za-z][A-Za-z0-9._-]{0,14}$ ]]; then
+    echo "invalid interface" >&2
+    exit 1
+  fi
+  if [[ ! -d "/sys/class/net/${iface}/wireless" ]]; then
+    echo "not a wireless interface" >&2
+    exit 1
+  fi
+}
+
+assert_ssid() {
+  local ssid="${1-}"
+  local bytes
+  if [[ -z "$ssid" || "$ssid" == -* || "$ssid" =~ [[:cntrl:]] ]]; then
+    echo "invalid network" >&2
+    exit 1
+  fi
+  bytes="$(printf '%s' "$ssid" | wc -c)"
+  if (( bytes > 32 )); then
+    echo "invalid network" >&2
+    exit 1
+  fi
+}
+
+validate() {
+  case "$action" in
+    status)
+      [[ $# -eq 1 ]] || usage
+      ;;
+    hostname)
+      [[ $# -eq 2 ]] || usage
+      name="$(normalize_hostname "$2")"
+      ;;
+    scan|disconnect)
+      [[ $# -eq 2 ]] || usage
+      assert_iface "$2"
+      ;;
+    connect)
+      [[ $# -eq 3 ]] || usage
+      assert_iface "$2"
+      assert_ssid "$3"
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+require_root() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "must run as root" >&2
+    exit 1
+  fi
+}
+
+# The hub service mounts the system read-only, and sudo stays in that mount
+# namespace. hostname, Avahi, and netplan need the host mount namespace.
+enter_host() {
+  if [[ "${ENGINEROOM_NETWORK_NS:-}" == "host" ]]; then
+    return
+  fi
+  local self_mnt init_mnt
+  self_mnt="$(readlink /proc/self/ns/mnt 2>/dev/null || true)"
+  init_mnt="$(readlink /proc/1/ns/mnt 2>/dev/null || true)"
+  if [[ -n "$self_mnt" && -n "$init_mnt" && "$self_mnt" != "$init_mnt" ]]; then
+    export ENGINEROOM_NETWORK_NS=host
+    exec nsenter -t 1 -m -- "$0" "$@"
+  fi
+}
+
+detect_backend() {
+  if systemctl is-active --quiet NetworkManager && command -v nmcli >/dev/null 2>&1; then
+    printf '%s\n' networkmanager
+    return
+  fi
+  if command -v netplan >/dev/null 2>&1; then
+    printf '%s\n' netplan
+    return
+  fi
+  printf '%s\n' none
+}
+
+validate_password() {
+  local password="${1-}"
+  if [[ -z "$password" ]]; then
+    return
+  fi
+  if [[ "$password" =~ [[:cntrl:]] ]]; then
+    echo "invalid password" >&2
+    exit 1
+  fi
+  if [[ "$password" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    return
+  fi
+  if (( ${#password} < 8 || ${#password} > 63 )); then
+    echo "invalid password" >&2
+    exit 1
+  fi
+}
+
+print_status() {
+  python3 - <<'PY'
+import json, pathlib, shutil, subprocess
+
+def short_hostname() -> str:
+    raw = ""
+    try:
+        result = subprocess.run(["hostnamectl", "--static"], capture_output=True, text=True)
+        if result.returncode == 0:
+            raw = result.stdout.strip()
+    except OSError:
+        raw = ""
+    if not raw:
+        try:
+            raw = pathlib.Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+    if not raw:
+        try:
+            raw = subprocess.check_output(["hostname"], text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            raw = "engineroom"
+    label = raw.split(".", 1)[0].strip().lower()
+    return label or raw
+
+def dbm_to_percent(dbm: float) -> int:
+    if dbm <= -100:
+        return 0
+    if dbm >= -50:
+        return 100
+    return int(round(2 * (dbm + 100)))
+
+def link_status(iface: str):
+    iw = shutil.which("iw")
+    if not iw:
+        return None, None
+    result = subprocess.run([iw, "dev", iface, "link"], capture_output=True, text=True)
+    text = result.stdout or ""
+    if result.returncode != 0 or "Not connected" in text:
+        return None, None
+    ssid = None
+    signal = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("SSID:"):
+            ssid = stripped.split(":", 1)[1].strip() or None
+        elif stripped.startswith("signal:"):
+            parts = stripped.split()
+            if len(parts) >= 2:
+                try:
+                    signal = dbm_to_percent(float(parts[1]))
+                except ValueError:
+                    signal = None
+    return ssid, signal
+
+def port80() -> bool:
+    path = pathlib.Path("/etc/caddy/Caddyfile")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return stripped == ":80" or stripped.startswith(":80 ") or stripped.startswith(":80{")
+    return False
+
+def backend() -> str:
+    nm = subprocess.run(["systemctl", "is-active", "--quiet", "NetworkManager"]).returncode == 0
+    if nm and shutil.which("nmcli"):
+        return "networkmanager"
+    if shutil.which("netplan"):
+        return "netplan"
+    return "none"
+
+hostname = short_hostname()
+interfaces = []
+root = pathlib.Path("/sys/class/net")
+if root.is_dir():
+    for entry in sorted(root.iterdir()):
+        if (entry / "wireless").is_dir():
+            ssid, signal = link_status(entry.name)
+            interfaces.append({"name": entry.name, "ssid": ssid, "signal": signal})
+
+avahi = subprocess.run(["systemctl", "is-active", "--quiet", "avahi-daemon"]).returncode == 0
+print(json.dumps({
+    "hostname": hostname,
+    "url": f"http://{hostname}.local",
+    "avahi": avahi,
+    "port80": port80(),
+    "wifi": {
+        "available": len(interfaces) > 0,
+        "backend": backend(),
+        "interfaces": interfaces,
+    },
+}))
+PY
+}
+
+apply_hostname() {
+  local hostname="$1"
+  hostnamectl set-hostname "$hostname"
+  install -d -m 0755 /etc/engineroom
+  python3 - "$hostname" <<'PY'
+import json, pathlib, sys
+name = sys.argv[1]
+config = pathlib.Path("/etc/engineroom/server.json")
+config.write_text(json.dumps({"hostname": name}) + "\n", encoding="utf-8")
+config.chmod(0o644)
+hosts = pathlib.Path("/etc/hosts")
+rows = hosts.read_text(encoding="utf-8").splitlines() if hosts.exists() else []
+out = []
+found = False
+for row in rows:
+    parts = row.split()
+    if parts and parts[0] == "127.0.1.1":
+        if not found:
+            out.append(f"127.0.1.1\t{name}")
+            found = True
+        continue
+    out.append(row)
+if not found:
+    out.append(f"127.0.1.1\t{name}")
+text = "\n".join(out)
+if not text.endswith("\n"):
+    text += "\n"
+hosts.write_text(text, encoding="utf-8")
+PY
+  if ! systemctl enable --now avahi-daemon; then
+    echo "avahi-daemon is not installed" >&2
+    exit 1
+  fi
+  systemctl restart avahi-daemon
+}
+
+parse_nmcli() {
+  python3 /dev/fd/3 "$1" 3<<'PY'
+import json, sys
+iface = sys.argv[1]
+
+def split_terse(line: str) -> list[str]:
+    fields: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for ch in line.rstrip("\n"):
+        if escaped:
+            current.append(ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == ":":
+            fields.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    fields.append("".join(current))
+    return fields
+
+found: dict[str, dict[str, object]] = {}
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    fields = split_terse(line)
+    ssid = fields[0].strip() if fields else ""
+    if not ssid:
+        continue
+    signal = 0
+    if len(fields) > 1 and fields[1].strip():
+        try:
+            signal = int(float(fields[1].strip()))
+        except ValueError:
+            signal = 0
+    security = fields[2].strip() if len(fields) > 2 else ""
+    current = found.get(ssid)
+    if current is None or signal > int(current["signal"]):
+        found[ssid] = {"ssid": ssid, "signal": signal, "security": security}
+networks = sorted(found.values(), key=lambda item: (-int(item["signal"]), str(item["ssid"])))[:100]
+print(json.dumps({"interface": iface, "networks": networks}))
+PY
+}
+
+parse_iw() {
+  python3 /dev/fd/3 "$1" 3<<'PY'
+import json, sys
+iface = sys.argv[1]
+
+def dbm_to_percent(dbm: float) -> int:
+    if dbm <= -100:
+        return 0
+    if dbm >= -50:
+        return 100
+    return int(round(2 * (dbm + 100)))
+
+found: dict[str, dict[str, object]] = {}
+ssid = ""
+signal = 0
+security = "Open"
+
+def flush() -> None:
+    global ssid, signal, security
+    if ssid:
+        current = found.get(ssid)
+        if current is None or signal > int(current["signal"]):
+            found[ssid] = {"ssid": ssid, "signal": signal, "security": security}
+    ssid = ""
+    signal = 0
+    security = "Open"
+
+for line in sys.stdin:
+    if line.startswith("BSS "):
+        flush()
+        continue
+    stripped = line.strip()
+    if stripped.startswith("SSID:"):
+        ssid = stripped.split(":", 1)[1].strip()
+    elif stripped.startswith("signal:"):
+        parts = stripped.split()
+        if len(parts) >= 2:
+            try:
+                signal = dbm_to_percent(float(parts[1]))
+            except ValueError:
+                signal = 0
+    elif stripped.startswith("RSN:") or stripped.startswith("WPA:"):
+        security = "WPA"
+flush()
+networks = sorted(found.values(), key=lambda item: (-int(item["signal"]), str(item["ssid"])))[:100]
+print(json.dumps({"interface": iface, "networks": networks}))
+PY
+}
+
+prepare_radio() {
+  if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock wifi || true
+  fi
+  ip link set dev "$1" up || true
+}
+
+scan_wifi() {
+  local iface="$1"
+  prepare_radio "$iface"
+  if systemctl is-active --quiet NetworkManager && command -v nmcli >/dev/null 2>&1; then
+    nmcli -w 25 -t -f SSID,SIGNAL,SECURITY device wifi list ifname "$iface" --rescan yes | parse_nmcli "$iface"
+    return
+  fi
+  if ! command -v iw >/dev/null 2>&1; then
+    echo "wifi cannot be scanned" >&2
+    exit 1
+  fi
+  iw dev "$iface" scan | parse_iw "$iface"
+}
+
+write_netplan() {
+  local iface="$1"
+  local ssid="$2"
+  python3 - "$iface" "$ssid" 3<<<"$3" <<'PY'
+import os, sys
+iface, ssid = sys.argv[1], sys.argv[2]
+password = os.fdopen(3).read()
+if password.endswith("\n"):
+    password = password[:-1]
+
+def quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+lines = [
+    "network:",
+    "  version: 2",
+    "  wifis:",
+    f"    {iface}:",
+    "      dhcp4: true",
+    "      optional: true",
+    "      access-points:",
+]
+if password:
+    lines.append(f"        {quote(ssid)}:")
+    lines.append(f"          password: {quote(password)}")
+else:
+    lines.append(f"        {quote(ssid)}: {{}}")
+path = "/etc/netplan/99-engineroom-wifi.yaml"
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(lines) + "\n")
+PY
+}
+
+connect_wifi() {
+  local iface="$1"
+  local ssid="$2"
+  local password="$3"
+  local backend
+  backend="$(detect_backend)"
+  prepare_radio "$iface"
+  if [[ "$backend" == "networkmanager" ]]; then
+    if [[ -f /etc/netplan/99-engineroom-wifi.yaml ]]; then
+      rm -f /etc/netplan/99-engineroom-wifi.yaml
+      if command -v netplan >/dev/null 2>&1; then
+        netplan generate
+        netplan apply
+      fi
+    fi
+    if [[ -n "$password" ]]; then
+      nmcli -w 40 device wifi connect "$ssid" password "$password" ifname "$iface"
+    else
+      nmcli -w 40 device wifi connect "$ssid" ifname "$iface"
+    fi
+    return
+  fi
+  if [[ "$backend" == "netplan" ]]; then
+    write_netplan "$iface" "$ssid" "$password"
+    netplan generate
+    netplan apply
+    return
+  fi
+  echo "wifi cannot be configured" >&2
+  exit 1
+}
+
+disconnect_wifi() {
+  local iface="$1"
+  local backend removed=0 conn type
+  backend="$(detect_backend)"
+  if [[ -f /etc/netplan/99-engineroom-wifi.yaml ]]; then
+    rm -f /etc/netplan/99-engineroom-wifi.yaml
+    removed=1
+  fi
+  if [[ "$backend" == "networkmanager" ]]; then
+    conn="$(nmcli -g GENERAL.CONNECTION device show "$iface" 2>/dev/null || true)"
+    nmcli device disconnect "$iface" >/dev/null 2>&1 || true
+    if [[ -n "$conn" && "$conn" != "--" ]]; then
+      type="$(nmcli -g connection.type connection show "$conn" 2>/dev/null || true)"
+      if [[ "$type" == "802-11-wireless" ]]; then
+        nmcli connection delete "$conn" >/dev/null
+      fi
+    fi
+  fi
+  if (( removed == 1 )) && command -v netplan >/dev/null 2>&1; then
+    netplan generate
+    netplan apply
+  fi
+}
+
+validate "$@"
+require_root
+enter_host "$@"
+
+case "$action" in
+  status)
+    print_status
+    ;;
+  hostname)
+    apply_hostname "$name"
+    print_status
+    ;;
+  scan)
+    scan_wifi "$2"
+    ;;
+  connect)
+    password=""
+    IFS= read -r password || true
+    if IFS= read -r extra; then
+      echo "invalid password" >&2
+      exit 1
+    fi
+    unset extra
+    validate_password "$password"
+    connect_wifi "$2" "$3" "$password"
+    unset password
+    print_status
+    ;;
+  disconnect)
+    disconnect_wifi "$2"
+    print_status
+    ;;
+esac

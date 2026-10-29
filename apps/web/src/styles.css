@@ -1644,6 +1644,32 @@ html[data-wrap="1"] .diff-line {
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+.wifi-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wifi-pick {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunken);
+  color: inherit;
+  text-align: left;
+}
+.wifi-pick.selected {
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+}
+.wifi-pick span { color: var(--muted); font-size: 13px; }
+.server-address { color: var(--ink); font-weight: 600; }
 .agents-card-head {
   display: grid;
   gap: 6px;

@@ -14,7 +14,7 @@ sudo ./setup.sh
 
 `setup.sh` does the following:
 
-1. Installs `build-essential`, `python3`, `libpam0g-dev`, `curl`, `xz-utils`, and Caddy.
+1. Installs `build-essential`, `python3`, `libpam0g-dev`, `curl`, `xz-utils`, Caddy, `avahi-daemon`, `wpasupplicant`, and `iw`.
 2. Installs Node.js 24 under `/usr/local` when the current `node` is older than 24 (linux-x64 tarball from nodejs.org).
 3. Writes `/etc/engineroom/hub.env` with `ENGINEROOM_COOKIE_SECURE` and `ENGINEROOM_ADMIN`.
 4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `claude`, `claude-agent-acp`, `pi`, `obscura`).
@@ -29,6 +29,10 @@ sudo ./setup.sh
 | --- | --- | --- |
 | unset, `localhost`, or `:80` | `:80` (HTTP) | `0` |
 | any other hostname | that hostname (Caddy HTTPS) | `1` |
+
+On a first install, when `/etc/engineroom/server.json` is missing, setup sets the system hostname to `engineroom` and starts Avahi. Other computers can then open `http://engineroom.local`, the same way a Raspberry Pi answers to `raspberrypi.local`. A later setup leaves a saved name in place. The default Caddy site is `:80`, so that address reaches the login page. A public `ENGINEROOM_HOST` still uses HTTPS, and the session cookie is only sent there.
+
+The Admin Server page changes this name. It also joins a Wi-Fi network when a wireless card is present. An install from before those packages were added needs `avahi-daemon`, `wpasupplicant`, and `iw`.
 
 ```bash
 sudo ENGINEROOM_HOST=chat.example.com ./setup.sh
@@ -55,7 +59,7 @@ It creates:
 - System user and group `engineroom`, home `/var/lib/engineroom`
 - Group `engineroom-users` (membership is required to sign in)
 - PAM stack `/etc/pam.d/engineroom` and helpers under `/usr/local/bin` and `/usr/local/libexec`
-- `engineroom-ctl`, `engineroom-admin`, `engineroom-hub`, `engineroom-runner`
+- `engineroom-ctl`, `engineroom-admin`, `engineroom-network`, `engineroom-hub`, `engineroom-runner`
 - sudoers drop-in `/etc/sudoers.d/engineroom`
 - systemd units for the hub and the per-user runner socket
 - Application tree at `/usr/local/lib/engineroom`
@@ -100,6 +104,7 @@ The administrator named by `ENGINEROOM_ADMIN` in `/etc/engineroom/hub.env` can, 
 - Turn the raw terminal, file manager, file editor, and CLI session import on or off
 - Maintain the repository catalog and the folder under each home where clones land
 - Add, revoke, remove, or set passwords for accounts, and set per-user grants, environment, and policy
+- Set the network name advertised as `<name>.local`, and connect Wi-Fi when a wireless card is present
 
 Agent CLIs are not logged in by Engineroom. Each person signs in to `agent`, `claude`, and `pi` from their own account. Cursor chats use `agent acp`. Claude uses `claude-agent-acp` when it is on `PATH`; otherwise the runner falls back to `claude -p`.
 

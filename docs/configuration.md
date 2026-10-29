@@ -17,6 +17,7 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 | `ENGINEROOM_CTL` | `/usr/local/bin/engineroom-ctl` | Invoked as `sudo -n` to start a runner socket that is not there yet. |
 | `ENGINEROOM_PAM_HELPER` | `/usr/local/bin/engineroom-pam-auth` | Password check against `/etc/pam.d/engineroom`. |
 | `ENGINEROOM_ADMIN_CTL` | `/usr/local/bin/engineroom-admin` | Add, revoke, passwd, and remove accounts. |
+| `ENGINEROOM_NETWORK_CTL` | `/usr/local/bin/engineroom-network` | Set the hostname advertised as `name.local`, and read or change Wi-Fi. Invoked as `sudo -n`. |
 | `ENGINEROOM_PEERCRED` | `/usr/local/bin/engineroom-peercred` | Used by the hub and the runner. Not read in `index.ts`; the peercred package defaults to this path. |
 
 ## Data files
@@ -61,6 +62,8 @@ ENGINEROOM_ADMIN=alice
 ```
 
 `ENGINEROOM_HOST` is not read by the hub. `setup.sh` uses it only to choose the Caddy site address and the cookie flag above.
+
+`/etc/engineroom/server.json` stores the hostname chosen from the Admin Server page. `setup.sh` writes `engineroom` there when the file is missing, and does not replace it on a later run. Avahi publishes that name as `http://<hostname>.local`.
 
 ## Related
 

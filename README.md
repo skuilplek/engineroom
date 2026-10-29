@@ -25,7 +25,7 @@ Per-user settings for theme, default agent, model, and tool approval:
 - File manager and editor for granted repositories (administrator can turn these off)
 - Optional raw terminal in the user's session
 - Per-user settings: theme, default agent and model, tool approval, CLI paths
-- Admin pages for server overview, agents, repository catalog, and Linux accounts
+- Admin pages for server overview, network name, Wi-Fi, agents, repository catalog, and Linux accounts
 
 ## Requirements
 

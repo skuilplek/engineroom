@@ -14,6 +14,7 @@ Environment=ENGINEROOM_PAM_HELPER=/usr/local/bin/engineroom-pam-auth
 Environment=ENGINEROOM_PEERCRED=/usr/local/bin/engineroom-peercred
 Environment=ENGINEROOM_CTL=/usr/local/bin/engineroom-ctl
 Environment=ENGINEROOM_ADMIN_CTL=/usr/local/bin/engineroom-admin
+Environment=ENGINEROOM_NETWORK_CTL=/usr/local/bin/engineroom-network
 Environment=ENGINEROOM_AGENTS_FILE=/var/lib/engineroom/agents.json
 Environment=ENGINEROOM_AGENT_OPTIONS_FILE=/var/lib/engineroom/agent-options.json
 Environment=ENGINEROOM_CATALOG_FILE=/var/lib/engineroom/catalog.json

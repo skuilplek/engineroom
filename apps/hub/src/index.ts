@@ -36,6 +36,7 @@ export function main() {
     reposFile: process.env.ENGINEROOM_REPOS_FILE || "/var/lib/engineroom/repos.json",
     checksFile: process.env.ENGINEROOM_CHECKS_FILE || "/etc/engineroom/checks.json",
     adminCtl: process.env.ENGINEROOM_ADMIN_CTL || "/usr/local/bin/engineroom-admin",
+    networkCtl: process.env.ENGINEROOM_NETWORK_CTL || "/usr/local/bin/engineroom-network",
   });
   hub.listen(port, host, () => {
     console.error(`engineroom-hub listening on ${host}:${port}`);

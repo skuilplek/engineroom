@@ -17,7 +17,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl caddy nodejs npm
+apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl caddy nodejs npm avahi-daemon wpasupplicant iw
 
 hash -r
 node --version
@@ -87,6 +87,10 @@ fi
 
 bash "$root/deploy/install.sh"
 
+if [[ ! -f /etc/engineroom/server.json ]]; then
+  /usr/local/bin/engineroom-network hostname engineroom
+fi
+
 if [[ -f /etc/caddy/Caddyfile ]] && ! grep -q 'engineroom' /etc/caddy/Caddyfile; then
   cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
 fi
@@ -130,8 +134,14 @@ fi
 
 if [[ "$cookie_secure" == "1" ]]; then
   url="https://${host}"
+  local_note=""
 else
-  url="http://$(hostname -f 2>/dev/null || hostname)/"
+  name="$(sed -n 's/.*"hostname"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/engineroom/server.json | head -n 1)"
+  if [[ -z "$name" ]]; then
+    name="$(hostname -s 2>/dev/null || hostname)"
+  fi
+  url="http://${name}.local/"
+  local_note="On the local network that name is advertised by Avahi, the same way a Raspberry Pi answers to raspberrypi.local."
 fi
 
 cat <<EOF
@@ -139,6 +149,7 @@ Engineroom is installed and will start at boot.
 
 The UI is served by engineroom-hub.service. Open ${url} and sign in with a
 Linux username and password. Each person's chats stay in their home.
+${local_note}
 
 ${admin:-The user who ran this script} is the administrator. That account can
 turn agents on or off and add or revoke people from the Admin page.
