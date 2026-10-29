@@ -9,6 +9,7 @@ import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { ErrorProvider, useErrors, useReportError } from "./errors.tsx";
 import { strip } from "./format.ts";
+import { IconPanelLeft } from "./icons.tsx";
 import { AdminView } from "./settings/AdminView.tsx";
 import { DocsView } from "./settings/DocsView.tsx";
 import { ErrorsView } from "./settings/ErrorsView.tsx";
@@ -20,6 +21,18 @@ import { applyTheme, rememberTheme } from "./theme.ts";
 function applyWrap(wrapText: boolean) {
   if (wrapText) document.documentElement.dataset.wrap = "1";
   else delete document.documentElement.dataset.wrap;
+}
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 800px)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 800px)");
+    const apply = () => setNarrow(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+  return narrow;
 }
 
 type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
@@ -35,6 +48,24 @@ export function App() {
   useEffect(() => {
     if (session && isThemeId(session.theme)) rememberTheme(session.theme);
   }, [session?.theme]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--vvh", `${viewport.height}px`);
+      document.documentElement.style.setProperty("--vvtop", `${viewport.offsetTop}px`);
+    };
+    apply();
+    viewport.addEventListener("resize", apply);
+    viewport.addEventListener("scroll", apply);
+    return () => {
+      viewport.removeEventListener("resize", apply);
+      viewport.removeEventListener("scroll", apply);
+      document.documentElement.style.removeProperty("--vvh");
+      document.documentElement.style.removeProperty("--vvtop");
+    };
+  }, []);
 
   if (!ready) return <main className="login-screen"><p className="muted">Loading…</p></main>;
   if (!session) return <Login onSuccess={setSession} />;
@@ -129,6 +160,17 @@ function Shell({
       return false;
     }
   });
+  const narrow = useNarrow();
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setNavOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [fileOpenRequest, setFileOpenRequest] = useState<{ id: number; path: string } | null>(null);
   const openingRef = useRef<{ id: string; prompt: string; attachments: PromptAttachment[] } | null>(null);
@@ -302,6 +344,7 @@ function Shell({
 
   function choose(path: string) {
     choseRef.current = true;
+    setNavOpen(false);
     setTarget(path);
     setActiveId(null);
     setView("start");
@@ -309,7 +352,14 @@ function Shell({
 
   function openChat(chat: ChatMeta) {
     choseRef.current = true;
+    setNavOpen(false);
     showChat(chat, reposRef.current);
+  }
+
+  function openView(next: View) {
+    choseRef.current = true;
+    setNavOpen(false);
+    setView(next);
   }
 
   function leaveMissingChat() {
@@ -369,12 +419,24 @@ function Shell({
   const shellClass = [
     "shell",
     showFileManager && filesOpen ? "with-drawer" : "",
-    showFileManager && filesOpen && filesExpanded ? "drawer-expanded" : "",
-    sidebarCollapsed ? "sidebar-collapsed" : "",
+    showFileManager && filesOpen && filesExpanded && !narrow ? "drawer-expanded" : "",
+    sidebarCollapsed && !narrow ? "sidebar-collapsed" : "",
+    narrow && navOpen ? "nav-open" : "",
   ].filter(Boolean).join(" ");
+  const activeChat = chats.find((chat) => chat.id === activeId);
+  const mobileTitle = view === "settings" ? "Customize"
+    : view === "docs" ? "Docs"
+    : view === "errors" ? "Errors"
+    : view === "admin" ? "Admin"
+    : view === "chat" ? (activeChat?.title || "Chat")
+    : selectedRepo ? selectedRepo.name
+    : "Home";
 
   return (
     <div className={shellClass}>
+      {narrow && navOpen && (
+        <button className="nav-scrim" type="button" aria-label="Close menu" onClick={() => setNavOpen(false)} />
+      )}
       <Sidebar
         session={session}
         chats={chats}
@@ -384,26 +446,15 @@ function Shell({
         activeId={activeId}
         target={target}
         errorCount={errors.length}
-        collapsed={sidebarCollapsed}
-        onToggleCollapsed={toggleSidebar}
+        collapsed={narrow ? false : sidebarCollapsed}
+        inert={narrow && !navOpen}
+        onToggleCollapsed={narrow ? () => setNavOpen(false) : toggleSidebar}
         onNew={choose}
         onOpen={openChat}
-        onSettings={() => {
-          choseRef.current = true;
-          setView("settings");
-        }}
-        onDocs={() => {
-          choseRef.current = true;
-          setView("docs");
-        }}
-        onErrors={() => {
-          choseRef.current = true;
-          setView("errors");
-        }}
-        onAdmin={() => {
-          choseRef.current = true;
-          setView("admin");
-        }}
+        onSettings={() => openView("settings")}
+        onDocs={() => openView("docs")}
+        onErrors={() => openView("errors")}
+        onAdmin={() => openView("admin")}
         onLogout={() => {
           stopAgentSocket();
           clearProjectDownload();
@@ -416,6 +467,24 @@ function Shell({
         }}
       />
       <section className="main">
+        <header className="mobile-bar">
+          <button
+            className="mobile-menu"
+            type="button"
+            aria-label="Open menu"
+            aria-expanded={navOpen}
+            aria-controls="sidebar-region"
+            onClick={() => setNavOpen(true)}
+          >
+            <IconPanelLeft />
+          </button>
+          <strong className="mobile-title">{mobileTitle}</strong>
+          {showFileManager && (
+            <button className="mobile-files" type="button" aria-label="Files" onClick={toggleFiles}>
+              Files
+            </button>
+          )}
+        </header>
         {view === "settings" && (
           <SettingsView
             agents={session.agents}
@@ -482,6 +551,7 @@ function Shell({
             onBranchChanged={bumpFilesRefresh}
             onStarted={(chat, prompt, attachments) => {
               choseRef.current = true;
+              setNavOpen(false);
               remember(chat);
               openingRef.current = { id: chat.id, prompt, attachments };
               consumedRef.current = null;
@@ -530,14 +600,18 @@ function Shell({
           workspace={selectedRepo.path}
           repoName={selectedRepo.name}
           open={filesOpen}
-          expanded={filesExpanded}
+          expanded={narrow ? false : filesExpanded}
           canEdit={canEditFiles}
           canDownload={canDownloadFiles}
           canUpload={canUploadFiles}
           refreshKey={filesRefreshKey}
           openRequest={fileOpenRequest}
-          onToggleExpanded={toggleFilesExpanded}
-          onClose={toggleFiles}
+          narrow={narrow}
+          onToggleExpanded={narrow ? undefined : toggleFilesExpanded}
+          onClose={() => {
+            setNavOpen(false);
+            toggleFiles();
+          }}
         />
       )}
       {downloadJob?.phase === "ready" && !onDownloadPage && (

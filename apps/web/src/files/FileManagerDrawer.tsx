@@ -51,6 +51,7 @@ export function FileManagerDrawer({
   openRequest,
   onToggleExpanded,
   onClose,
+  narrow = false,
 }: {
   workspace: string;
   repoName: string;
@@ -63,6 +64,7 @@ export function FileManagerDrawer({
   openRequest?: { id: number; path: string } | null;
   onToggleExpanded?: () => void;
   onClose: () => void;
+  narrow?: boolean;
 }) {
   const [tab, setTab] = useState<DrawerTab>("files");
   const [filter, setFilter] = useState("");
@@ -76,6 +78,7 @@ export function FileManagerDrawer({
   }
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(true);
   const [externalPath, setExternalPath] = useState<string | null>(null);
   const [selectedDir, setSelectedDir] = useState<string>("");
   const [preview, setPreview] = useState<RepoFileContent | null>(null);
@@ -124,6 +127,7 @@ export function FileManagerDrawer({
   useEffect(() => {
     setSelectedPath(null);
     setExternalPath(null);
+    setListOpen(true);
     setSelectedDir("");
     setPreview(null);
     setDraftContent("");
@@ -249,6 +253,7 @@ export function FileManagerDrawer({
   function selectFile(filePath: string, mode?: "code" | "preview") {
     if (selectedPath === filePath && !externalPath && !expanded && mode == null) {
       setSelectedPath(null);
+      setListOpen(true);
       return;
     }
     if ((selectedPath !== filePath || externalPath) && isDirty) {
@@ -269,6 +274,7 @@ export function FileManagerDrawer({
     const parent = filePath.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
     setSelectedDir(parent);
     setSelectedPath(filePath);
+    if (narrow) setListOpen(false);
     setRenamingPath(null);
     setConfirmDeletePath(null);
   }
@@ -318,6 +324,7 @@ export function FileManagerDrawer({
       setRenamingPath(null);
       setConfirmDeletePath(null);
       setExternalPath(target.path);
+      setListOpen(false);
       setTab("files");
       return;
     }
@@ -586,9 +593,17 @@ export function FileManagerDrawer({
 
   const isFiltering = filter.trim().length > 0;
   const activeTarget = selectedPath || selectedDir || null;
+  const viewingFile = Boolean(selectedPath || externalPath);
+  const listCollapsed = narrow && viewingFile && !listOpen;
+  const drawerClass = [
+    "file-drawer",
+    expanded ? "expanded" : "",
+    listCollapsed ? "list-collapsed" : "",
+    narrow && viewingFile && listOpen ? "list-open" : "",
+  ].filter(Boolean).join(" ");
 
   return (
-    <aside className={expanded ? "file-drawer expanded" : "file-drawer"} aria-label="Repository files">
+    <aside className={drawerClass} aria-label="Repository files">
       <header className="file-drawer-head">
         <div className="file-drawer-title">
           <strong title={workspace}>{repoName}</strong>
@@ -603,6 +618,17 @@ export function FileManagerDrawer({
           </span>
         </div>
         <div className="file-drawer-actions">
+          {narrow && viewingFile && (
+            <button
+              className="file-list-toggle"
+              type="button"
+              aria-expanded={!listCollapsed}
+              title={listCollapsed ? "Show the file list" : "Show the open file"}
+              onClick={() => setListOpen((current) => !current)}
+            >
+              {listCollapsed ? "Files" : "Editor"}
+            </button>
+          )}
           {canEdit && (
             <>
               <button
@@ -674,7 +700,7 @@ export function FileManagerDrawer({
           </button>
           {onToggleExpanded && (
             <button
-              className={expanded ? "icon-btn active" : "icon-btn"}
+              className={expanded ? "icon-btn file-expand active" : "icon-btn file-expand"}
               type="button"
               title={expanded ? "Restore split view" : "Expand across chat window"}
               aria-label={expanded ? "Restore split view" : "Expand across chat window"}
@@ -1028,6 +1054,7 @@ export function FileManagerDrawer({
                         if (isDirty && !window.confirm("Discard unsaved changes to this file?")) return;
                         setSelectedPath(null);
                         setExternalPath(null);
+                        setListOpen(true);
                         setPreview(null);
                         setDraftContent("");
                       }}

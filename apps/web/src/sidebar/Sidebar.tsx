@@ -28,6 +28,7 @@ export function Sidebar({
   onLogout,
   onCreateProject,
   onImported,
+  inert,
 }: {
   session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean; visibleChats?: number };
   chats: ChatMeta[];
@@ -48,6 +49,7 @@ export function Sidebar({
   onLogout: () => void;
   onCreateProject: (name: string, url: string) => Promise<void>;
   onImported: (chat: ChatMeta) => void;
+  inert?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
@@ -80,7 +82,7 @@ export function Sidebar({
   }
 
   return (
-    <aside id="sidebar-region" className={collapsed ? "sidebar collapsed" : "sidebar"}>
+    <aside id="sidebar-region" className={collapsed ? "sidebar collapsed" : "sidebar"} inert={inert || undefined} aria-hidden={inert || undefined}>
       <div className="sidebar-head">
         {!collapsed && <p className="app-brand" title={appName}>{appName}</p>}
         <button
