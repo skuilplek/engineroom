@@ -1,3 +1,4 @@
+import { detectSyntaxLanguage, highlightCodeLines, type SyntaxToken } from "../files/syntax.ts";
 import { FileTokenButton } from "./LinkedText.tsx";
 
 export function DiffView({
@@ -11,7 +12,9 @@ export function DiffView({
   newText?: string;
   onOpenFile?: (path: string) => void;
 }) {
-  const rows = lineDiff(oldText, newText);
+  const language = detectSyntaxLanguage(path);
+  const rows = numberedDiff(lineDiff(oldText, newText));
+  const digits = Math.max(1, String(rows.reduce((max, row) => Math.max(max, row.line ?? 0), 0)).length);
   return (
     <div className="diff">
       <div className="diff-path">
@@ -19,16 +22,42 @@ export function DiffView({
           {path}
         </FileTokenButton>
       </div>
-      <pre>
+      <pre><div className="diff-rows">
         {rows.map((row, index) => (
           <div className={`diff-line ${row.kind}`} key={index}>
-            <span>{row.kind === "add" ? "+" : row.kind === "del" ? "-" : " "}</span>
-            {row.text}
+            <span className="diff-gutter" style={{ gridTemplateColumns: `${digits}ch 1ch` }} aria-hidden="true">
+              <span className="diff-num">{row.line ?? "\u00a0"}</span>
+              <span className="diff-mark">{row.kind === "add" ? "+" : row.kind === "del" ? "−" : "\u00a0"}</span>
+            </span>
+            {row.kind !== "same" && <span className="diff-sr">{row.kind === "add" ? "Added line " : "Removed line "}</span>}
+            <span className="diff-text">{renderTokens(lineTokens(row.text, language))}</span>
           </div>
         ))}
-      </pre>
+      </div></pre>
     </div>
   );
+}
+
+function lineTokens(text: string, language: ReturnType<typeof detectSyntaxLanguage>): SyntaxToken[] {
+  if (!text) return [];
+  return highlightCodeLines(text, language)[0] ?? [];
+}
+
+function renderTokens(tokens: SyntaxToken[]) {
+  if (tokens.length === 0) return "\u00a0";
+  return tokens.map((token, index) => (
+    <span className={`tok-${token.kind}`} key={index}>{token.text}</span>
+  ));
+}
+
+function numberedDiff(rows: { kind: "same" | "add" | "del"; text: string }[]) {
+  let next = 1;
+  return rows.map((row) => {
+    if (row.kind === "del") return { ...row, line: null as number | null };
+    const line = next;
+    next += 1;
+    return { ...row, line };
+  });
 }
 
 function lineDiff(oldText: string, newText: string): { kind: "same" | "add" | "del"; text: string }[] {
