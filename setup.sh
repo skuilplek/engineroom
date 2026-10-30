@@ -90,6 +90,13 @@ bash "$root/deploy/install.sh"
 if [[ ! -f /etc/engineroom/server.json ]]; then
   /usr/local/bin/engineroom-network hostname engineroom
 fi
+# A later setup keeps the saved hostname. Avahi still has to be running so
+# that name is published as <hostname>.local.
+if ! systemctl enable --now avahi-daemon; then
+  echo "avahi-daemon did not start" >&2
+  systemctl status avahi-daemon --no-pager >&2 || true
+  exit 1
+fi
 
 if [[ -f /etc/caddy/Caddyfile ]] && ! grep -q 'engineroom' /etc/caddy/Caddyfile; then
   cp -a /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
