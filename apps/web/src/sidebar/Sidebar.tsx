@@ -3,7 +3,7 @@ import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedS
 import { getGitIdentity, saveGitIdentity } from "../api.ts";
 import { useReportError } from "../errors.tsx";
 import { buildGroups, message, modeTone, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
-import { IconAlert, IconBook, IconChevron, IconFolder, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
+import { IconAlert, IconBook, IconChevron, IconFolder, IconFullscreen, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
 type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
@@ -28,6 +28,7 @@ export function Sidebar({
   onLogout,
   onCreateProject,
   onImported,
+  fullscreen,
   inert,
 }: {
   session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean; visibleChats?: number };
@@ -49,6 +50,7 @@ export function Sidebar({
   onLogout: () => void;
   onCreateProject: (name: string, url: string) => Promise<void>;
   onImported: (chat: ChatMeta) => void;
+  fullscreen: { active: boolean; enabled: boolean; toggle: () => void };
   inert?: boolean;
 }) {
   const [query, setQuery] = useState("");
@@ -85,6 +87,18 @@ export function Sidebar({
     <aside id="sidebar-region" className={collapsed ? "sidebar collapsed" : "sidebar"} inert={inert || undefined} aria-hidden={inert || undefined}>
       <div className="sidebar-head">
         {!collapsed && <p className="app-brand" title={appName}>{appName}</p>}
+        {fullscreen.enabled && (
+          <button
+            className="sidebar-toggle sidebar-fullscreen"
+            type="button"
+            aria-pressed={fullscreen.active}
+            aria-label={fullscreen.active ? "Exit full screen" : "Full screen"}
+            title={fullscreen.active ? "Exit full screen" : "Full screen"}
+            onClick={fullscreen.toggle}
+          >
+            <IconFullscreen active={fullscreen.active} />
+          </button>
+        )}
         <button
           className="sidebar-toggle"
           type="button"

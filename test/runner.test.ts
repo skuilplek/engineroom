@@ -1170,6 +1170,16 @@ test("a project archive is a zip in /tmp and does not follow symlinks", async ()
   await symlink(path.join(outside, "secret.txt"), path.join(repo, "src", "escape.txt"));
   await symlink(path.join(outside, "nested"), path.join(repo, "linked"));
   await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+  await writeFile(path.join(repo, ".gitignore"), "secret.log\nforced.log\ndist/\n");
+  await writeFile(path.join(repo, "secret.log"), "nope\n");
+  await writeFile(path.join(repo, "keep.txt"), "yes\n");
+  await writeFile(path.join(repo, "forced.log"), "tracked\n");
+  await mkdir(path.join(repo, "dist"), { recursive: true });
+  await writeFile(path.join(repo, "dist", "bundle.js"), "bundle\n");
+  await mkdir(path.join(repo, "vendor", ".git"), { recursive: true });
+  await writeFile(path.join(repo, "vendor", ".git", "config"), "leak\n");
+  await writeFile(path.join(repo, "vendor", "lib.txt"), "lib\n");
+  await execFileAsync("git", ["add", "-f", "forced.log"], { cwd: repo });
   await setEnabledRepositories(home, [repo]);
   const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
   const expectedName = archiveFileName("proj");
@@ -1217,7 +1227,13 @@ test("a project archive is a zip in /tmp and does not follow symlinks", async ()
     assert.match(stdout, /NOTE hello/);
     assert.match(stdout, /LINK_OK/);
     assert.match(stdout, /MODE_LINK/);
-    assert.match(stdout, /HAS_GIT/);
+    assert.match(stdout, /NO_GIT/);
+    assert.match(stdout, /NO_SECRET/);
+    assert.match(stdout, /KEEP/);
+    assert.match(stdout, /HAS_IGNORE/);
+    assert.match(stdout, /FORCED/);
+    assert.match(stdout, /NO_DIST/);
+    assert.match(stdout, /VENDOR/);
     assert.match(stdout, /NOT_EXPANDED/);
     assert.equal(await readFile(path.join(outside, "secret.txt"), "utf8"), "top-secret");
   } finally {
@@ -1339,7 +1355,13 @@ mode = z.getinfo("src/escape.txt").external_attr >> 16
 print("NOTE", note.strip())
 print("LINK_OK" if link == sys.argv[2] and "top-secret" not in link else "LINK_BAD " + link)
 print("MODE_LINK" if (mode & 0o170000) == 0o120000 else "MODE_BAD " + oct(mode))
-print("HAS_GIT" if any(name.startswith(".git/") for name in names) else "NO_GIT")
+print("HAS_GIT" if any(part == ".git" for name in names for part in name.split("/")) else "NO_GIT")
+print("HAS_SECRET" if "secret.log" in names else "NO_SECRET")
+print("KEEP" if "keep.txt" in names and z.read("keep.txt").decode().strip() == "yes" else "NO_KEEP")
+print("HAS_IGNORE" if ".gitignore" in names else "NO_IGNORE")
+print("FORCED" if "forced.log" in names and z.read("forced.log").decode().strip() == "tracked" else "NO_FORCED")
+print("HAS_DIST" if any(name == "dist" or name.startswith("dist/") for name in names) else "NO_DIST")
+print("VENDOR" if "vendor/lib.txt" in names and z.read("vendor/lib.txt").decode().strip() == "lib" else "NO_VENDOR")
 print("NOT_EXPANDED" if not any(name.startswith("linked/") for name in names) else "EXPANDED")
 `;
 

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { constants } from "node:fs";
@@ -7,6 +8,7 @@ import { userInfo } from "node:os";
 import path from "node:path";
 import { createDeflateRaw, crc32 } from "node:zlib";
 import { listRepositories, resolveRepoWorkspace } from "./store.ts";
+import { isGitRepository } from "./workspace.ts";
 
 const UTF8 = 0x800;
 const DATA_DESCRIPTOR = 0x8;
@@ -228,7 +230,8 @@ async function placeArchive(tempPath: string, destPath: string): Promise<void> {
 async function writeProjectZip(root: string, handle: FileHandle): Promise<void> {
   const sink = new Sink(handle);
   const entries: Central[] = [];
-  await walk(root, "", sink, entries);
+  const gitRepo = await isGitRepository(root);
+  await walk(root, root, "", sink, entries, gitRepo);
   const directoryAt = sink.offset;
   for (const entry of entries) await sink.write(centralHeader(entry));
   const directorySize = sink.offset - directoryAt;
@@ -238,28 +241,89 @@ async function writeProjectZip(root: string, handle: FileHandle): Promise<void> 
   await sink.write(endOfDirectory(entries.length, directorySize, directoryAt));
 }
 
-async function walk(dir: string, prefix: string, sink: Sink, entries: Central[]): Promise<void> {
+async function walk(
+  root: string,
+  dir: string,
+  prefix: string,
+  sink: Sink,
+  entries: Central[],
+  gitRepo: boolean,
+): Promise<void> {
   const listed = await readdir(dir, { withFileTypes: true });
   listed.sort((left, right) => left.name.localeCompare(right.name));
+  const visible: Array<{ full: string; rel: string }> = [];
   for (const item of listed) {
     if (!item.name || item.name === "." || item.name === ".." || item.name.includes("/") || item.name.includes("\0")) continue;
-    const full = path.join(dir, item.name);
-    const rel = prefix ? `${prefix}/${item.name}` : item.name;
-    const st = await lstat(full);
+    if (item.name === ".git") continue;
+    visible.push({
+      full: path.join(dir, item.name),
+      rel: prefix ? `${prefix}/${item.name}` : item.name,
+    });
+  }
+  const ignored = gitRepo && visible.length > 0
+    ? await gitIgnoredPaths(root, visible.map((item) => item.rel))
+    : new Set<string>();
+  for (const item of visible) {
+    if (ignored.has(item.rel)) continue;
+    const st = await lstat(item.full);
     if (st.isSymbolicLink()) {
-      const target = await readlink(full);
-      await writeStored(sink, entries, rel, Buffer.from(target), st.mode, st.mtime);
+      const target = await readlink(item.full);
+      await writeStored(sink, entries, item.rel, Buffer.from(target), st.mode, st.mtime);
       continue;
     }
     if (st.isDirectory()) {
-      await writeStored(sink, entries, `${rel}/`, Buffer.alloc(0), st.mode, st.mtime);
-      await walk(full, rel, sink, entries);
+      await writeStored(sink, entries, `${item.rel}/`, Buffer.alloc(0), st.mode, st.mtime);
+      await walk(root, item.full, item.rel, sink, entries, gitRepo);
       continue;
     }
     if (!st.isFile()) continue;
-    if (st.size === 0) await writeStored(sink, entries, rel, Buffer.alloc(0), st.mode, st.mtime);
-    else await writeDeflated(sink, entries, rel, full, st.mode, st.mtime);
+    if (st.size === 0) await writeStored(sink, entries, item.rel, Buffer.alloc(0), st.mode, st.mtime);
+    else await writeDeflated(sink, entries, item.rel, item.full, st.mode, st.mtime);
   }
+}
+
+function gitIgnoredPaths(repo: string, relPaths: string[]): Promise<Set<string>> {
+  return new Promise((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+    delete env.GIT_LITERAL_PATHSPECS;
+    const child = spawn("git", ["check-ignore", "-z", "--stdin"], {
+      cwd: repo,
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
+    const chunks: Buffer[] = [];
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error?: Error, ignored?: Set<string>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(ignored ?? new Set());
+    };
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new Error("could not read gitignore rules"));
+    }, 30_000);
+    child.stdout.on("data", (chunk: Buffer) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr.on("data", () => undefined);
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        finish(new Error("could not read gitignore rules"));
+        return;
+      }
+      const ignored = new Set<string>();
+      for (const part of Buffer.concat(chunks).toString("utf8").split("\0")) {
+        const rel = part.endsWith("/") ? part.slice(0, -1) : part;
+        if (rel) ignored.add(rel);
+      }
+      finish(undefined, ignored);
+    });
+    child.stdin.end(`${relPaths.join("\0")}\0`);
+  });
 }
 
 async function writeStored(

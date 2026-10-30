@@ -9,7 +9,8 @@ import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { ErrorProvider, useErrors, useReportError } from "./errors.tsx";
 import { strip } from "./format.ts";
-import { IconPanelLeft } from "./icons.tsx";
+import { useFullscreen } from "./fullscreen.ts";
+import { IconFullscreen, IconPanelLeft } from "./icons.tsx";
 import { AdminView } from "./settings/AdminView.tsx";
 import { DocsView } from "./settings/DocsView.tsx";
 import { ErrorsView } from "./settings/ErrorsView.tsx";
@@ -161,6 +162,7 @@ function Shell({
     }
   });
   const narrow = useNarrow();
+  const fullscreen = useFullscreen();
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
@@ -461,6 +463,7 @@ function Shell({
           logout().finally(onLogout);
         }}
         onCreateProject={createProject}
+        fullscreen={fullscreen}
         onImported={(chat) => {
           remember(chat);
           openChat(chat);
@@ -479,6 +482,17 @@ function Shell({
             <IconPanelLeft />
           </button>
           <strong className="mobile-title">{mobileTitle}</strong>
+          {fullscreen.enabled && (
+            <button
+              className="mobile-fullscreen"
+              type="button"
+              aria-pressed={fullscreen.active}
+              aria-label={fullscreen.active ? "Exit full screen" : "Full screen"}
+              onClick={fullscreen.toggle}
+            >
+              <IconFullscreen active={fullscreen.active} />
+            </button>
+          )}
           {showFileManager && (
             <button className="mobile-files" type="button" aria-label="Files" onClick={toggleFiles}>
               Files

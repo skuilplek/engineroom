@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type WheelEvent } from "react";
 import type { CommandBlockStyle, PromptAttachment, RepositoryEntry, StreamEvent } from "@engineroom/protocol";
 import { agentLabel, ATTACHED_PROMPT } from "@engineroom/protocol";
 import { FilesPaneToggle } from "../files/FilesPaneToggle.tsx";
@@ -14,6 +14,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Composer } from "./Composer.tsx";
 import { attachmentPreview, composerFilesFromSaved, promptText, restorePromptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
+import { useChatMast } from "./mastPull.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -60,6 +61,8 @@ export function ChatView({
   const report = useReportError();
   const [shellOpen, setShellOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const pinning = useRef(false);
+  const mast = useChatMast();
   const alive = useRef(true);
   const stick = useRef(true);
   const opened = useRef(false);
@@ -152,16 +155,30 @@ export function ChatView({
   const blocks = useMemo(() => groupTranscript(live.entries), [live.entries]);
   const plan = useMemo(() => latestPlan(live.entries), [live.entries]);
 
+  const noteScroll = mast.noteScroll;
+  const noteScrollRef = useRef(noteScroll);
+  noteScrollRef.current = noteScroll;
+
   useEffect(() => {
     const node = scroller.current;
     if (!node || !stick.current) return;
+    pinning.current = true;
     node.scrollTop = node.scrollHeight;
+    noteScrollRef.current(node.scrollTop, true);
+    pinning.current = false;
   }, [blocks, live.shell, live.running]);
 
   function onScroll() {
     const node = scroller.current;
     if (!node) return;
     stick.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+    mast.noteScroll(node.scrollTop, pinning.current);
+  }
+
+  function onWheel(event: WheelEvent<HTMLDivElement>) {
+    const node = scroller.current;
+    if (!node) return;
+    mast.noteWheel(event.deltaY, node.scrollHeight > node.clientHeight + 1);
   }
 
   async function submit(event: FormEvent) {
@@ -204,30 +221,46 @@ export function ChatView({
     setLive((current) => ({ ...current, permission: null }));
   }
 
+  const mastClass = ["chat-mast", mast.open ? "open" : "", mast.pull != null ? "dragging" : ""].filter(Boolean).join(" ");
+  const showStop = mast.narrow && !mast.open && mast.pull == null && live.running;
+
   return (
     <div className="chat">
-      <header className="topbar">
-        <div>
-          <h2>{live.title}</h2>
-          <p className="muted">{agentLabel(live.agent, agentCatalog)} · {workspaceLabel(live.workspace || home, home, repos)}</p>
-        </div>
-        <div className="row">
-          {live.running && (
-            <button className="danger" type="button" onClick={() => sendCommand({ type: "cancel", chatId })}>Stop</button>
-          )}
-          {rawTerminal && (
-            <button className="ghost" type="button" disabled={live.running} onClick={() => setRaw((value) => !value)}>
-              {raw ? "Chat" : "Terminal"}
-            </button>
-          )}
-          <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
-        </div>
-      </header>
-      {raw ? (
-        <TerminalPanel chatId={chatId} />
-      ) : (
-        <>
-          {plan.length > 0 && (
+      <button
+        className="chat-mast-grabber"
+        type="button"
+        aria-expanded={mast.open}
+        aria-controls="chat-mast"
+        onClick={() => mast.reveal(!mast.open)}
+      >
+        <span className="chat-mast-grip" />
+        <span className="sr">{mast.open ? "Hide chat details" : "Show chat details"}</span>
+      </button>
+      <div
+        id="chat-mast"
+        className={mastClass}
+        style={mast.pull != null ? { height: mast.pull } : undefined}
+        inert={mast.narrow && !mast.open ? true : undefined}
+      >
+        <div className="chat-mast-body" ref={mast.bodyRef}>
+          <header className="topbar">
+            <div>
+              <h2>{live.title}</h2>
+              <p className="muted">{agentLabel(live.agent, agentCatalog)} · {workspaceLabel(live.workspace || home, home, repos)}</p>
+            </div>
+            <div className="row">
+              {live.running && (
+                <button className="danger" type="button" onClick={() => sendCommand({ type: "cancel", chatId })}>Stop</button>
+              )}
+              {rawTerminal && (
+                <button className="ghost" type="button" disabled={live.running} onClick={() => setRaw((value) => !value)}>
+                  {raw ? "Chat" : "Terminal"}
+                </button>
+              )}
+              <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
+            </div>
+          </header>
+          {!raw && plan.length > 0 && (
             <ol className="plan">
               {plan.map((entry, index) => (
                 <li key={index} className={entry.status === "completed" ? "done" : ""}>
@@ -237,7 +270,18 @@ export function ChatView({
               ))}
             </ol>
           )}
-          <div className="transcript" ref={scroller} onScroll={onScroll}>
+        </div>
+      </div>
+      {showStop && (
+        <div className="mast-stop">
+          <button className="danger" type="button" onClick={() => sendCommand({ type: "cancel", chatId })}>Stop</button>
+        </div>
+      )}
+      {raw ? (
+        <TerminalPanel chatId={chatId} />
+      ) : (
+        <>
+          <div className="transcript" ref={scroller} onScroll={onScroll} onWheel={onWheel}>
             {blocks.map((block, index) => {
               const last = index === blocks.length - 1;
               if (block.kind === "text") {

@@ -173,6 +173,32 @@ export function IconBranch() {
   );
 }
 
+export function IconFullscreen({ active = false }: { active?: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      {active ? (
+        <path
+          d="M6 3.2v2.8H3.2M10 3.2v2.8h2.8M10 12.8V10h2.8M6 12.8V10H3.2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ) : (
+        <path
+          d="M3.2 6.2V3.2H6.2M12.8 6.2V3.2H9.8M12.8 9.8v3H9.8M3.2 9.8v3H6.2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+    </svg>
+  );
+}
+
 export function IconExpand({ expanded = false }: { expanded?: boolean }) {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
