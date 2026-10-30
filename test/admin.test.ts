@@ -67,8 +67,8 @@ test("the administrator sets agents and accounts", async () => {
     },
     authenticate: async () => true,
     listAccounts: () => [
-      { username: "alice", home, uid },
-      { username: "carol", home: "/home/carol", uid: uid + 1 },
+      { username: "alice", home, uid, shell: user.shell },
+      { username: "carol", home: "/home/carol", uid: uid + 1, shell: user.shell },
     ],
     runAdmin: async (action, username, password) => {
       calls.push({ action, username, password });
@@ -2205,8 +2205,8 @@ test("harness defaults apply only within each person's agents and models", async
     adminUser: "alice",
     agentsFile,
     listAccounts: () => [
-      { username: "alice", home: aliceHome, uid },
-      { username: "bob", home: bobHome, uid },
+      { username: "alice", home: aliceHome, uid, shell: alice.shell },
+      { username: "bob", home: bobHome, uid, shell: bob.shell },
     ],
     lookup: (username) => (username === "alice" ? alice : username === "bob" ? bob : null),
     authenticate: async () => true,
@@ -2349,6 +2349,33 @@ test("harness defaults apply only within each person's agents and models", async
     });
     assert.equal(empty.status, 400);
 
+    const enabled = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: false, pi: true, cursorFast: true }),
+    });
+    assert.equal(enabled.status, 200);
+    assert.equal(((await enabled.json()) as { cursorFast?: boolean }).cursorFast, true);
+    const fastApply = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", username: "alice" }),
+    });
+    assert.equal(fastApply.status, 200);
+    const fastBody = (await fastApply.json()) as { applied: { username: string; model: boolean }[] };
+    assert.equal(fastBody.applied[0]?.username, "alice");
+    assert.equal(fastBody.applied[0]?.model, true);
+    const aliceFast = JSON.parse(await readFile(path.join(aliceHome, ".cursor", "cli-config.json"), "utf8")) as {
+      selectedModel: { parameters: { id: string; value: string }[] };
+    };
+    assert.equal(aliceFast.selectedModel.parameters.find((item) => item.id === "fast")?.value, "true");
+    const bobStill = JSON.parse(await readFile(path.join(bobHome, ".cursor", "cli-config.json"), "utf8")) as {
+      model: { modelId: string };
+      modelParameters: { "grok-4.7": { id: string; value: string }[] };
+    };
+    assert.equal(bobStill.model.modelId, "other-model");
+    assert.equal(bobStill.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "true");
+
     const pi = await fetch(`${base}/api/admin/agent-defaults`, {
       method: "POST",
       headers,
@@ -2377,6 +2404,9 @@ test("harness defaults apply only within each person's agents and models", async
       body: JSON.stringify({ cursor: true, claude: false, pi: true, piProvider: "", piModel: "" }),
     });
     assert.equal(cleared.status, 200);
+    const clearedBody = (await cleared.json()) as { cursorFast?: boolean; piModel?: string };
+    assert.equal(clearedBody.cursorFast, true);
+    assert.equal(clearedBody.piModel, "");
     const missing = await fetch(`${base}/api/admin/agent-defaults`, {
       method: "POST",
       headers,

@@ -222,6 +222,7 @@ export function saveAgentFlags(
   if (!Object.values(next).some(Boolean)) throw new Error("at least one agent must stay on");
   const pi = piFieldsFromBody(record, loadPiConfig(file));
   const cursorCommands = cursorCommandsFromBody(record, file);
+  const cursorFast = cursorFastFromBody(record, file);
   const terminal = typeof rawTerminal === "boolean" ? rawTerminal : loadRawTerminal(file);
   const imports = typeof cliImport === "boolean" ? cliImport : loadCliImport(file);
   const files = typeof fileManager === "boolean" ? fileManager : loadFileManager(file);
@@ -246,6 +247,7 @@ export function saveAgentFlags(
     piProvider: pi.provider,
     piModel: pi.model,
     cursorCommands,
+    cursorFast,
     appName: loadAppName(file),
     customAgents: custom.map((agent) => ({ ...agent, enabled: Boolean(next[agent.id]) })),
   });
@@ -401,6 +403,21 @@ export function loadCursorCommands(file: string): string[] {
 function cursorCommandsFromBody(body: Record<string, unknown>, file: string): string[] {
   if (!Object.prototype.hasOwnProperty.call(body, "cursorCommands")) return loadCursorCommands(file);
   return parseShellCommands(body.cursorCommands);
+}
+
+export function loadCursorFast(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    return parsed.cursorFast === true;
+  } catch {
+    return false;
+  }
+}
+
+function cursorFastFromBody(body: Record<string, unknown>, file: string): boolean {
+  if (!Object.prototype.hasOwnProperty.call(body, "cursorFast")) return loadCursorFast(file);
+  return body.cursorFast === true;
 }
 
 function quietPiValue(value: string): string {

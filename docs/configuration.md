@@ -32,11 +32,11 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 
 Site packages are stored in `extensions/` next to `agents.json`, with `extensions.json` beside that directory. Per-user packages are `~/.engineroom/extensions/` and `~/.engineroom/extensions.json`. See [extensions.md](extensions.md).
 
-`setup.sh` creates `checks.json` only when it is absent, with:
+`setup.sh` creates `checks.json` only when it is absent, and adds `python3` when an existing list does not already include it. A new file contains:
 
 ```json
 {
-  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura"]
+  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura", "python3"]
 }
 ```
 

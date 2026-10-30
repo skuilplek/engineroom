@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isAccountPath, loadCursorCommands, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
+import { isAccountPath, loadCursorCommands, loadCursorFast, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
 
 function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
   return {
@@ -104,9 +104,16 @@ test("pi provider and model survive a later agent save", async () => {
     assert.equal(stored.agentBinaries, undefined);
     saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorCommands: ["ls", "npm install"] });
     assert.deepEqual(loadCursorCommands(file), ["ls", "npm install"]);
+    assert.equal(loadCursorFast(file), false);
+    saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorFast: true });
+    assert.equal(loadCursorFast(file), true);
     saveAgentFlags(file, { cursor: true, claude: false, pi: true });
     assert.equal(loadPiConfig(file).model, "recursive/flint-v1.0:free");
     assert.deepEqual(loadCursorCommands(file), ["ls", "npm install"]);
+    assert.equal(loadCursorFast(file), true);
+    saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorFast: "yes" });
+    assert.equal(loadCursorFast(file), false);
+    assert.equal(loadCursorFast(""), false);
     assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorCommands: ["rm -rf /"] }));
     assert.equal(piSetupAllowed(true, true, false), true);
     assert.equal(piSetupAllowed(true, true, true), false);

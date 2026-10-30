@@ -518,7 +518,7 @@ function Shell({
             onSession={onSession}
           />
         )}
-        {view === "docs" && <DocsView />}
+        {view === "docs" && <DocsView session={session} />}
         {view === "errors" && <ErrorsView />}
         {view === "admin" && session.admin && (
           <AdminView

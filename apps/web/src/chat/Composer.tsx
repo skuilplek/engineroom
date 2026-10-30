@@ -3,8 +3,8 @@ import { displayModelName, type GitStatus, type QueuedPrompt } from "@engineroom
 import { gitWorkspace, initGitWorkspace, switchGitBranch } from "../api.ts";
 import { useReportError } from "../errors.tsx";
 import { modeTone } from "../format.ts";
-import { IconArrow, IconBranch, IconClip } from "../icons.tsx";
-import { addComposerFiles, removeComposerFile, type ComposerAttachment } from "./attachments.ts";
+import { IconArrow, IconBranch, IconClip, IconStop } from "../icons.tsx";
+import { addComposerFiles, promptText, removeComposerFile, type ComposerAttachment } from "./attachments.ts";
 import { usePromptHeight } from "./promptHeight.ts";
 
 export interface ComposerChoice {
@@ -36,6 +36,8 @@ export function Composer({
   switchDisabled,
   onReposChanged,
   onBranchChanged,
+  running = false,
+  onStop,
   children,
 }: {
   frame: "dock" | "launch";
@@ -61,6 +63,8 @@ export function Composer({
   switchDisabled?: boolean;
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
+  running?: boolean;
+  onStop?: () => void;
   children?: ReactNode;
 }) {
   const report = useReportError();
@@ -164,6 +168,7 @@ export function Composer({
   const showBranch = Boolean(git?.repo && (git.branch || branchNames.length > 0));
   const showCreate = Boolean(git && !git.repo && projectCreate);
   const tone = modeTone(mode);
+  const showStop = Boolean(running && onStop && !promptText(prompt, attachments.length));
 
   return (
     <div className={frame === "dock" ? "composer" : "launch-composer"}>
@@ -268,9 +273,15 @@ export function Composer({
                 event.target.value = "";
               }}
             />
-            <button className="send" type="submit" disabled={disabled} aria-label="Send">
-              <IconArrow />
-            </button>
+            {showStop ? (
+              <button className="send" type="button" aria-label="Stop" onClick={onStop}>
+                <IconStop />
+              </button>
+            ) : (
+              <button className="send" type="submit" disabled={disabled} aria-label="Send">
+                <IconArrow />
+              </button>
+            )}
           </div>
         </div>
       </form>

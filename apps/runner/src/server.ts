@@ -398,7 +398,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return runPiSetup(request.provider, request.model);
       case "apply_harness_defaults":
         if (request.agent === "pi") await applyPiDefaults(home, request.provider, request.model);
-        else await applyCursorDefaults(home, { writeModel: request.writeModel, commands: request.commands });
+        else await applyCursorDefaults(home, { writeModel: request.writeModel, commands: request.commands, fast: request.fast });
         return { ok: true };
       case "get_cursor_commands":
         return { commands: await loadCursorCommands(home) };

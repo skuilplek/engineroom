@@ -17,7 +17,7 @@ sudo ./setup.sh
 1. Installs `build-essential`, `python3`, `libpam0g-dev`, `curl`, `xz-utils`, Caddy, `avahi-daemon`, `wpasupplicant`, and `iw`.
 2. Installs Node.js 24 under `/usr/local` when the current `node` is older than 24 (linux-x64 tarball from nodejs.org).
 3. Writes `/etc/engineroom/hub.env` with `ENGINEROOM_COOKIE_SECURE` and `ENGINEROOM_ADMIN`.
-4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `claude`, `claude-agent-acp`, `pi`, `obscura`).
+4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `claude`, `claude-agent-acp`, `pi`, `obscura`, `python3`).
 5. Runs `deploy/install.sh`.
 6. Replaces `/etc/caddy/Caddyfile` with a reverse proxy to the hub. An existing Caddyfile that does not already mention `engineroom` is copied aside first.
 7. Adds the user who invoked `sudo` to the `engineroom-users` group when that account has uid 1000 or higher.
@@ -75,7 +75,7 @@ From the same git checkout, as root:
 sudo ./update.sh
 ```
 
-The checkout must not be owned by root. The script pulls with `--ff-only` as the directory owner, runs `npm ci`, runs `deploy/install.sh`, restarts `engineroom-hub.service`, and restarts any active `engineroom-runner@*` services. It leaves `/etc/engineroom/hub.env` and the Caddy site config alone. It writes `/etc/engineroom/checks.json` only when that file is missing.
+The checkout must not be owned by root. The script pulls with `--ff-only` as the directory owner, runs `npm ci`, runs `deploy/install.sh`, restarts `engineroom-hub.service`, and restarts any active `engineroom-runner@*` services. It leaves `/etc/engineroom/hub.env` and the Caddy site config alone. It writes `/etc/engineroom/checks.json` only when that file is missing, and adds `python3` to an existing command list when that name is absent.
 
 Success is a health check against `http://127.0.0.1:8787/api/health`.
 

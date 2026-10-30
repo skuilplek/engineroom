@@ -7,7 +7,7 @@ import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, a
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
@@ -80,6 +80,7 @@ interface RunnerCall {
   provider?: string;
   writeModel?: boolean;
   commands?: string[];
+  fast?: boolean;
   name?: string;
   email?: string;
   url?: string;
@@ -1377,6 +1378,7 @@ export function createHub(options: HubOptions) {
     const pi = loadPiConfig(agentsFile);
     if (agent === "pi" && (!pi.provider || !pi.model)) throw new Error("invalid pi model");
     const commands = loadCursorCommands(agentsFile);
+    const fast = loadCursorFast(agentsFile);
     const stored = loadAgentOptions(agentOptionsFile);
     const applied: { username: string; model: boolean; commands: boolean }[] = [];
     const skipped: { username: string; reason: string }[] = [];
@@ -1406,7 +1408,7 @@ export function createHub(options: HubOptions) {
           continue;
         }
         const writeModel = effective.models.some((item) => item.id === CURSOR_DEFAULT_MODEL_ID);
-        await call(target, { type: "apply_harness_defaults", agent: "cursor", writeModel, commands });
+        await call(target, { type: "apply_harness_defaults", agent: "cursor", writeModel, commands, fast });
         applied.push({ username: name, model: writeModel, commands: true });
       } catch (error) {
         skipped.push({ username: name, reason: error instanceof Error ? error.message : "request failed" });
@@ -1812,7 +1814,7 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 
 function piPayload(file: string) {
   const pi = loadPiConfig(file);
-  return { piProvider: pi.provider, piModel: pi.model, cursorCommands: loadCursorCommands(file) };
+  return { piProvider: pi.provider, piModel: pi.model, cursorCommands: loadCursorCommands(file), cursorFast: loadCursorFast(file) };
 }
 
 function statusFor(message: string): number {

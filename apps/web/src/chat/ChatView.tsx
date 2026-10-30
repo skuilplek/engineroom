@@ -222,7 +222,6 @@ export function ChatView({
   }
 
   const mastClass = ["chat-mast", mast.open ? "open" : "", mast.pull != null ? "dragging" : ""].filter(Boolean).join(" ");
-  const showStop = mast.narrow && !mast.open && mast.pull == null && live.running;
 
   return (
     <div className="chat">
@@ -249,9 +248,6 @@ export function ChatView({
               <p className="muted">{agentLabel(live.agent, agentCatalog)} · {workspaceLabel(live.workspace || home, home, repos)}</p>
             </div>
             <div className="row">
-              {live.running && (
-                <button className="danger" type="button" onClick={() => sendCommand({ type: "cancel", chatId })}>Stop</button>
-              )}
               {rawTerminal && (
                 <button className="ghost" type="button" disabled={live.running} onClick={() => setRaw((value) => !value)}>
                   {raw ? "Chat" : "Terminal"}
@@ -272,11 +268,6 @@ export function ChatView({
           )}
         </div>
       </div>
-      {showStop && (
-        <div className="mast-stop">
-          <button className="danger" type="button" onClick={() => sendCommand({ type: "cancel", chatId })}>Stop</button>
-        </div>
-      )}
       {raw ? (
         <TerminalPanel chatId={chatId} />
       ) : (
@@ -355,6 +346,8 @@ export function ChatView({
             workspace={live.workspace}
             projectCreate={projectCreate}
             switchDisabled={live.running}
+            running={live.running}
+            onStop={() => sendCommand({ type: "cancel", chatId })}
             onReposChanged={onReposChanged}
             onBranchChanged={onFilesChanged}
           />

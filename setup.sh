@@ -79,11 +79,20 @@ chmod 0644 /etc/engineroom/hub.env
 if [[ ! -f /etc/engineroom/checks.json ]]; then
   cat > /etc/engineroom/checks.json <<'EOF'
 {
-  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura"]
+  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura", "python3"]
 }
 EOF
   chmod 0644 /etc/engineroom/checks.json
 fi
+node -e '
+const fs = require("fs");
+const file = "/etc/engineroom/checks.json";
+const data = JSON.parse(fs.readFileSync(file, "utf8"));
+if (Array.isArray(data.commands) && !data.commands.includes("python3")) {
+  data.commands.push("python3");
+  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+}
+'
 
 bash "$root/deploy/install.sh"
 

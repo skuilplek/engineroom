@@ -87,12 +87,14 @@ export interface AgentInventory {
   piProvider?: string;
   piModel?: string;
   cursorCommands?: string[];
+  cursorFast?: boolean;
 }
 
 export interface Account {
   username: string;
   home: string;
   uid: number;
+  shell: string;
 }
 
 export interface UserBundle extends UserAccess {
@@ -665,6 +667,7 @@ export function saveAgents(
     piProvider?: string;
     piModel?: string;
     cursorCommands?: string[];
+    cursorFast?: boolean;
   },
 ) {
   return api<{
@@ -679,6 +682,7 @@ export function saveAgents(
     piProvider?: string;
     piModel?: string;
     cursorCommands?: string[];
+    cursorFast?: boolean;
   }>("/api/admin/agents", {
     method: "PUT",
     body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...extra }),

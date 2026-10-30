@@ -67,7 +67,6 @@ import { CopyResponse } from "../chat/CopyResponse.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
 import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
-import { IconSliders } from "../icons.tsx";
 import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
 type AdminTab = "overview" | "server" | "agents" | "packages" | "repositories" | "users";
@@ -90,6 +89,7 @@ type OfferSnapshot = {
   piProvider: string;
   piModel: string;
   cursorCommands: string[];
+  cursorFast: boolean;
   offered: Partial<Record<string, { modes: string[]; models: string[] }>>;
 };
 
@@ -139,6 +139,7 @@ export function AdminView({
   const [piProvider, setPiProvider] = useState("");
   const [piModel, setPiModel] = useState("");
   const [cursorCommandText, setCursorCommandText] = useState("");
+  const [cursorFast, setCursorFast] = useState(false);
   const [applyUser, setApplyUser] = useState("");
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -194,6 +195,19 @@ export function AdminView({
     return next;
   }
 
+  async function reloadUsers() {
+    setBusy(true);
+    setError("");
+    setSaved("");
+    try {
+      await refreshUsers();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     refreshUsers().catch((err) => setError(message(err)));
     listCatalog().then((body) => setCatalog(body.repositories)).catch((err) => setError(message(err)));
@@ -222,6 +236,7 @@ export function AdminView({
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
       setCursorCommandText((body.cursorCommands ?? []).join("\n"));
+      setCursorFast(body.cursorFast === true);
       setSavedOffer((current) => ({
         ...current,
         flags: nextFlags,
@@ -234,6 +249,7 @@ export function AdminView({
         piProvider: body.piProvider ?? "",
         piModel: body.piModel ?? "",
         cursorCommands: [...(body.cursorCommands ?? [])],
+        cursorFast: body.cursorFast === true,
       }));
       const first = body.agents[0];
       setAgentTab(first?.id ?? "+");
@@ -310,6 +326,7 @@ export function AdminView({
         piProvider: piProvider.trim(),
         piModel: piModel.trim(),
         cursorCommands: commands,
+        cursorFast,
       });
       onAgents(
         savedAgents.agents,
@@ -337,6 +354,7 @@ export function AdminView({
       setPiProvider(provider);
       setPiModel(model);
       setCursorCommandText(commands.join("\n"));
+      setCursorFast(savedAgents.cursorFast === true);
       const listed = await listAdminAgents();
       setInventory(listed.agents);
       setSavedOffer({
@@ -350,6 +368,7 @@ export function AdminView({
         piProvider: savedAgents.piProvider ?? provider,
         piModel: savedAgents.piModel ?? model,
         cursorCommands: [...(savedAgents.cursorCommands ?? commands)],
+        cursorFast: savedAgents.cursorFast === true,
         offered: cloneOffered(offered),
       });
       onAccess();
@@ -372,6 +391,7 @@ export function AdminView({
     setPiProvider(savedOffer.piProvider);
     setPiModel(savedOffer.piModel);
     setCursorCommandText(savedOffer.cursorCommands.join("\n"));
+    setCursorFast(savedOffer.cursorFast);
     setOfferedDraft(cloneOffered(savedOffer.offered));
     setError("");
   }
@@ -395,6 +415,7 @@ export function AdminView({
     piProvider,
     piModel,
     cursorCommands: commandLines(cursorCommandText),
+    cursorFast,
     offered: offeredDraft,
   }, savedOffer);
 
@@ -752,7 +773,11 @@ export function AdminView({
                   {selectedAgent.id === "cursor" && (
                     <section className="agents-card">
                       <h3>Cursor defaults</h3>
-                      <p className="muted">The default model is Grok 4.7 with a 256k context and high reasoning. Fast is always off. Apply writes that model only for a person who is allowed to use grok-4.7, and replaces that person's Shell entries. Apply to all users covers everyone who has Cursor. Apply to this user covers the account you pick.</p>
+                      <p className="muted">The default model is Grok 4.7 with a 256k context and high reasoning. Fast mode stays off unless an administrator enables it here. Apply writes that choice with the model only for a person who is allowed to use grok-4.7, and replaces that person's Shell entries. Apply to all users covers everyone who has Cursor. Apply to this user covers the account you pick.</p>
+                      <label className={cursorFast ? "privilege on" : "privilege"}>
+                        <input type="checkbox" checked={cursorFast} aria-label="Fast mode" onChange={() => setCursorFast((value) => !value)} />
+                        Fast mode
+                      </label>
                       <CursorCommandFields value={cursorCommandText} onChange={setCursorCommandText} />
                       <div className="row-actions">
                         <button className="ghost" type="button" disabled={busy || offerDirty} onClick={() => void applyDefaults("cursor")}>Apply to all users</button>
@@ -1015,62 +1040,25 @@ export function AdminView({
         )}
 
         {tab === "users" && !selected && (
-          <section className="admin-pane" aria-label="Users">
-            <h2>Users</h2>
-            <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
-            {accounts.length === 0 ? (
-              <p className="muted">No accounts yet.</p>
-            ) : (
-              <div className="repos-table-wrap">
-                <table className="repos-table users-table">
-                  <thead>
-                    <tr>
-                      <th>Username</th>
-                      <th>Home</th>
-                      <th>Role</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((account) => (
-                      <tr key={account.username}>
-                        <td>{account.username}</td>
-                        <td>{account.home}</td>
-                        <td>{account.username === session.username ? "Administrator" : "User"}</td>
-                        <td>
-                          <button
-                            className="icon-btn"
-                            type="button"
-                            title={`Manage ${account.username}`}
-                            aria-label={`Manage ${account.username}`}
-                            onClick={() => {
-                              setError("");
-                              setSaved("");
-                              setSelected(account.username);
-                            }}
-                          >
-                            <IconSliders />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <form onSubmit={(event) => void addUser(event)}>
-              <h3>Add a user</h3>
-              <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
-              <label>
-                Username
-                <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
-              </label>
-              <label>
-                Password
-                <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-              </label>
-              <button className="primary" type="submit" disabled={busy}>Add user</button>
-            </form>
+          <section className="admin-pane admin-detail" aria-label="Users">
+            <UsersDirectory
+              accounts={accounts}
+              self={session.username}
+              busy={busy}
+              username={username}
+              password={password}
+              onUsername={setUsername}
+              onPassword={setPassword}
+              onAdd={(event) => void addUser(event)}
+              onRefresh={() => void reloadUsers()}
+              onConfigure={(name) => {
+                setError("");
+                setSaved("");
+                setSelected(name);
+              }}
+              onNote={setSaved}
+              onError={setError}
+            />
           </section>
         )}
 
@@ -1108,6 +1096,305 @@ export function AdminView({
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+type DirectoryRow = {
+  identity?: GitIdentity | null;
+  activity?: string | null;
+  activityFailed?: boolean;
+};
+
+type AccountRoleFilter = "all" | "administrator" | "user";
+
+function identityLine(identity: GitIdentity | null | undefined): string {
+  if (!identity) return "";
+  const name = identity.name.trim();
+  const email = identity.email.trim();
+  if (name && email) return `${name} <${email}>`;
+  return name || email;
+}
+
+function shellSummary(accounts: Account[]): string {
+  const counts = new Map<string, number>();
+  for (const account of accounts) {
+    if (!account.shell) continue;
+    counts.set(account.shell, (counts.get(account.shell) ?? 0) + 1);
+  }
+  if (counts.size === 0) return "None";
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([shell, count]) => `${shell} (${count})`)
+    .join(", ");
+}
+
+function activityText(row: DirectoryRow | undefined): string {
+  if (!row || row.activity === undefined) return row?.activityFailed ? "—" : "…";
+  if (row.activity === null) return "No conversations";
+  return relativeTime(row.activity);
+}
+
+function accountInitial(username: string): string {
+  const letter = username.trim().charAt(0);
+  return letter ? letter.toUpperCase() : "?";
+}
+
+function UsersDirectory({
+  accounts,
+  self,
+  busy,
+  username,
+  password,
+  onUsername,
+  onPassword,
+  onAdd,
+  onRefresh,
+  onConfigure,
+  onNote,
+  onError,
+}: {
+  accounts: Account[];
+  self: string;
+  busy: boolean;
+  username: string;
+  password: string;
+  onUsername: (value: string) => void;
+  onPassword: (value: string) => void;
+  onAdd: (event: FormEvent) => void;
+  onRefresh: () => void;
+  onConfigure: (username: string) => void;
+  onNote: (value: string) => void;
+  onError: (value: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [role, setRole] = useState<AccountRoleFilter>("all");
+  const [rows, setRows] = useState<Record<string, DirectoryRow>>({});
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const needle = query.trim().toLowerCase();
+  const visible = accounts.filter((account) => {
+    const administrator = account.username === self;
+    if (role === "administrator" && !administrator) return false;
+    if (role === "user" && administrator) return false;
+    if (!needle) return true;
+    return account.username.toLowerCase().includes(needle)
+      || String(account.uid).includes(needle)
+      || account.home.toLowerCase().includes(needle);
+  });
+  const shells = shellSummary(accounts);
+  const administrators = accounts.filter((account) => account.username === self).length;
+
+  useEffect(() => {
+    if (accounts.length === 0) return;
+    let cancelled = false;
+    for (const account of accounts) {
+      const name = account.username;
+      void getUserGitIdentity(name).then((identity) => {
+        if (cancelled) return;
+        setRows((current) => ({ ...current, [name]: { ...current[name], identity } }));
+      }).catch(() => {
+        if (cancelled) return;
+        setRows((current) => {
+          if (current[name]?.identity !== undefined) return current;
+          return { ...current, [name]: { ...current[name], identity: null } };
+        });
+      });
+      void listUserChats(name).then((chats) => {
+        if (cancelled) return;
+        const newest = chats.reduce((latest, chat) => chat.updatedAt > latest ? chat.updatedAt : latest, "");
+        setRows((current) => ({ ...current, [name]: { ...current[name], activity: newest || null, activityFailed: false } }));
+      }).catch(() => {
+        if (cancelled) return;
+        setRows((current) => {
+          if (current[name]?.activity !== undefined) return current;
+          return { ...current, [name]: { ...current[name], activityFailed: true } };
+        });
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts]);
+
+  function focusAddUser() {
+    document.getElementById("add-user")?.scrollIntoView({ block: "nearest" });
+    usernameRef.current?.focus();
+  }
+
+  async function copyHome(home: string) {
+    try {
+      await navigator.clipboard.writeText(home);
+      onNote("Home directory copied");
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = home;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.append(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      if (copied) onNote("Home directory copied");
+      else onError("Could not copy the home directory");
+    }
+  }
+
+  return (
+    <div className="users-directory">
+      <header className="person-bar">
+        <div className="person-identity">
+          <span className="person-kicker">Users</span>
+          <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
+        </div>
+        <div className="person-actions">
+          <button className="ghost" type="button" disabled={busy} onClick={onRefresh}>Refresh</button>
+          <button className="primary" type="button" onClick={focusAddUser}>Add user</button>
+        </div>
+      </header>
+      <div className="metric-row">
+        <div className="metric">
+          <span>Accounts</span>
+          <strong>{accounts.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Administrators</span>
+          <strong>{administrators}</strong>
+        </div>
+        <div className="metric">
+          <span>Shells</span>
+          <strong className="users-shells" title={shells}>{shells}</strong>
+        </div>
+      </div>
+      {accounts.length === 0 ? (
+        <p className="muted">No accounts yet.</p>
+      ) : (
+        <div className="users-board">
+          <div className="users-toolbar">
+            <label className="users-filter">
+              <input
+                aria-label="Filter by username, UID, or home directory"
+                value={query}
+                placeholder="Filter by username, UID, or home directory"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <label className="users-role-pick">
+              Role
+              <select aria-label="Role" value={role} onChange={(event) => setRole(event.target.value as AccountRoleFilter)}>
+                <option value="all">All roles</option>
+                <option value="administrator">Administrators</option>
+                <option value="user">Users</option>
+              </select>
+            </label>
+          </div>
+          <div className="users-table-wrap">
+            <table className="users-table">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Home</th>
+                  <th>Role</th>
+                  <th>UID / shell</th>
+                  <th>Last active</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.length === 0 ? (
+                  <tr>
+                    <td className="users-empty" colSpan={6}>No accounts match.</td>
+                  </tr>
+                ) : visible.map((account) => {
+                  const administrator = account.username === self;
+                  const detail = rows[account.username];
+                  const git = identityLine(detail?.identity);
+                  const waiting = detail?.identity === undefined;
+                  return (
+                    <tr className={administrator ? "is-admin" : undefined} key={account.username}>
+                      <td data-label="Username">
+                        <div className="users-person">
+                          <span className={administrator ? "users-mark admin" : "users-mark"} aria-hidden="true">{accountInitial(account.username)}</span>
+                          <span>
+                            <strong>{account.username}</strong>
+                            {waiting ? <span className="users-pending">…</span> : git ? <span>{git}</span> : null}
+                          </span>
+                        </div>
+                      </td>
+                      <td data-label="Home">
+                        <div className="users-home">
+                          <code>{account.home}</code>
+                          <button
+                            className="users-copy"
+                            type="button"
+                            title="Copy path"
+                            aria-label={`Copy ${account.home}`}
+                            onClick={() => void copyHome(account.home)}
+                          >
+                            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                              <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                              <path d="M10.5 5.5V3.2A1.2 1.2 0 0 0 9.3 2H3.2A1.2 1.2 0 0 0 2 3.2v6.1a1.2 1.2 0 0 0 1.2 1.2H5.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                      <td data-label="Role">
+                        <span className={administrator ? "users-role admin" : "users-role"}>{administrator ? "Administrator" : "User"}</span>
+                      </td>
+                      <td data-label="UID / shell">
+                        <span className="users-uid">UID: {account.uid}</span>
+                        {account.shell ? <span className="users-shell">{account.shell}</span> : null}
+                      </td>
+                      <td data-label="Last active">{activityText(detail)}</td>
+                      <td data-label="Actions">
+                        <button
+                          className="users-configure"
+                          type="button"
+                          aria-label={`Configure ${account.username}`}
+                          onClick={() => onConfigure(account.username)}
+                        >
+                          Configure
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="users-foot">Showing {visible.length} of {accounts.length}</div>
+        </div>
+      )}
+      <form id="add-user" className="person-card" onSubmit={onAdd}>
+        <header className="person-card-head">
+          <h2>Add a user</h2>
+          <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
+        </header>
+        <div className="users-add-fields">
+          <label>
+            Username
+            <input ref={usernameRef} autoComplete="off" value={username} onChange={(event) => onUsername(event.target.value)} required />
+          </label>
+          <label>
+            Password
+            <input type="password" autoComplete="new-password" value={password} onChange={(event) => onPassword(event.target.value)} required />
+          </label>
+        </div>
+        <div className="users-add-actions">
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => {
+              onUsername("");
+              onPassword("");
+              usernameRef.current?.focus();
+            }}
+          >
+            Clear
+          </button>
+          <button className="primary" type="submit" disabled={busy}>Add user</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2386,6 +2673,7 @@ function sessionOffer(session: Session): OfferSnapshot {
     piProvider: "",
     piModel: "",
     cursorCommands: [],
+    cursorFast: false,
     offered: {},
   };
 }
@@ -2433,6 +2721,7 @@ function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
   if (left.piModel !== right.piModel) return false;
   if (left.cursorCommands.length !== right.cursorCommands.length) return false;
   if (left.cursorCommands.some((item, index) => item !== right.cursorCommands[index])) return false;
+  if (left.cursorFast !== right.cursorFast) return false;
   const keys = new Set([...Object.keys(left.offered), ...Object.keys(right.offered)]);
   for (const key of keys) {
     const a = left.offered[key] ?? { modes: [], models: [] };

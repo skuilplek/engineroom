@@ -19,7 +19,7 @@ export async function applyPiDefaults(home: string, provider: string, model: str
 
 export async function applyCursorDefaults(
   home: string,
-  patch: { writeModel?: boolean; commands?: string[] | null },
+  patch: { writeModel?: boolean; commands?: string[] | null; fast?: boolean },
 ): Promise<void> {
   const file = cursorConfigPath(home);
   const current = await readConfigObject(file);

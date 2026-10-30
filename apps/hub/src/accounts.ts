@@ -6,6 +6,7 @@ export interface Account {
   username: string;
   home: string;
   uid: number;
+  shell: string;
 }
 
 export function listAccounts(group = "engineroom-users"): Account[] {
@@ -19,7 +20,7 @@ export function listAccounts(group = "engineroom-users"): Account[] {
   for (const name of members) {
     const user = lookupUser(name);
     if (!user) continue;
-    accounts.push({ username: user.username, home: user.home, uid: user.uid });
+    accounts.push({ username: user.username, home: user.home, uid: user.uid, shell: user.shell });
   }
   accounts.sort((a, b) => a.username.localeCompare(b.username));
   return accounts;

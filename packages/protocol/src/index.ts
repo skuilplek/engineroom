@@ -497,7 +497,7 @@ export type RunnerRequest =
   | { id: string; type: "resolve_commands"; names: string[]; refresh?: boolean }
   | { id: string; type: "setup_pi"; provider: string; model: string }
   | { id: string; type: "apply_harness_defaults"; agent: "pi"; provider: string; model: string }
-  | { id: string; type: "apply_harness_defaults"; agent: "cursor"; writeModel: boolean; commands: string[] }
+  | { id: string; type: "apply_harness_defaults"; agent: "cursor"; writeModel: boolean; commands: string[]; fast: boolean }
   | { id: string; type: "get_cursor_commands" }
   | { id: string; type: "put_cursor_commands"; commands: string[] }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
@@ -1640,11 +1640,11 @@ export function mergePiDefaults(current: unknown, provider: string, model: strin
 
 export function mergeCursorConfig(
   current: unknown,
-  patch: { writeModel?: boolean; commands?: string[] | null },
+  patch: { writeModel?: boolean; commands?: string[] | null; fast?: boolean },
 ): Record<string, unknown> {
   const next = { ...(plainRecord(current) ?? {}) };
   if (patch.writeModel) {
-    const parameters = cursorParameters();
+    const parameters = cursorParameters(patch.fast === true);
     const existing = plainRecord(next.model) ?? {};
     next.model = {
       ...existing,
@@ -1657,7 +1657,7 @@ export function mergeCursorConfig(
     };
     next.selectedModel = { modelId: CURSOR_DEFAULT_MODEL_ID, parameters };
     const modelParameters = { ...(plainRecord(next.modelParameters) ?? {}) };
-    modelParameters[CURSOR_DEFAULT_MODEL_ID] = cursorParameters();
+    modelParameters[CURSOR_DEFAULT_MODEL_ID] = parameters;
     next.modelParameters = modelParameters;
     next.hasChangedDefaultModel = true;
   }
@@ -1671,10 +1671,10 @@ export function mergeCursorConfig(
   return next;
 }
 
-function cursorParameters(): { id: string; value: string }[] {
+function cursorParameters(fast: boolean): { id: string; value: string }[] {
   return CURSOR_DEFAULT_PARAMETERS.map((item) => ({
     id: item.id,
-    value: item.id === "fast" ? "false" : item.value,
+    value: item.id === "fast" ? (fast ? "true" : "false") : item.value,
   }));
 }
 
@@ -1698,7 +1698,14 @@ function parseHarnessDefaults(body: Record<string, unknown>): RunnerRequest {
     agent: "cursor",
     writeModel: body.writeModel,
     commands: parseShellCommands(body.commands),
+    fast: parseCursorFast(body),
   };
+}
+
+function parseCursorFast(body: Record<string, unknown>): boolean {
+  if (!Object.prototype.hasOwnProperty.call(body, "fast")) return false;
+  if (typeof body.fast !== "boolean") throw new Error("invalid fast");
+  return body.fast;
 }
 
 export function parseOptionIds(value: unknown, label: string): string[] {

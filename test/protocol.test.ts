@@ -309,10 +309,21 @@ test("policy options stay optional and narrow the offered catalog", () => {
   });
   if (applied.type === "apply_harness_defaults" && applied.agent === "cursor") {
     assert.equal(applied.writeModel, true);
+    assert.equal(applied.fast, false);
     assert.deepEqual(applied.commands, ["ls", "npm install"]);
   }
+  const fastOn = parseRunnerRequest({
+    id: "9b",
+    type: "apply_harness_defaults",
+    agent: "cursor",
+    writeModel: true,
+    commands: ["ls"],
+    fast: true,
+  });
+  if (fastOn.type === "apply_harness_defaults" && fastOn.agent === "cursor") assert.equal(fastOn.fast, true);
   assert.throws(() => parseRunnerRequest({ id: "10", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["rm -rf /"] }));
   assert.throws(() => parseRunnerRequest({ id: "11", type: "put_cursor_commands", commands: ["bad!"] }));
+  assert.throws(() => parseRunnerRequest({ id: "11b", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["ls"], fast: "yes" }));
 });
 
 test("harness defaults keep personal cursor config and force fast off", () => {
@@ -355,6 +366,19 @@ test("harness defaults keep personal cursor config and force fast off", () => {
   assert.equal(keptModel.modelId, "grok-4.7");
   assert.deepEqual(keptAllow, ["Shell(cat)", "Write(/tmp/x)"]);
   assert.deepEqual(readShellCommands(commandsOnly), ["cat"]);
+
+  const enabled = mergeCursorConfig(cursor, { writeModel: true, fast: true });
+  const enabledSelected = enabled.selectedModel as { parameters: { id: string; value: string }[] };
+  const enabledParameters = enabled.modelParameters as Record<string, { id: string; value: string }[]>;
+  assert.equal(enabledSelected.parameters.find((item) => item.id === "fast")?.value, "true");
+  assert.equal(enabledSelected.parameters.find((item) => item.id === "context")?.value, "256k");
+  assert.equal(enabledParameters["grok-4.7"]?.find((item) => item.id === "fast")?.value, "true");
+  assert.deepEqual(enabledParameters["gemini-4-argon"], [{ id: "reasoning_effort", value: "medium" }]);
+
+  const keptFast = mergeCursorConfig(enabled, { commands: ["pwd"] });
+  const keptFastSelected = keptFast.selectedModel as { parameters: { id: string; value: string }[] };
+  assert.equal(keptFastSelected.parameters.find((item) => item.id === "fast")?.value, "true");
+  assert.deepEqual(readShellCommands(keptFast), ["pwd"]);
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {
