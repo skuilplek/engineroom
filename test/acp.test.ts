@@ -41,13 +41,14 @@ test("a custom agent launches its command with acp", () => {
   const commands = new Map([["codex", "codex"]]);
   assert.deepEqual(acpCommand("codex", commands), { names: ["codex"], args: ["acp"] });
   assert.deepEqual(acpCommand("cursor", new Map()), { names: ["agent"], args: ["acp"] });
-  assert.deepEqual(acpCommand("claude", new Map()), { names: ["claude-agent-acp"], args: [] });
+  assert.throws(() => acpCommand("claude", new Map()));
   assert.throws(() => acpCommand("pi", new Map()));
   const acp = new AcpManager();
   assert.equal(acp.supports("codex"), false);
   acp.setCatalog([{ id: "codex", binary: "codex" }]);
   assert.equal(acp.supports("codex"), true);
   assert.equal(acp.supports("cursor"), true);
+  assert.equal(acp.supports("claude"), false);
   assert.equal(acp.supports("pi"), false);
 });
 
@@ -309,7 +310,6 @@ test("a follow-up prompt waits until the running turn finishes", async () => {
         return { agentSessionId: "s" };
       },
     },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });

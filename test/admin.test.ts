@@ -26,8 +26,8 @@ test("the administrator sets agents and accounts", async () => {
   await mkdir(home);
   await mkdir(carolHome);
   await mkdir(socketDir);
-  await installCommand(carolHome, "claude");
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
+  await installCommand(carolHome, "pi");
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: false }));
   const uid = process.getuid?.() ?? 1000;
   const user: LinuxUser = {
     username: "alice",
@@ -40,7 +40,6 @@ test("the administrator sets agents and accounts", async () => {
   const calls: Array<{ action: string; username: string; password?: string }> = [];
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -168,28 +167,29 @@ test("the administrator sets agents and accounts", async () => {
     const none = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: false, claude: false, pi: false }),
+      body: JSON.stringify({ cursor: false, pi: false }),
     });
     assert.equal(none.status, 400);
 
     const enabled = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: false, claude: true, pi: false }),
+      body: JSON.stringify({ cursor: false, pi: true }),
     });
     assert.equal(enabled.status, 200);
     const enabledBody = (await enabled.json()) as { agents: string[]; cliImport: boolean };
-    assert.deepEqual(enabledBody.agents, ["claude"]);
+    assert.deepEqual(enabledBody.agents, ["pi"]);
     assert.equal(enabledBody.cliImport, false);
-    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { claude: boolean; cliImport: boolean; appName: string };
-    assert.equal(stored.claude, true);
+    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { pi: boolean; claude?: boolean; cliImport: boolean; appName: string };
+    assert.equal(stored.pi, true);
+    assert.equal(stored.claude, undefined);
     assert.equal(stored.cliImport, false);
     assert.equal(stored.appName, "AgentWrapper");
 
     const imports = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: false, claude: true, pi: false, cliImport: true }),
+      body: JSON.stringify({ cursor: false, pi: true, cliImport: true }),
     });
     assert.equal(imports.status, 200);
     assert.equal(((await imports.json()) as { cliImport: boolean }).cliImport, true);
@@ -220,7 +220,7 @@ test("the administrator sets agents and accounts", async () => {
     const kept = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: false, claude: true, pi: false, cliImport: true }),
+      body: JSON.stringify({ cursor: false, pi: true, cliImport: true }),
     });
     assert.equal(kept.status, 200);
     const keptFile = JSON.parse(await readFile(agentsFile, "utf8")) as { appName: string; cliImport: boolean };
@@ -315,7 +315,7 @@ test("the administrator sets agents and accounts", async () => {
       appName: string;
     };
     assert.equal(carolMe.admin, false);
-    assert.deepEqual(carolMe.agents, ["claude"]);
+    assert.deepEqual(carolMe.agents, ["pi"]);
     assert.equal(carolMe.cliImport, true);
     assert.equal(carolMe.appName, "Shop Floor");
   } finally {
@@ -349,7 +349,6 @@ test("the administrator enables repositories for one user", async () => {
   const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const clone = async (_url: string, dest: string) => {
@@ -486,7 +485,6 @@ test("project creation can be turned off for the site or for one person", async 
   const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   let clones = 0;
@@ -635,7 +633,7 @@ test("the administrator sets one person's access, environment, and password", as
   await mkdir(home);
   await mkdir(carolHome);
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
   const uid = process.getuid?.() ?? 1000;
   const gid = process.getgid?.() ?? 1000;
   const alice: LinuxUser = {
@@ -650,7 +648,6 @@ test("the administrator sets one person's access, environment, and password", as
   const calls: Array<{ action: string; username: string; password?: string }> = [];
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const aliceRunner = await startRunner({ home, socketPath: socketPathForUser(socketDir, "alice"), drivers });
@@ -699,7 +696,6 @@ test("the administrator sets one person's access, environment, and password", as
       headers,
       body: JSON.stringify({
         cursor: true,
-        claude: true,
         pi: true,
         harness: true,
         binaries: { harness: "/bin/true" },
@@ -728,7 +724,7 @@ test("the administrator sets one person's access, environment, and password", as
     const offerOff = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: true, pi: true, harness: false }),
+      body: JSON.stringify({ cursor: true, pi: true, harness: false }),
     });
     assert.equal(offerOff.status, 200);
     const hidden = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[] };
@@ -737,7 +733,7 @@ test("the administrator sets one person's access, environment, and password", as
     const offerOn = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: true, pi: true, harness: true }),
+      body: JSON.stringify({ cursor: true, pi: true, harness: true }),
     });
     assert.equal(offerOn.status, 200);
     const notAllowed = await fetch(`${base}/api/admin/users/carol/policy`, {
@@ -991,7 +987,7 @@ test("only installed agent commands are listed, and a custom agent can be added"
   await mkdir(socketDir);
   await writeFile(path.join(bin, "agent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   await writeFile(path.join(bin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: false }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: false }));
   const uid = process.getuid?.() ?? 1000;
   const user: LinuxUser = {
     username: "alice",
@@ -1028,14 +1024,12 @@ test("only installed agent commands are listed, and a custom agent can be added"
       agents: { id: string; label: string; binary: string; available: boolean; path: string | null; builtin: boolean }[];
     };
     const cursor = body.agents.find((agent) => agent.id === "cursor");
-    const claude = body.agents.find((agent) => agent.id === "claude");
     const pi = body.agents.find((agent) => agent.id === "pi");
     assert.equal(cursor?.label, "Cursor");
     assert.equal(cursor?.binary, "agent");
     assert.equal(cursor?.available, true);
     assert.equal(cursor?.path, path.join(bin, "agent"));
-    assert.equal(claude?.label, "Claude");
-    assert.equal(claude?.available, false);
+    assert.equal(body.agents.some((agent) => agent.id === "claude"), false);
     assert.equal(pi?.label, "Pi");
     assert.equal(pi?.available, false);
 
@@ -1106,7 +1100,7 @@ test("offered modes and models are probed, then narrowed per person", async () =
   await mkdir(aliceHome);
   await mkdir(carolHome);
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
   const uid = process.getuid?.() ?? 1000;
   const alice: LinuxUser = {
     username: "alice",
@@ -1123,7 +1117,6 @@ test("offered modes and models are probed, then narrowed per person", async () =
   });
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const aliceRunner = await startRunner({
@@ -1363,7 +1356,7 @@ test("the administrator controls repository file visibility for the file manager
   const repo = path.join(home, "Sites", "app");
   await mkdir(path.join(repo, "src"), { recursive: true });
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
 
   spawnSync("git", ["init", "-b", "main"], { cwd: repo });
   await writeFile(path.join(repo, ".gitignore"), "secret.log\n");
@@ -1383,7 +1376,6 @@ test("the administrator controls repository file visibility for the file manager
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -1426,7 +1418,7 @@ test("the administrator controls repository file visibility for the file manager
     const enabledAgents = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true }),
+      body: JSON.stringify({ cursor: true, pi: true, fileManager: true }),
     });
     assert.equal(enabledAgents.status, 200);
     assert.equal(((await enabledAgents.json()) as { fileManager: boolean }).fileManager, true);
@@ -1544,7 +1536,7 @@ test("the administrator controls repository file visibility for the file manager
     await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true, fileEditor: false }),
+      body: JSON.stringify({ cursor: true, pi: true, fileManager: true, fileEditor: false }),
     });
     const blockedByAdmin = await fetch(
       `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/util.ts")}`,
@@ -1556,7 +1548,7 @@ test("the administrator controls repository file visibility for the file manager
     await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: true, pi: true, fileManager: true, fileEditor: true }),
+      body: JSON.stringify({ cursor: true, pi: true, fileManager: true, fileEditor: true }),
     });
     const deleteRes = await fetch(
       `${base}/api/repositories/file?workspace=${encodeURIComponent(repo)}&path=${encodeURIComponent("src/util.ts")}`,
@@ -1579,7 +1571,7 @@ test("the administrator controls file download and upload separately from editin
   const repo = path.join(home, "Sites", "app");
   await mkdir(path.join(repo, "src"), { recursive: true });
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
   spawnSync("git", ["init", "-b", "main"], { cwd: repo });
   await writeFile(path.join(repo, ".env"), "TOKEN=abc\n");
   await writeFile(path.join(repo, "src", "main.ts"), "console.log('hi');\n");
@@ -1595,7 +1587,6 @@ test("the administrator controls file download and upload separately from editin
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -1638,7 +1629,7 @@ test("the administrator controls file download and upload separately from editin
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
 
     assert.equal((await fetch(downloadUrl, { headers })).status, 403);
-    const agents = { cursor: true, claude: true, pi: true };
+    const agents = { cursor: true, pi: true };
     const enabledManager = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
@@ -1774,7 +1765,6 @@ test("the administrator can read another user's chats and transcripts", async ()
   const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const aliceRunner = await startRunner({
@@ -1876,7 +1866,7 @@ test("an agent command in the person's home stays theirs", async () => {
   await mkdir(bin, { recursive: true });
   await mkdir(socketDir);
   await writeFile(path.join(bin, "agent"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: false }));
   const uid = process.getuid?.() ?? 1000;
   const user: LinuxUser = {
     username: "alice",
@@ -1931,7 +1921,7 @@ test("the administrator controls project downloads", async () => {
   const repo = path.join(home, "Sites", "app");
   await mkdir(path.join(repo, "src"), { recursive: true });
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
   await writeFile(path.join(repo, "src", "note.txt"), "hello\n");
   spawnSync("git", ["init", "-b", "main"], { cwd: repo });
   const uid = process.getuid?.() ?? 1000;
@@ -1945,7 +1935,6 @@ test("the administrator controls project downloads", async () => {
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -2040,7 +2029,7 @@ test("a person can archive and delete a project", async () => {
   const repo = path.join(home, "Sites", "app");
   await mkdir(path.join(repo, ".git"), { recursive: true });
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: true, pi: true }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
   const uid = process.getuid?.() ?? 1000;
   const alice: LinuxUser = {
     username: "alice",
@@ -2052,7 +2041,6 @@ test("a person can archive and delete a project", async () => {
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -2156,7 +2144,6 @@ test("harness defaults apply only within each person's agents and models", async
   })}\n`);
   await writeFile(agentsFile, JSON.stringify({
     cursor: true,
-    claude: false,
     pi: true,
     piProvider: "openrouter",
     piModel: "recursive/flint-v1.0:free",
@@ -2192,7 +2179,6 @@ test("harness defaults apply only within each person's agents and models", async
   const bob: LinuxUser = { ...alice, username: "bob", home: bobHome };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const aliceRunner = await startRunner({ home: aliceHome, socketPath: socketPathForUser(socketDir, "alice"), drivers });
@@ -2352,7 +2338,7 @@ test("harness defaults apply only within each person's agents and models", async
     const enabled = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: false, pi: true, cursorFast: true }),
+      body: JSON.stringify({ cursor: true, pi: true, cursorFast: true }),
     });
     assert.equal(enabled.status, 200);
     assert.equal(((await enabled.json()) as { cursorFast?: boolean }).cursorFast, true);
@@ -2401,7 +2387,7 @@ test("harness defaults apply only within each person's agents and models", async
     const cleared = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ cursor: true, claude: false, pi: true, piProvider: "", piModel: "" }),
+      body: JSON.stringify({ cursor: true, pi: true, piProvider: "", piModel: "" }),
     });
     assert.equal(cleared.status, 200);
     const clearedBody = (await cleared.json()) as { cursorFast?: boolean; piModel?: string };

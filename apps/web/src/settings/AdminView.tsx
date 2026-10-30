@@ -21,6 +21,7 @@ import {
   type UserPolicy,
 } from "@engineroom/protocol";
 import { PackagesSection } from "./PackagesSection.tsx";
+import { SiteDocsSection } from "./SiteDocsSection.tsx";
 import { ServerConfig } from "./ServerConfig.tsx";
 import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
 import {
@@ -39,6 +40,7 @@ import {
   listAccounts,
   listAdminAgents,
   listCatalog,
+  listSiteDocs,
   listUserChats,
   probeAgentOptions,
   removeAccount,
@@ -69,7 +71,7 @@ import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
 import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
-type AdminTab = "overview" | "server" | "agents" | "packages" | "repositories" | "users";
+type AdminTab = "overview" | "server" | "agents" | "packages" | "docs" | "repositories" | "users";
 
 type FolderBaseline = {
   directory: string;
@@ -98,6 +100,7 @@ const TABS: { id: AdminTab; label: string }[] = [
   { id: "server", label: "Server" },
   { id: "agents", label: "Agents" },
   { id: "packages", label: "Packages" },
+  { id: "docs", label: "Docs" },
   { id: "repositories", label: "Repositories" },
   { id: "users", label: "Users" },
 ];
@@ -144,6 +147,7 @@ export function AdminView({
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [siteDocCount, setSiteDocCount] = useState(0);
   const [selected, setSelected] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -211,6 +215,7 @@ export function AdminView({
   useEffect(() => {
     refreshUsers().catch((err) => setError(message(err)));
     listCatalog().then((body) => setCatalog(body.repositories)).catch((err) => setError(message(err)));
+    listSiteDocs().then((body) => setSiteDocCount(body.docs.length)).catch((err) => setError(message(err)));
     getRepoDirectory().then((body) => {
       setRepoFolder(body.directory);
       if (body.visibility) setFileVisibility(body.visibility);
@@ -651,6 +656,11 @@ export function AdminView({
                 <strong>Install</strong>
                 <span className="muted">Themes, docs, and agents from outside this checkout.</span>
               </button>
+              <button className="overview-link" type="button" onClick={() => openTab("docs")}>
+                <span>Docs</span>
+                <strong>{siteDocCount}</strong>
+                <span className="muted">{siteDocCount === 0 ? "No site documents yet." : "Shown under Site in Docs."}</span>
+              </button>
               <button className="overview-link" type="button" onClick={() => openTab("repositories")}>
                 <span>Repositories</span>
                 <strong>{catalog.length}</strong>
@@ -674,6 +684,12 @@ export function AdminView({
         {tab === "packages" && (
           <div className="admin-pane">
             <PackagesSection scope="site" />
+          </div>
+        )}
+
+        {tab === "docs" && (
+          <div className="admin-pane">
+            <SiteDocsSection onCount={setSiteDocCount} />
           </div>
         )}
 

@@ -1,6 +1,6 @@
 import { isExtensionSlug, parseExtensionSource, parseSlugList } from "./extensions.ts";
 
-export const AGENTS = ["cursor", "claude", "pi"] as const;
+export const AGENTS = ["cursor", "pi"] as const;
 
 export type BuiltinAgentId = (typeof AGENTS)[number];
 
@@ -18,7 +18,6 @@ export interface AgentDefinition extends AgentName {
 
 export const AGENT_CATALOG: readonly AgentDefinition[] = [
   { id: "cursor", label: "Cursor", binary: "agent" },
-  { id: "claude", label: "Claude", binary: "claude" },
   { id: "pi", label: "Pi", binary: "pi" },
 ];
 

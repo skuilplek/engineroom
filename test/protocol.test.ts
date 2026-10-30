@@ -37,13 +37,13 @@ import {
 } from "@engineroom/protocol";
 import { createCliParser } from "@engineroom/protocol";
 import { readSession, signSession } from "../apps/hub/src/session.ts";
-import { childEnv, claudeArgs, cursorArgs, parseLoginPath, parsePiModelList, piArgs, resolveBinary } from "../apps/runner/src/cli.ts";
+import { childEnv, cursorArgs, parseLoginPath, parsePiModelList, piArgs, resolveBinary } from "../apps/runner/src/cli.ts";
 import { applyEnvEntries } from "../apps/runner/src/envfile.ts";
 import { socketIdentityOk } from "../apps/hub/src/runner-client.ts";
 
 test("agent labels follow the catalog and custom slugs stay separate from commands", () => {
   assert.equal(agentLabel("cursor"), "Cursor");
-  assert.equal(agentLabel("claude"), "Claude");
+  assert.equal(agentLabel("claude"), "claude");
   assert.equal(agentLabel("pi"), "Pi");
   assert.equal(agentLabel("codex", [{ id: "codex", label: "Codex" }]), "Codex");
   assert.equal(agentSlug("Codex CLI"), "codex-cli");
@@ -383,13 +383,13 @@ test("harness defaults keep personal cursor config and force fast off", () => {
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {
   const next = applySettings(DEFAULT_SETTINGS, {
-    defaultAgent: "claude",
+    defaultAgent: "pi",
     defaultModel: "sonnet",
-    binaries: { claude: null },
+    binaries: { pi: null },
   });
-  assert.equal(next.defaultAgent, "claude");
+  assert.equal(next.defaultAgent, "pi");
   assert.equal(next.defaultModel, "sonnet");
-  assert.equal(next.binaries.claude, undefined);
+  assert.equal(next.binaries.pi, undefined);
   assert.equal(next.theme, "dark");
   assert.deepEqual(THEMES, ["dark", "light", "haxor", "midnight", "engine", "pi"]);
   for (const theme of THEMES) {
@@ -462,10 +462,6 @@ test("cli arguments match the headless auto-run contract", () => {
   ]);
   assert.equal(cursorArgs("/home/alice", "chat-1", "gpt", "hello", "ask").includes("--force"), false);
   assert.equal(cursorArgs("/home/alice", "chat-1", "gpt", "hello", "edits").includes("--force"), true);
-  assert.ok(claudeArgs("", "sid", "hello").includes("bypassPermissions"));
-  assert.ok(claudeArgs("", "sid", "hello", "edits").includes("acceptEdits"));
-  assert.ok(claudeArgs("", "sid", "hello", "ask").includes("default"));
-  assert.ok(claudeArgs("", "sid", "hello").includes("--resume"));
   assert.deepEqual(piArgs("erabc123", "", "hello").slice(0, 4), ["--mode", "json", "--session-id", "erabc123"]);
 });
 
@@ -486,8 +482,8 @@ test("pi model list keeps provider and model columns, including ids with slashes
   assert.deepEqual(parsePiModelList("No models available. Run /login or set an API key.\n"), []);
 });
 
-test("claude resume keeps the original session id", () => {
-  const parser = createCliParser("claude", "original-session");
+test("cursor resume keeps the original session id", () => {
+  const parser = createCliParser("cursor", "original-session");
   const events = parser.push({ type: "system", subtype: "init", session_id: "invocation-tag", model: "opus" });
   assert.equal(parser.sessionId, "original-session");
   assert.equal(events[0]?.type, "status");
@@ -527,15 +523,6 @@ test("cursor thinking and connection lines stay in the live stream", () => {
   assert.deepEqual(thinking, [{ type: "thinking", text: "Looking at the file" }]);
   assert.deepEqual(done, []);
   assert.deepEqual(retry, [{ type: "status", text: "connection · retrying" }]);
-});
-
-test("claude thinking deltas are kept", () => {
-  const parser = createCliParser("claude", null);
-  const events = parser.push({
-    type: "stream_event",
-    event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "hmm" } },
-  });
-  assert.deepEqual(events, [{ type: "thinking", text: "hmm" }]);
 });
 
 test("pi keeps streaming after the first turn", () => {
@@ -619,8 +606,8 @@ test("pi flushes an assistant error when the process ends first", () => {
   assert.deepEqual(parser.finish(), []);
 });
 
-test("a fresh claude run records the first session id", () => {
-  const parser = createCliParser("claude", null);
+test("a fresh cursor run records the first session id", () => {
+  const parser = createCliParser("cursor", null);
   parser.push({ type: "system", subtype: "init", session_id: "fresh" });
   assert.equal(parser.sessionId, "fresh");
 });

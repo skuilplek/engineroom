@@ -36,7 +36,6 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
       key.endsWith("_API_KEY") ||
       key.startsWith("CURSOR_") ||
       key.startsWith("ANTHROPIC_") ||
-      key.startsWith("CLAUDE_") ||
       key.startsWith("OPENAI_") ||
       key.startsWith("PI_")
     ) {
@@ -334,33 +333,6 @@ export function cursorArgs(
   );
   if (model) args.push("--model", model);
   args.push("--", prompt);
-  return args;
-}
-
-export function claudeArgs(
-  model: string,
-  sessionId: string | null,
-  prompt: string,
-  permission: PermissionPolicy = "allow",
-): string[] {
-  const mode =
-    permission === "allow"
-      ? "bypassPermissions"
-      : permission === "edits"
-        ? "acceptEdits"
-        : "default";
-  const args = [
-    "-p",
-    prompt,
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--include-partial-messages",
-    "--permission-mode",
-    mode,
-  ];
-  if (model) args.push("--model", model);
-  if (sessionId) args.push("--resume", sessionId);
   return args;
 }
 

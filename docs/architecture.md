@@ -36,11 +36,11 @@ Shared admin state (which agents are offered, the repository catalog, branding) 
 The runner owns:
 
 - Chat transcripts and settings under the user's home
-- The ACP session manager for Cursor, Claude, and custom agents, with CLI fallbacks where ACP is not available
+- The ACP session manager for Cursor and custom agents, with CLI fallbacks where ACP is not available
 - A PTY for the raw terminal (`node-pty`)
 - Repository detection, git clone, and the file manager (list, read, write, rename)
 
-The hub never runs `agent`, `claude`, or `pi`. Those processes are children of the runner, so they see the user's `HOME`, `PATH`, and SSH agent.
+The hub never runs `agent` or `pi`. Those processes are children of the runner, so they see the user's `HOME`, `PATH`, and SSH agent.
 
 ## Security model
 

@@ -31,7 +31,6 @@ export function acpCommand(agent: string, commands: ReadonlyMap<string, string>)
   const custom = commands.get(agent);
   if (custom) return { names: [custom], args: ["acp"] };
   if (agent === "cursor") return { names: ["agent"], args: ["acp"] };
-  if (agent === "claude") return { names: ["claude-agent-acp"], args: [] };
   throw new AcpUnavailable();
 }
 
@@ -56,7 +55,7 @@ export class AcpManager {
   }
 
   supports(agent: AgentId): boolean {
-    return agent === "cursor" || agent === "claude" || this.commands.has(agent);
+    return agent === "cursor" || this.commands.has(agent);
   }
 
   info(chatId: string): { modes: AcpSession["modes"]; models: AcpSession["models"] } | null {

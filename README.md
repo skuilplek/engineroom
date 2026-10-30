@@ -1,6 +1,6 @@
 # Engineroom
 
-Engineroom is a self-hosted web UI for running AI coding agents on a Linux server. People sign in with their Linux account. Each person gets a runner that executes chats, repositories, and a terminal inside that account's home directory. Built-in agents are Cursor (`agent`), Claude (`claude`), and Pi (`pi`). Administrators can also register custom agent commands.
+Engineroom is a self-hosted web UI for running AI coding agents on a Linux server. People sign in with their Linux account. Each person gets a runner that executes chats, repositories, and a terminal inside that account's home directory. Built-in agents are Cursor (`agent`) and Pi (`pi`). Administrators can also register custom agent commands.
 
 This is a multi-user server, not a desktop app. A checkout of this repository may be named `agent-wrapper`; the product, systemd units, and binaries are Engineroom.
 
@@ -41,7 +41,7 @@ sudo ./setup.sh
 
 The script installs Node 24 if needed, builds the web UI, installs the hub and runner, and starts `engineroom-hub.service` and Caddy. Open the site and sign in with a Linux username and password. Chats stay in that home directory.
 
-The account that ran the script (or `ENGINEROOM_ADMIN`, if set) is the administrator. That account can turn agents on or off and add or revoke people from the Admin page. Each person still signs in once to the CLIs (`agent`, `claude`, `pi`) from their own account so those credentials stay in their home.
+The account that ran the script (or `ENGINEROOM_ADMIN`, if set) is the administrator. That account can turn agents on or off and add or revoke people from the Admin page. Each person still signs in once to the CLIs (`agent`, `pi`) from their own account so those credentials stay in their home.
 
 For HTTPS, set the public hostname and run setup again:
 
@@ -55,6 +55,7 @@ Check the hub with `systemctl status engineroom-hub`.
 
 | Topic | Document |
 | --- | --- |
+| Using the site | [docs/guide/README.md](docs/guide/README.md) |
 | Install, update, users, Caddy | [docs/installation.md](docs/installation.md) |
 | Scripts, tests, local hub and UI | [docs/development.md](docs/development.md) |
 | Hub, runner, and security model | [docs/architecture.md](docs/architecture.md) |
@@ -77,6 +78,6 @@ flowchart LR
   Browser --> Caddy
   Caddy --> Hub
   Hub -->|"Unix socket per user"| Runner
-  Runner --> AgentCLIs["agent / claude / pi"]
+  Runner --> AgentCLIs["agent / pi"]
   Runner --> UserHome["User home directory"]
 ```

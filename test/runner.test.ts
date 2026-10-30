@@ -266,8 +266,8 @@ test("a runner turn stays in that home and can be cancelled", async () => {
         return { agentSessionId: "cursor-session" };
       },
     },
-    claude: {
-      id: "claude",
+    pi: {
+      id: "pi",
       async run(ctx) {
         ctx.onEvent({ type: "status", text: "working" });
         await new Promise<void>((resolve) => {
@@ -288,12 +288,6 @@ test("a runner turn stays in that home and can be cancelled", async () => {
         ctx.onEvent({ type: "status", text: "Stopped" });
         ctx.onEvent({ type: "done" });
         return { agentSessionId: ctx.agentSessionId };
-      },
-    },
-    pi: {
-      id: "pi",
-      async run() {
-        throw new Error("not used");
       },
     },
   };
@@ -322,7 +316,7 @@ test("a runner turn stays in that home and can be cancelled", async () => {
     });
     await assert.rejects(outside, /home directory|runner/);
 
-    const hanging = await rpc(sock, { id: "c2", type: "create_chat", agent: "claude" });
+    const hanging = await rpc(sock, { id: "c2", type: "create_chat", agent: "pi" });
     const hangingId = (hanging.result as { id: string }).id;
     await rpc(sock, { id: "s2", type: "send", chatId: hangingId, prompt: "wait" });
     for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -913,7 +907,6 @@ test("a queued prompt can be removed and a model change is announced", async () 
         return { agentSessionId: ctx.agentSessionId };
       },
     },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
@@ -1019,7 +1012,6 @@ test("a queued prompt keeps its attachments for the next turn", async () => {
         return { agentSessionId: "s" };
       },
     },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
@@ -1158,7 +1150,6 @@ test("a project archive is a zip in /tmp and does not follow symlinks", async ()
   const victim = path.join(home, "victim.txt");
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   await mkdir(path.join(repo, "src"), { recursive: true });

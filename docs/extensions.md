@@ -1,6 +1,6 @@
 # Extension packages
 
-A package adds themes, markdown docs, or agent commands without changing the Engineroom checkout. The hub never runs package code. It only reads `engineroom.json`, CSS, and markdown.
+A package adds themes, markdown docs, or agent commands without changing the Engineroom checkout. The hub never runs package code. It only reads `engineroom.json`, CSS, and markdown. An administrator can also add a markdown file from Admin → Docs, with no package. Those files are described in [configuration.md](configuration.md).
 
 ## Locations
 
@@ -44,7 +44,7 @@ Each package directory contains `engineroom.json`:
 }
 ```
 
-`name` and every id are slugs: a lowercase letter, then up to 31 letters, digits, or hyphens. Theme files end in `.css`. Doc files end in `.md`. Paths stay inside the package directory. Theme ids cannot reuse `dark`, `light`, `haxor`, `midnight`, `engine`, or `pi`. Agent ids cannot reuse `cursor`, `claude`, or `pi`.
+`name` and every id are slugs: a lowercase letter, then up to 31 letters, digits, or hyphens. Theme files end in `.css`. Doc files end in `.md`. Paths stay inside the package directory. Theme ids cannot reuse `dark`, `light`, `haxor`, `midnight`, `engine`, or `pi`. Agent ids cannot reuse `cursor` or `pi`.
 
 A package starts disabled. Enabling it fails when one of its theme, doc, or agent ids is already used by a built-in or by another enabled package. An agent entry is only a command name or an absolute path. The package does not install that command.
 

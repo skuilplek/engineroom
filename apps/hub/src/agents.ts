@@ -233,11 +233,12 @@ export function saveAgentFlags(
   delete current.piAuth;
   delete current.piInstall;
   delete current.agentBinaries;
+  delete current.claude;
+  const builtinFlags: Record<string, boolean> = {};
+  for (const agent of AGENTS) builtinFlags[agent] = Boolean(next[agent]);
   writeAgentFile(file, {
     ...current,
-    cursor: Boolean(next.cursor),
-    claude: Boolean(next.claude),
-    pi: Boolean(next.pi),
+    ...builtinFlags,
     rawTerminal: terminal,
     cliImport: imports,
     fileManager: files,
@@ -264,11 +265,12 @@ export function addCustomAgent(file: string, label: string, binary: string): Cus
   const next: CustomAgent = { id, label: name, binary: command, enabled: false };
   const current = readAgentFile(file);
   const flags = loadAgentFlags(file);
+  delete current.claude;
+  const builtinFlags: Record<string, boolean> = {};
+  for (const agent of AGENTS) builtinFlags[agent] = flags[agent] !== false;
   writeAgentFile(file, {
     ...current,
-    cursor: flags.cursor !== false,
-    claude: flags.claude !== false,
-    pi: flags.pi !== false,
+    ...builtinFlags,
     customAgents: [...existing, next],
   });
   return next;
@@ -315,12 +317,9 @@ export async function listAgents(
   });
 }
 
-// Names a launch will actually try. Claude's ACP adapter is a different command
-// from the CLI, and either one means the agent is installed for this account.
+/** The command a launch will try. The agent counts as installed when this resolves. */
 export function detectionNames(agent: { id: string; binary: string }): string[] {
-  const names = [agent.binary];
-  if (agent.id === "claude" && agent.binary === "claude") names.push("claude-agent-acp");
-  return [...new Set(names)];
+  return [agent.binary];
 }
 
 /** Keep an agent only when this account's own command resolved. A system path does not count. */

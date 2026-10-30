@@ -1,8 +1,17 @@
 import { useEffect, useState } from "react";
 import { agentLabel, displayModelName, type AgentOptionChoice, type ExtensionRecord } from "@engineroom/protocol";
-import { listExtensions, readExtensionDoc, type Session } from "../api.ts";
+import { listExtensions, listSiteDocs, readExtensionDoc, readSiteDoc, type Session, type SiteDocLink } from "../api.ts";
 import { Markdown } from "../chat/Markdown.tsx";
 import { useReportError } from "../errors.tsx";
+import adminGuide from "../../../../docs/guide/admin.md?raw";
+import chatsGuide from "../../../../docs/guide/chats.md?raw";
+import customizeGuide from "../../../../docs/guide/customize.md?raw";
+import filesGuide from "../../../../docs/guide/files.md?raw";
+import gitGuide from "../../../../docs/guide/git.md?raw";
+import howGuide from "../../../../docs/guide/how-it-works.md?raw";
+import projectsGuide from "../../../../docs/guide/projects.md?raw";
+import terminalGuide from "../../../../docs/guide/terminal.md?raw";
+import accountGuide from "../../../../docs/guide/your-account.md?raw";
 
 interface DocLink {
   scope: "site" | "user";
@@ -11,26 +20,36 @@ interface DocLink {
   title: string;
 }
 
-type GuideId = "how" | "using" | "enabled" | "parts";
+type GuideId = "how" | "account" | "projects" | "chats" | "git" | "files" | "terminal" | "customize" | "enabled" | "admin";
 
-const GUIDE: { id: GuideId; title: string }[] = [
-  { id: "how", title: "How it works" },
-  { id: "using", title: "Using it" },
+const GUIDE: { id: GuideId; title: string; markdown?: string; admin?: boolean }[] = [
+  { id: "how", title: "How it works", markdown: howGuide },
+  { id: "account", title: "Your account", markdown: accountGuide },
+  { id: "projects", title: "Projects", markdown: projectsGuide },
+  { id: "chats", title: "Chats", markdown: chatsGuide },
+  { id: "git", title: "Git", markdown: gitGuide },
+  { id: "files", title: "Files", markdown: filesGuide },
+  { id: "terminal", title: "Terminal", markdown: terminalGuide },
+  { id: "customize", title: "Customize", markdown: customizeGuide },
   { id: "enabled", title: "What's enabled" },
-  { id: "parts", title: "Parts of the screen" },
+  { id: "admin", title: "Admin", markdown: adminGuide, admin: true },
 ];
 
 type Page =
   | { kind: "guide"; id: GuideId }
-  | { kind: "package"; doc: DocLink };
+  | { kind: "package"; doc: DocLink }
+  | { kind: "site"; id: string };
 
 export function DocsView({ session }: { session: Session }) {
   const [docs, setDocs] = useState<DocLink[]>([]);
+  const [siteDocs, setSiteDocs] = useState<SiteDocLink[]>([]);
   const [page, setPage] = useState<Page>({ kind: "guide", id: "how" });
   const [markdown, setMarkdown] = useState("");
   const [failed, setFailed] = useState(false);
+  const [siteFailed, setSiteFailed] = useState(false);
   const report = useReportError();
   const selected = page.kind === "package" ? page.doc : null;
+  const siteSelected = page.kind === "site" ? siteDocs.find((doc) => doc.id === page.id) : undefined;
 
   useEffect(() => {
     listExtensions().then((listed) => {
@@ -39,15 +58,25 @@ export function DocsView({ session }: { session: Session }) {
       setFailed(true);
       report("Docs", err);
     });
+    listSiteDocs().then((listed) => {
+      setSiteDocs(listed.docs);
+    }).catch((err) => {
+      setSiteFailed(true);
+      report("Docs", err);
+    });
   }, [report]);
 
   useEffect(() => {
-    if (!selected) {
+    if (page.kind === "guide") {
       setMarkdown("");
       return;
     }
     let cancel = false;
-    readExtensionDoc(selected.scope, selected.packageName, selected.id).then((body) => {
+    setMarkdown("");
+    const pending = page.kind === "site"
+      ? readSiteDoc(page.id)
+      : readExtensionDoc(page.doc.scope, page.doc.packageName, page.doc.id);
+    pending.then((body) => {
       if (!cancel) setMarkdown(body.markdown);
     }).catch((err) => {
       if (!cancel) report("Docs", err);
@@ -55,11 +84,14 @@ export function DocsView({ session }: { session: Session }) {
     return () => {
       cancel = true;
     };
-  }, [selected, report]);
+  }, [page, report]);
 
-  const siteDocs = docs.filter((doc) => doc.scope === "site");
+  const packageSite = docs.filter((doc) => doc.scope === "site");
   const userDocs = docs.filter((doc) => doc.scope === "user");
-  const guide = GUIDE.find((item) => page.kind === "guide" && item.id === page.id);
+  const guideItems = GUIDE.filter((item) => !item.admin || session.admin);
+  const guide = page.kind === "guide"
+    ? guideItems.find((item) => item.id === page.id) ?? guideItems[0]
+    : undefined;
 
   return (
     <div className="docs-page">
@@ -71,7 +103,7 @@ export function DocsView({ session }: { session: Session }) {
         <nav className="docs-list" aria-label="Documents">
           <div>
             <p className="section-label">Guide</p>
-            {GUIDE.map((item) => {
+            {guideItems.map((item) => {
               const active = page.kind === "guide" && page.id === item.id;
               return (
                 <button
@@ -85,24 +117,52 @@ export function DocsView({ session }: { session: Session }) {
               );
             })}
           </div>
-          <DocGroup label="Site" docs={siteDocs} selected={selected} onSelect={(doc) => setPage({ kind: "package", doc })} />
+          {(siteDocs.length > 0 || packageSite.length > 0) && (
+            <div>
+              <p className="section-label">Site</p>
+              {siteDocs.map((doc) => {
+                const active = page.kind === "site" && page.id === doc.id;
+                return (
+                  <button
+                    key={`site-${doc.id}`}
+                    className={active ? "docs-link active" : "docs-link"}
+                    type="button"
+                    onClick={() => setPage({ kind: "site", id: doc.id })}
+                  >
+                    {doc.title}
+                  </button>
+                );
+              })}
+              {packageSite.map((doc) => {
+                const active = selected?.scope === doc.scope && selected.packageName === doc.packageName && selected.id === doc.id;
+                return (
+                  <button
+                    key={`${doc.scope}-${doc.packageName}-${doc.id}`}
+                    className={active ? "docs-link active" : "docs-link"}
+                    type="button"
+                    onClick={() => setPage({ kind: "package", doc })}
+                  >
+                    {doc.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <DocGroup label="Yours" docs={userDocs} selected={selected} onSelect={(doc) => setPage({ kind: "package", doc })} />
           {failed && <p className="muted">Package documents could not be loaded.</p>}
+          {siteFailed && <p className="muted">Site documents could not be loaded.</p>}
         </nav>
         <article className="docs-article">
           {guide ? (
             <div className="docs-copy">
               <h3>{guide.title}</h3>
-              {guide.id === "how" && <HowItWorks session={session} />}
-              {guide.id === "using" && <UsingIt session={session} />}
-              {guide.id === "enabled" && <WhatsEnabled session={session} />}
-              {guide.id === "parts" && <Parts session={session} />}
+              {guide.id === "enabled" ? <WhatsEnabled session={session} /> : guide.markdown && <Markdown text={guideBody(guide.markdown)} />}
             </div>
           ) : (
-            <>
-              {selected && <h3>{selected.title}</h3>}
+            <div className="docs-copy">
+              {(selected || siteSelected) && <h3>{selected?.title ?? siteSelected?.title}</h3>}
               {markdown && <Markdown text={markdown} />}
-            </>
+            </div>
           )}
         </article>
       </div>
@@ -110,34 +170,8 @@ export function DocsView({ session }: { session: Session }) {
   );
 }
 
-function HowItWorks({ session }: { session: Session }) {
-  const name = session.appName.trim() || "Engineroom";
-  return (
-    <>
-      <p>You sign in to {name} with your Linux username and password. Chats, project folders, and agent commands run as that account, in {session.home}.</p>
-      <p>The administrator decides which agents and tools this server offers, and which of those your account may use. A reply streams into the chat as the agent works. The modes and models in the composer are the ones that agent reports and that this server offers to you.</p>
-      <p>Customize holds your own defaults: theme, the agent and model a new chat starts with, how tool requests are approved, and whether the file viewer is read-only.</p>
-    </>
-  );
-}
-
-function UsingIt({ session }: { session: Session }) {
-  return (
-    <>
-      <p>Open a project from the sidebar. Its chats are listed under the project name, and Search chats filters that list. The project's start page is where a new chat begins.</p>
-      <p>Choose an agent when more than one is available, then a mode and a model. Write a prompt, attach files when you want them included, and send. You can stop a reply while it is still running. When the agent asks to use a tool, answer that prompt. Customize sets whether those requests ask every time, allow edits and ask for the rest, or allow everything.</p>
-      <p>From a project's start page you can archive it. Archived projects stay in the sidebar under Archived. You can also delete a project from that page by typing its folder name.</p>
-      {session.projectCreate && (
-        <p>New project, in the sidebar, adds a folder in your home. Leave the Git URL blank to start an empty repository, or paste a URL to clone one. With that access you can also set a remote, create and switch branches, and pull or push from the start page.</p>
-      )}
-      {session.projectDownloads && (
-        <p>Download project, on the start page, saves the project folder as a zip.</p>
-      )}
-      {session.cliImport && (
-        <p>Import CLI sessions, in the sidebar, brings in Cursor or Claude conversations that already exist on this account.</p>
-      )}
-    </>
-  );
+function guideBody(markdown: string): string {
+  return markdown.replace(/^# .+\n+/, "");
 }
 
 function WhatsEnabled({ session }: { session: Session }) {
@@ -197,7 +231,7 @@ function WhatsEnabled({ session }: { session: Session }) {
         <OptionRow
           label="CLI import"
           on={session.cliImport}
-          detail="Brings Cursor and Claude conversations that already exist on this account into the sidebar."
+          detail="Brings Cursor conversations that already exist on this account into the sidebar."
         />
         <OptionRow
           label="Read-only files"
@@ -208,24 +242,6 @@ function WhatsEnabled({ session }: { session: Session }) {
         />
       </ul>
     </>
-  );
-}
-
-function Parts({ session }: { session: Session }) {
-  return (
-    <ul className="docs-parts">
-      <li><strong>Project list.</strong> The sidebar lists projects and the chats inside them. Search chats looks through that list. The panel button collapses the sidebar.</li>
-          <li><strong>Chat.</strong> The transcript of one conversation, including the agent's reply, tool commands, and diffs.</li>
-      <li><strong>Composer.</strong> The box where you write a prompt, pick the agent, mode, and model, attach files, and send or stop.</li>
-      <li><strong>Files.</strong> {session.fileManager ? "The file list for the open project. Files on the start page or a chat opens it." : "The file list is turned off for this account."}</li>
-      <li><strong>Editor.</strong> {session.fileEditor ? "Opens a file from that list. You can save changes when the read-only file viewer is off." : "The editor is turned off for this account."}</li>
-      <li><strong>Terminal.</strong> {session.rawTerminal ? "A shell running as your account. Terminal on a chat replaces the transcript until you choose Chat." : "The terminal is turned off for this account."}</li>
-      <li><strong>Customize.</strong> Your theme, command-block style, how many chats stay visible, line wrap, default agent and model, tool approval, and the read-only file viewer. Packages you install for yourself are here too.</li>
-      <li><strong>Docs.</strong> This guide, plus notes from packages that are enabled.</li>
-      {session.admin && (
-        <li><strong>Admin.</strong> The server name, which agents and tools are offered, repository access, and who can sign in.</li>
-      )}
-    </ul>
   );
 }
 

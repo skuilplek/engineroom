@@ -2,7 +2,6 @@ import { agentLabel, createCliParser, type AgentId, type BuiltinAgentId, type Se
 import {
   binaryNames,
   childEnv,
-  claudeArgs,
   cursorArgs,
   parseCliId,
   piArgs,
@@ -32,7 +31,6 @@ export interface AgentDriver {
 export function defaultDrivers(): Record<BuiltinAgentId, AgentDriver> {
   return {
     cursor: { id: "cursor", run: runCursor },
-    claude: { id: "claude", run: runClaude },
     pi: { id: "pi", run: runPi },
   };
 }
@@ -71,18 +69,6 @@ async function runCursor(ctx: DriverContext): Promise<{ agentSessionId: string |
     binary,
     args: cursorArgs(ctx.workspace, sessionId, ctx.model, ctx.prompt, ctx.settings.permission),
     sessionId,
-    ctx,
-    env,
-  });
-}
-
-async function runClaude(ctx: DriverContext): Promise<{ agentSessionId: string | null }> {
-  const { env, binary } = await prepare("claude", ctx);
-  return streamAgent({
-    agent: "claude",
-    binary,
-    args: claudeArgs(ctx.model, ctx.agentSessionId, ctx.prompt, ctx.settings.permission),
-    sessionId: ctx.agentSessionId,
     ctx,
     env,
   });

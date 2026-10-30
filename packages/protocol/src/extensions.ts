@@ -1,6 +1,6 @@
 /** Keep these aligned with THEMES and AGENTS in index.ts. */
 export const EXTENSION_THEME_IDS = ["dark", "light", "haxor", "midnight", "engine", "pi"] as const;
-export const EXTENSION_AGENT_IDS = ["cursor", "claude", "pi"] as const;
+export const EXTENSION_AGENT_IDS = ["cursor", "pi"] as const;
 
 export const EXTENSION_SLUG_RE = /^[a-z][a-z0-9-]{0,31}$/;
 export const MAX_EXTENSION_MANIFEST_BYTES = 64 * 1024;

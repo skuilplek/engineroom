@@ -13,7 +13,6 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { socketPathForUser } from "@engineroom/protocol";
 import "./peercred-helper.ts";
-import { installCommand } from "./command-stub.ts";
 
 test("the hub only opens the signed-in user's runner", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "er-hub-"));
@@ -23,7 +22,6 @@ test("the hub only opens the signed-in user's runner", async () => {
   await mkdir(home);
   await mkdir(socketDir);
   await mkdir(web);
-  await installCommand(home, "claude");
   await writeFile(path.join(web, "index.html"), "<!doctype html><title>Engineroom</title><h1>Sign in</h1>");
   const uid = process.getuid?.() ?? 1000;
   const gid = process.getgid?.() ?? 1000;
@@ -45,7 +43,6 @@ test("the hub only opens the signed-in user's runner", async () => {
         return { agentSessionId: "sess" };
       },
     },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   let bobHits = 0;
@@ -96,7 +93,7 @@ test("the hub only opens the signed-in user's runner", async () => {
     const headers = { Cookie: cookie!, "Content-Type": "application/json" };
     const me = (await (await fetch(`${base}/api/me`, { headers })).json()) as { admin: boolean; agents: string[] };
     assert.equal(me.admin, false);
-    assert.deepEqual(me.agents, ["cursor", "claude", "pi"]);
+    assert.deepEqual(me.agents, ["cursor", "pi"]);
 
     const forged = await fetch(`${base}/api/chats`, { headers: { Cookie: "engineroom_session=alice.forged" } });
     assert.equal(forged.status, 401);
@@ -205,7 +202,6 @@ test("a websocket emits a line before the agent finishes and rejects a foreign o
         return { agentSessionId: "sess" };
       },
     },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -300,7 +296,6 @@ test("logout closes the live socket and a missing chat is not a filesystem error
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -373,7 +368,7 @@ test("a fresh watch shows saved modes and models before ACP starts", async () =>
   const agentsFile = path.join(root, "agents.json");
   await mkdir(home);
   await mkdir(socketDir);
-  await writeFile(agentsFile, JSON.stringify({ cursor: true, claude: false, pi: false }));
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: false }));
   const uid = process.getuid?.() ?? 1000;
   const user: LinuxUser = {
     username: "alice",
@@ -389,7 +384,6 @@ test("a fresh watch shows saved modes and models before ACP starts", async () =>
   });
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({
@@ -485,7 +479,6 @@ test("git identity is read and written for the signed-in user", async () => {
   };
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
-    claude: { id: "claude", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
   };
   const runner = await startRunner({

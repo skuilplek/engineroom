@@ -34,7 +34,6 @@ export function ptyCommand(agent: AgentId, sessionId: string | null, workspace: 
     if (sessionId) args.push("--resume", sessionId);
     return { args };
   }
-  if (agent === "claude") return { args: sessionId ? ["--resume", sessionId] : [] };
   return { args: sessionId ? ["--session-id", sessionId] : [] };
 }
 

@@ -79,7 +79,7 @@ chmod 0644 /etc/engineroom/hub.env
 if [[ ! -f /etc/engineroom/checks.json ]]; then
   cat > /etc/engineroom/checks.json <<'EOF'
 {
-  "commands": ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura", "python3"]
+  "commands": ["node", "git", "caddy", "agent", "pi", "obscura", "python3"]
 }
 EOF
   chmod 0644 /etc/engineroom/checks.json
@@ -88,9 +88,14 @@ node -e '
 const fs = require("fs");
 const file = "/etc/engineroom/checks.json";
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
-if (Array.isArray(data.commands) && !data.commands.includes("python3")) {
-  data.commands.push("python3");
-  fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+if (Array.isArray(data.commands)) {
+  const drop = new Set(["claude", "claude-agent-acp"]);
+  const next = data.commands.filter((command) => !drop.has(command));
+  if (!next.includes("python3")) next.push("python3");
+  if (next.length !== data.commands.length || !data.commands.includes("python3")) {
+    data.commands = next;
+    fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+  }
 }
 '
 
@@ -170,7 +175,7 @@ ${local_note}
 ${admin:-The user who ran this script} is the administrator. That account can
 turn agents on or off and add or revoke people from the Admin page.
 
-Each person still signs in once to the CLIs from that account (agent, claude, pi)
+Each person still signs in once to the CLIs from that account (agent, pi)
 so those credentials stay in their home.
 
 Set ENGINEROOM_HOST=chat.example.com and run this script again for HTTPS.

@@ -10,6 +10,7 @@ import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } fro
 import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
+import { addSiteDoc, assertMarkdownName, listSiteDocs, readSiteDoc, removeSiteDoc, updateSiteDoc } from "./site-docs.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { cleanInterface, cleanSsid, cleanWifiPassword, normalizeHostname, runNetworkCtl } from "./network.ts";
 import { serverOverview } from "./overview.ts";
@@ -464,6 +465,10 @@ export function createHub(options: HubOptions) {
       await adminExtensionRoute(req, res, parts, user);
       return;
     }
+    if (parts[2] === "site-docs") {
+      await adminSiteDocs(req, res, parts);
+      return;
+    }
     if (parts[2] === "overview" && parts.length === 3 && req.method === "GET") {
       const overview = await serverOverview({ configFile: checksFile, commandDirs });
       const resolved = await resolveCommands(
@@ -816,6 +821,17 @@ export function createHub(options: HubOptions) {
     if (parts[1] === "extensions") {
       await extensionRoute(req, res, parts, user);
       return;
+    }
+    if (parts[1] === "site-docs" && req.method === "GET") {
+      const root = siteExtensionRoot(agentsFile);
+      if (parts.length === 2) {
+        sendJson(res, 200, { docs: listSiteDocs(root) });
+        return;
+      }
+      if (parts.length === 3) {
+        sendJson(res, 200, readSiteDoc(root, decodeURIComponent(parts[2] || "")));
+        return;
+      }
     }
     if (parts[1] === "workspaces" && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "list_workspaces" }));
@@ -1573,6 +1589,39 @@ export function createHub(options: HubOptions) {
     throw new Error("not found");
   }
 
+  async function adminSiteDocs(req: IncomingMessage, res: ServerResponse, parts: string[]) {
+    const root = siteExtensionRoot(agentsFile);
+    if (parts.length === 3 && req.method === "POST") {
+      const form = await readUpload(req);
+      const file = form.files[0];
+      if (!file || form.files.length !== 1) throw new Error("invalid document");
+      assertMarkdownName(file.filename);
+      sendJson(res, 201, addSiteDoc(root, form.fields.title ?? "", file.data));
+      return;
+    }
+    if (parts.length !== 4) throw new Error("not found");
+    const id = decodeURIComponent(parts[3] || "");
+    if (req.method === "DELETE") {
+      removeSiteDoc(root, id);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.method !== "POST") throw new Error("not found");
+    const header = req.headers["content-type"];
+    const type = (Array.isArray(header) ? header[0] : header || "").toLowerCase();
+    if (type.includes("multipart/form-data")) {
+      const form = await readUpload(req);
+      const file = form.files[0];
+      if (!file || form.files.length !== 1) throw new Error("invalid document");
+      assertMarkdownName(file.filename);
+      sendJson(res, 200, updateSiteDoc(root, id, form.fields.title ?? "", file.data));
+      return;
+    }
+    const body = (await readJson(req)) as { title?: unknown; markdown?: unknown };
+    if (typeof body.title !== "string" || typeof body.markdown !== "string") throw new Error("invalid document");
+    sendJson(res, 200, updateSiteDoc(root, id, body.title, body.markdown));
+  }
+
   async function adminExtensionRoute(req: IncomingMessage, res: ServerResponse, parts: string[], user: LinuxUser) {
     const root = siteExtensionRoot(agentsFile);
     if (!root) throw new Error("extensions are not configured");
@@ -1829,6 +1878,7 @@ function statusFor(message: string): number {
     message.includes("does not report") ||
     message.includes("not a regular file") ||
     message.includes("too large") ||
+    message.includes("too many documents") ||
     message.includes("cannot edit binary") ||
     message.includes("already exists") ||
     message.includes("built-in agent") ||

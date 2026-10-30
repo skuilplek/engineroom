@@ -773,4 +773,45 @@ export function readExtensionDoc(scope: "site" | "user", name: string, id: strin
   return api<ExtensionDocPage>(`/api/extensions/docs/${scope}/${name}/${id}`);
 }
 
+export interface SiteDocLink {
+  id: string;
+  title: string;
+}
+
+export function listSiteDocs() {
+  return api<{ docs: SiteDocLink[] }>("/api/site-docs");
+}
+
+export function readSiteDoc(id: string) {
+  return api<ExtensionDocPage>(`/api/site-docs/${encodeURIComponent(id)}`);
+}
+
+export async function addSiteDoc(title: string, file: File): Promise<SiteDocLink> {
+  const body = new FormData();
+  body.set("title", title);
+  body.set("file", file, file.name);
+  const response = await fetch("/api/admin/site-docs", { method: "POST", body });
+  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  return (await response.json()) as SiteDocLink;
+}
+
+export async function updateSiteDoc(id: string, title: string, markdown: string, file?: File): Promise<SiteDocLink> {
+  if (file) {
+    const body = new FormData();
+    body.set("title", title);
+    body.set("file", file, file.name);
+    const response = await fetch(`/api/admin/site-docs/${encodeURIComponent(id)}`, { method: "POST", body });
+    if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+    return (await response.json()) as SiteDocLink;
+  }
+  return api<SiteDocLink>(`/api/admin/site-docs/${encodeURIComponent(id)}`, {
+    method: "POST",
+    body: JSON.stringify({ title, markdown }),
+  });
+}
+
+export function removeSiteDoc(id: string) {
+  return api<{ ok: boolean }>(`/api/admin/site-docs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export type { ExtensionDoc };

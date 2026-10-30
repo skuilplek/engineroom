@@ -2892,7 +2892,8 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   .overview-links { grid-template-columns: 1fr; }
   .repos-toggles,
   .repos-visibility,
-  .repos-add { grid-template-columns: 1fr; }
+  .repos-add,
+  .site-doc-add { grid-template-columns: 1fr; }
 }
 @media (max-width: 800px) {
   .settings.admin-view {
@@ -4544,6 +4545,19 @@ html[data-wrap="1"] .code-editor-input {
 .package-source { overflow-wrap: anywhere; }
 .package-contributions { margin: 8px 0; padding-left: 18px; }
 .package-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.site-doc-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.site-doc-add > button { justify-self: start; width: auto; }
+.site-doc-list { display: grid; gap: 16px; }
+.site-doc-markdown {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
 .docs-page { flex: 1; min-height: 0; overflow: auto; padding: 28px 24px 48px; }
 .docs-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; }
 .docs-list { display: flex; flex-direction: column; gap: 16px; }
@@ -4554,6 +4568,11 @@ html[data-wrap="1"] .code-editor-input {
 .docs-copy { max-width: 68ch; }
 .docs-copy p, .docs-copy li { line-height: 1.55; }
 .docs-copy p { margin: 0 0 12px; }
+.docs-copy .markdown h2 { margin: 1.6em 0 0.45em; font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+.docs-copy .markdown h2:first-child { margin-top: 0; }
+.docs-copy .markdown ul, .docs-copy .markdown ol { margin: 0 0 12px; padding-left: 1.2em; }
+.docs-copy .markdown li { margin: 0 0 6px; }
+.docs-copy .markdown li:last-child { margin-bottom: 0; }
 .docs-parts { margin: 0; padding-left: 1.2em; }
 .docs-parts li { margin: 0 0 10px; }
 .docs-options { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; }

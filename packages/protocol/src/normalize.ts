@@ -49,7 +49,6 @@ export function createCliParser(agent: AgentId, knownSessionId: string | null): 
       const msg = value as Record<string, unknown>;
       noteSession(msg.session_id);
       if (agent === "pi") return pushPi(msg, noteSession, () => `tool-${++toolSeq}`, piRun);
-      if (msg.type === "stream_event") return pushClaudeStream(msg.event, textFromAssistant);
       if (msg.type === "assistant") {
         return pushAssistantMessage(msg.message, textFromAssistant, () => {
           toolSeq += 1;
@@ -145,23 +144,6 @@ function pushToolResults(message: unknown): StreamEvent[] {
     });
   }
   return events;
-}
-
-function pushClaudeStream(
-  event: unknown,
-  textFromAssistant: (text: string) => StreamEvent[],
-): StreamEvent[] {
-  if (!event || typeof event !== "object") return [];
-  const body = event as Record<string, unknown>;
-  const delta = body.delta;
-  if (body.type === "content_block_delta" && delta && typeof delta === "object") {
-    const change = delta as Record<string, unknown>;
-    if (change.type === "text_delta" && typeof change.text === "string") return textFromAssistant(change.text);
-    if (change.type === "thinking_delta" && typeof change.thinking === "string" && change.thinking) {
-      return [{ type: "thinking", text: change.thinking }];
-    }
-  }
-  return [];
 }
 
 function pushCursorTool(msg: Record<string, unknown>, nextId: () => string): StreamEvent[] {

@@ -17,7 +17,7 @@ sudo ./setup.sh
 1. Installs `build-essential`, `python3`, `libpam0g-dev`, `curl`, `xz-utils`, Caddy, `avahi-daemon`, `wpasupplicant`, and `iw`.
 2. Installs Node.js 24 under `/usr/local` when the current `node` is older than 24 (linux-x64 tarball from nodejs.org).
 3. Writes `/etc/engineroom/hub.env` with `ENGINEROOM_COOKIE_SECURE` and `ENGINEROOM_ADMIN`.
-4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `claude`, `claude-agent-acp`, `pi`, `obscura`, `python3`).
+4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `pi`, `obscura`, `python3`).
 5. Runs `deploy/install.sh`.
 6. Replaces `/etc/caddy/Caddyfile` with a reverse proxy to the hub. An existing Caddyfile that does not already mention `engineroom` is copied aside first.
 7. Adds the user who invoked `sudo` to the `engineroom-users` group when that account has uid 1000 or higher.
@@ -106,7 +106,7 @@ The administrator named by `ENGINEROOM_ADMIN` in `/etc/engineroom/hub.env` can, 
 - Add, revoke, remove, or set passwords for accounts, and set per-user grants, environment, and policy
 - Set the network name advertised as `<name>.local`, and connect Wi-Fi when a wireless card is present
 
-Agent CLIs are not logged in by Engineroom. Each person signs in to `agent`, `claude`, and `pi` from their own account. Cursor chats use `agent acp`. Claude uses `claude-agent-acp` when it is on `PATH`; otherwise the runner falls back to `claude -p`.
+Agent CLIs are not logged in by Engineroom. Each person signs in to `agent` and `pi` from their own account. Cursor chats use `agent acp`.
 
 ## Reverse proxy
 

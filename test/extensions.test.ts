@@ -42,7 +42,7 @@ const harbor = {
 
 test("builtin theme and agent ids stay reserved for packages", () => {
   assert.deepEqual([...EXTENSION_THEME_IDS], [...THEMES]);
-  assert.deepEqual([...AGENTS], ["cursor", "claude", "pi"]);
+  assert.deepEqual([...AGENTS], ["cursor", "pi"]);
 });
 
 test("manifests reject traversal, builtin ids, and bad sources", () => {

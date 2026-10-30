@@ -3,7 +3,7 @@ import { access, stat, statfs } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const DEFAULT_COMMANDS = ["node", "git", "caddy", "agent", "claude", "claude-agent-acp", "pi", "obscura", "python3"];
+export const DEFAULT_COMMANDS = ["node", "git", "caddy", "agent", "pi", "obscura", "python3"];
 export const SYSTEM_COMMAND_DIRS = ["/usr/local/bin", "/usr/bin", "/bin"];
 const DISK_PATHS = ["/", "/var/lib/engineroom"];
 const COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;

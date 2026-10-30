@@ -525,7 +525,6 @@ function ImportList({
       <div className="row">
         <select aria-label="Agent to import" value={agent} onChange={(event) => onAgent(event.target.value as AgentId)}>
           <option value="cursor">{agentLabel("cursor")}</option>
-          <option value="claude">{agentLabel("claude")}</option>
         </select>
         <button type="button" onClick={onClose}>Close</button>
       </div>

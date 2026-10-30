@@ -72,4 +72,4 @@ systemctl enable --now engineroom-hub.service
 
 echo "Hub service installed. It starts at boot with: systemctl enable --now engineroom-hub.service"
 echo "node-pty compiles during npm ci and needs python3, make, and g++."
-echo "Cursor chats use 'agent acp'. Claude uses 'claude-agent-acp' on PATH when it is installed; otherwise the runner falls back to claude -p."
+echo "Cursor chats use 'agent acp'."
