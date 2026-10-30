@@ -623,7 +623,17 @@ export function createHub(options: HubOptions) {
     if (parts[2] === "users" && parts.length === 4 && req.method === "GET") {
       const target = managedUser(parts[3] || "");
       const access = (await call(target, { type: "get_access" })) as UserAccess;
-      sendJson(res, 200, { username: target.username, home: target.home, uid: target.uid, ...access });
+      const personal = await userPackages(target);
+      const sitePackages = await siteExtensionRecords(agentsFile);
+      const themes = enabledThemes([...personal, ...sitePackages]);
+      sendJson(res, 200, {
+        username: target.username,
+        home: target.home,
+        uid: target.uid,
+        ...access,
+        settings: { ...access.settings, theme: resolveTheme(access.settings.theme, themes.map((theme) => theme.id)) },
+        themes,
+      });
       return;
     }
     if (parts[2] === "users" && parts.length === 5) {
@@ -695,6 +705,19 @@ export function createHub(options: HubOptions) {
       if (action === "env" && req.method === "PUT") {
         const body = (await readJson(req)) as { entries?: unknown };
         sendJson(res, 200, await call(target, { type: "put_env", entries: parseEnvEntries(body.entries) }));
+        return;
+      }
+      if (action === "git-identity" && req.method === "GET") {
+        sendJson(res, 200, await call(target, { type: "git_identity_get" }));
+        return;
+      }
+      if (action === "git-identity" && req.method === "PUT") {
+        const body = (await readJson(req)) as { name?: unknown; email?: unknown };
+        sendJson(res, 200, await call(target, {
+          type: "git_identity_set",
+          name: parseGitName(body.name),
+          email: parseGitEmail(body.email),
+        }));
         return;
       }
       if (action === "password" && req.method === "POST") {

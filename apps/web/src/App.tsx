@@ -163,6 +163,7 @@ function Shell({
   });
   const narrow = useNarrow();
   const fullscreen = useFullscreen();
+  const [identityRevision, setIdentityRevision] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
@@ -457,6 +458,7 @@ function Shell({
         onDocs={() => openView("docs")}
         onErrors={() => openView("errors")}
         onAdmin={() => openView("admin")}
+        identityRevision={identityRevision}
         onLogout={() => {
           stopAgentSocket();
           clearProjectDownload();
@@ -537,6 +539,7 @@ function Shell({
               me().then(onSession).catch(() => undefined);
               refresh().catch(() => undefined);
             }}
+            onIdentity={() => setIdentityRevision((current) => current + 1)}
           />
         )}
         {checkingChat && view === "start" && (

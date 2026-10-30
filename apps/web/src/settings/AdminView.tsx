@@ -4,15 +4,19 @@ import {
   agentLabel,
   DEFAULT_FILE_VISIBILITY,
   displayModelName,
+  isCommandBlockStyle,
+  isTheme,
   type AgentId,
   type AgentName,
   type AgentOptionChoice,
   type CatalogEntry,
   type ChatDetail,
   type ChatMeta,
-  type EnvEntry,
-  type FileVisibility,
   type CommandBlockStyle,
+  type EnvEntry,
+  type ExtensionTheme,
+  type FileVisibility,
+  type GitIdentity,
   type Settings,
   type UserPolicy,
 } from "@engineroom/protocol";
@@ -31,6 +35,7 @@ import {
   getUserAccess,
   getUserChat,
   getUserCursorCommands,
+  getUserGitIdentity,
   listAccounts,
   listAdminAgents,
   listCatalog,
@@ -43,6 +48,7 @@ import {
   saveBranding,
   saveUserCursorCommands,
   saveUserEnv,
+  saveUserGitIdentity,
   saveUserGrants,
   saveUserPolicy,
   saveUserSettings,
@@ -61,6 +67,8 @@ import { CopyResponse } from "../chat/CopyResponse.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
 import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
+import { IconSliders } from "../icons.tsx";
+import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
 type AdminTab = "overview" | "server" | "agents" | "packages" | "repositories" | "users";
 
@@ -99,6 +107,7 @@ export function AdminView({
   onAgents,
   onBranding,
   onAccess,
+  onIdentity,
 }: {
   session: Session;
   onAgents: (
@@ -113,6 +122,7 @@ export function AdminView({
   ) => void;
   onBranding: (appName: string) => void;
   onAccess: () => void;
+  onIdentity: () => void;
 }) {
   const [flags, setFlags] = useState<Record<string, boolean>>(() => agentFlags(session.agents));
   const [savedOffer, setSavedOffer] = useState<OfferSnapshot>(() => sessionOffer(session));
@@ -1004,77 +1014,290 @@ export function AdminView({
           </div>
         )}
 
-        {tab === "users" && (
-          <div className="admin-people-layout">
-            <section className="admin-pane" aria-label="Users">
-              <h2>Users</h2>
-              <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
-              <div className="accounts">
-                {accounts.map((account) => (
-                  <div className={account.username === selected ? "account active" : "account"} key={account.username}>
-                    <button className="account-pick" type="button" onClick={() => setSelected(account.username)} aria-pressed={account.username === selected}>
-                      <strong>{account.username}</strong>
-                      <span>{account.home}</span>
-                    </button>
-                    {account.username === session.username && <span className="muted">Administrator</span>}
-                  </div>
-                ))}
-                {accounts.length === 0 && <p className="muted">No accounts yet.</p>}
+        {tab === "users" && !selected && (
+          <section className="admin-pane" aria-label="Users">
+            <h2>Users</h2>
+            <p className="muted">Accounts on this machine. Removing one deletes the Linux user and keeps their home directory.</p>
+            {accounts.length === 0 ? (
+              <p className="muted">No accounts yet.</p>
+            ) : (
+              <div className="repos-table-wrap">
+                <table className="repos-table users-table">
+                  <thead>
+                    <tr>
+                      <th>Username</th>
+                      <th>Home</th>
+                      <th>Role</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.map((account) => (
+                      <tr key={account.username}>
+                        <td>{account.username}</td>
+                        <td>{account.home}</td>
+                        <td>{account.username === session.username ? "Administrator" : "User"}</td>
+                        <td>
+                          <button
+                            className="icon-btn"
+                            type="button"
+                            title={`Manage ${account.username}`}
+                            aria-label={`Manage ${account.username}`}
+                            onClick={() => {
+                              setError("");
+                              setSaved("");
+                              setSelected(account.username);
+                            }}
+                          >
+                            <IconSliders />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <form onSubmit={(event) => void addUser(event)}>
-                <h3>Add a user</h3>
-                <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
-                <label>
-                  Username
-                  <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
-                </label>
-                <label>
-                  Password
-                  <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-                </label>
-                <button className="primary" type="submit" disabled={busy}>Add user</button>
-              </form>
-            </section>
-            <section className="admin-pane admin-detail" aria-label="User">
-              {selected ? (
-                <PersonPanel
-                  key={selected}
-                  username={selected}
-                  self={selected === session.username}
-                  globalAgents={inventory.length > 0 ? inventory.filter((agent) => agent.enabled).map((agent) => agent.id) : session.agents}
-                  globalTerminal={session.rawTerminal}
-                  globalFileManager={session.fileManagerOffered ?? false}
-                  globalFileEditor={fileEditor}
-                  globalFileDownload={fileDownload}
-                  globalFileUpload={fileUpload}
-                  globalProjectCreate={session.projectCreate}
-                  agentOptions={agentOptions}
-                  agentNames={names}
-                  catalog={catalog}
-                  commandBlockStyle={session.commandBlockStyle ?? "prompt"}
-                  busy={busy}
-                  onBusy={setBusy}
-                  onError={setError}
-                  onNote={setSaved}
-                  onRemoved={async () => {
-                    setSelected("");
-                    await refreshUsers();
-                  }}
-                  onSaved={() => {
-                    if (selected === session.username) onAccess();
-                  }}
-                />
-              ) : (
-                <div className="admin-empty">
-                  <h2>No user selected</h2>
-                  <p className="muted">Choose a user to set their agents, modes, models, terminal, repositories, environment, and password, and to read their conversations.</p>
-                </div>
-              )}
-            </section>
-          </div>
+            )}
+            <form onSubmit={(event) => void addUser(event)}>
+              <h3>Add a user</h3>
+              <p className="muted">A new name creates a Linux account. An existing account is granted access and given this password.</p>
+              <label>
+                Username
+                <input autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} required />
+              </label>
+              <label>
+                Password
+                <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+              </label>
+              <button className="primary" type="submit" disabled={busy}>Add user</button>
+            </form>
+          </section>
+        )}
+
+        {tab === "users" && selected && (
+          <section className="admin-pane admin-detail" aria-label="User">
+            <button className="ghost" type="button" onClick={() => { setError(""); setSaved(""); setSelected(""); }}>All users</button>
+            <PersonPanel
+              key={selected}
+              username={selected}
+              self={selected === session.username}
+              globalAgents={inventory.length > 0 ? inventory.filter((agent) => agent.enabled).map((agent) => agent.id) : session.agents}
+              globalTerminal={session.rawTerminal}
+              globalFileManager={session.fileManagerOffered ?? false}
+              globalFileEditor={fileEditor}
+              globalFileDownload={fileDownload}
+              globalFileUpload={fileUpload}
+              globalProjectCreate={session.projectCreate}
+              agentOptions={agentOptions}
+              agentNames={names}
+              catalog={catalog}
+              commandBlockStyle={session.commandBlockStyle ?? "prompt"}
+              busy={busy}
+              onBusy={setBusy}
+              onError={setError}
+              onNote={setSaved}
+              onRemoved={async () => {
+                setSelected("");
+                await refreshUsers();
+              }}
+              onSaved={() => {
+                if (selected === session.username) onAccess();
+              }}
+              onIdentity={onIdentity}
+            />
+          </section>
         )}
       </div>
     </div>
+  );
+}
+
+const COMMAND_STYLES: { id: CommandBlockStyle; name: string }[] = [
+  { id: "prompt", name: "Prompt" },
+  { id: "window", name: "Window" },
+];
+
+function presentPersonSettings(settings: Settings, themes: ExtensionTheme[]): Settings {
+  const installed = themes.map((theme) => theme.id);
+  return {
+    ...settings,
+    theme: normalizeTheme(settings.theme, installed),
+    commandBlockStyle: isCommandBlockStyle(settings.commandBlockStyle) ? settings.commandBlockStyle : "prompt",
+    wrapText: Boolean(settings.wrapText),
+    visibleChats: normalizeVisibleChats(settings.visibleChats),
+  };
+}
+
+function normalizeVisibleChats(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 100) return 5;
+  return value;
+}
+
+function UserPreferences({
+  settings,
+  themes,
+  fileEditorAllowed,
+  onChange,
+}: {
+  settings: Settings;
+  themes: ExtensionTheme[];
+  fileEditorAllowed: boolean;
+  onChange: (settings: Settings) => void;
+}) {
+  const installedIds = themes.map((theme) => theme.id).filter((id) => !isTheme(id));
+  const themeCards = [
+    ...THEME_CATALOG,
+    ...themes.filter((theme) => !isTheme(theme.id)).map((theme) => ({
+      id: theme.id,
+      name: theme.name,
+      tagline: theme.tagline,
+      tier: theme.tier,
+      swatches: theme.swatches,
+    })),
+  ];
+  const activeTheme = normalizeTheme(settings.theme, installedIds);
+  return (
+    <>
+      <h3>Appearance</h3>
+      <p className="muted">Theme, command blocks, how many chats stay open, and whether long lines wrap.</p>
+      <div className="theme-grid" role="radiogroup" aria-label="Theme">
+        {themeCards.map((item) => {
+          const picked = activeTheme === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={picked}
+              className={picked ? `theme-card theme-card-${item.id} active` : `theme-card theme-card-${item.id}`}
+              onClick={() => onChange({ ...settings, theme: item.id })}
+            >
+              <div
+                className="theme-preview"
+                style={{ background: item.swatches.bg, borderColor: item.swatches.border }}
+                aria-hidden="true"
+              >
+                <div
+                  className="theme-preview-sidebar"
+                  style={{ background: item.swatches.sidebar, borderRightColor: item.swatches.border }}
+                >
+                  <span className="theme-preview-dot" style={{ background: item.swatches.accent }} />
+                  <span className="theme-preview-bar" style={{ background: item.swatches.ink, opacity: 0.7 }} />
+                  <span className="theme-preview-bar short" style={{ background: item.swatches.ink, opacity: 0.35 }} />
+                </div>
+                <div className="theme-preview-stage">
+                  <div
+                    className="theme-preview-hud"
+                    style={{
+                      background: item.swatches.panel,
+                      borderColor: item.swatches.border,
+                      boxShadow: item.tier === "elaborate" ? `0 0 10px -2px ${item.swatches.accent}` : "none",
+                    }}
+                  >
+                    <span className="theme-preview-title" style={{ background: item.swatches.ink }} />
+                    <span className="theme-preview-accent" style={{ background: item.swatches.accent }} />
+                  </div>
+                </div>
+              </div>
+              <div className="theme-meta">
+                <div className="theme-title-row">
+                  <strong>{item.name}</strong>
+                  <span className={item.tier === "elaborate" ? "theme-badge elaborate" : "theme-badge"}>
+                    {"default" in item && item.default ? "Default" : item.tier}
+                  </span>
+                </div>
+                <span className="theme-tagline">{item.tagline}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <h3>Command blocks</h3>
+      <p className="muted">Choose how tool commands appear in chat.</p>
+      <div className="command-style-grid" role="radiogroup" aria-label="Command blocks">
+        {COMMAND_STYLES.map((item) => {
+          const picked = settings.commandBlockStyle === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="radio"
+              aria-checked={picked}
+              className={picked ? "command-style-card active" : "command-style-card"}
+              onClick={() => onChange({ ...settings, commandBlockStyle: item.id })}
+            >
+              {item.id === "prompt" ? <PromptPreview /> : <WindowPreview />}
+              <span className="command-style-name">
+                <strong>{item.name}</strong>
+                {item.id === "prompt" ? <span className="theme-badge">Default</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <label>
+        Chats shown per project
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={settings.visibleChats}
+          onChange={(event) => {
+            const visibleChats = Number(event.target.value);
+            if (!Number.isInteger(visibleChats) || visibleChats < 0 || visibleChats > 100) return;
+            onChange({ ...settings, visibleChats });
+          }}
+        />
+      </label>
+      <p className="muted">Older chats stay collapsed. Use 0 to show every chat.</p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.wrapText}
+          onChange={(event) => onChange({ ...settings, wrapText: event.target.checked })}
+        />
+        Wrap long lines
+      </label>
+      <p className="muted">Wrap file text, diffs, and code blocks instead of scrolling sideways.</p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!fileEditorAllowed || Boolean(settings.filesReadOnly)}
+          disabled={!fileEditorAllowed}
+          onChange={(event) => onChange({ ...settings, filesReadOnly: event.target.checked })}
+        />
+        Read-only file viewer
+      </label>
+      {!fileEditorAllowed && (
+        <p className="muted">File editing is off for this person, so the viewer stays read-only.</p>
+      )}
+    </>
+  );
+}
+
+function PromptPreview() {
+  return (
+    <span className="command-preview command-preview-prompt" aria-hidden="true">
+      <span className="command-preview-head"><span>&gt;_</span> git status</span>
+      <span className="command-preview-out">clean</span>
+    </span>
+  );
+}
+
+function WindowPreview() {
+  return (
+    <span className="command-preview command-preview-window" aria-hidden="true">
+      <span className="command-preview-bar">
+        <span className="command-preview-lights">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="command-preview-title">terminal</span>
+      </span>
+      <span className="command-preview-out">$ git status</span>
+    </span>
   );
 }
 
@@ -1098,6 +1321,7 @@ function PersonPanel({
   onNote,
   onRemoved,
   onSaved,
+  onIdentity,
 }: {
   username: string;
   self: boolean;
@@ -1118,11 +1342,16 @@ function PersonPanel({
   onNote: (value: string) => void;
   onRemoved: () => Promise<void>;
   onSaved: () => void;
+  onIdentity: () => void;
 }) {
   const [policy, setPolicy] = useState<UserPolicy | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [themes, setThemes] = useState<ExtensionTheme[]>([]);
   const [grants, setGrants] = useState<Set<string>>(new Set());
   const [env, setEnv] = useState<EnvEntry[] | null>(null);
+  const [identity, setIdentity] = useState<GitIdentity | null>(null);
+  const [gitName, setGitName] = useState("");
+  const [gitEmail, setGitEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -1140,18 +1369,24 @@ function PersonPanel({
   useEffect(() => {
     const generation = ++loadGeneration.current;
     let cancel = false;
+    const gitPromise = getUserGitIdentity(username).catch((err: unknown) => {
+      if (!cancel && generation === loadGeneration.current) onErrorRef.current(message(err));
+      return { name: "", email: "" };
+    });
     getUserAccess(username).then(async (bundle) => {
       if (cancel || generation !== loadGeneration.current) return;
       const offered = globalAgentsRef.current;
       const allowed = new Set(offered);
       const agents = bundle.policy.agents.filter((agent) => allowed.has(agent));
       const chosen = agents.length > 0 ? agents : offered.slice(0, 1);
+      const listedThemes = bundle.themes ?? [];
+      setThemes(listedThemes);
       setPolicy({ ...bundle.policy, agents: chosen });
       const fallback = chosen[0] || bundle.settings.defaultAgent;
-      setSettings({
+      setSettings(presentPersonSettings({
         ...bundle.settings,
         defaultAgent: chosen.includes(bundle.settings.defaultAgent) ? bundle.settings.defaultAgent : fallback,
-      });
+      }, listedThemes));
       const listed = catalogRef.current;
       setGrants(new Set(bundle.grants.filter((id) => listed.some((entry) => entry.id === id))));
       setEnv(bundle.env);
@@ -1168,6 +1403,11 @@ function PersonPanel({
       } else if (!cancel && generation === loadGeneration.current) {
         setCommands(null);
       }
+      const git = await gitPromise;
+      if (cancel || generation !== loadGeneration.current) return;
+      setIdentity(git);
+      setGitName(git.name);
+      setGitEmail(git.email);
     }).catch((err) => {
       if (!cancel && generation === loadGeneration.current) onErrorRef.current(message(err));
     });
@@ -1253,8 +1493,13 @@ function PersonPanel({
         defaultAgent: settings.defaultAgent,
         defaultModel,
         permission: settings.permission,
+        theme: settings.theme,
+        commandBlockStyle: settings.commandBlockStyle,
+        filesReadOnly: Boolean(settings.filesReadOnly),
+        wrapText: Boolean(settings.wrapText),
+        visibleChats: normalizeVisibleChats(settings.visibleChats),
       });
-      setSettings(savedSettings);
+      setSettings(presentPersonSettings({ ...savedSettings, defaultModel }, themes));
       const savedGrants = await saveUserGrants(username, [...grants]);
       setGrants(new Set(savedGrants.grants));
       onNote("Access saved");
@@ -1325,6 +1570,25 @@ function PersonPanel({
     }
   }
 
+  async function saveGit(event: FormEvent) {
+    event.preventDefault();
+    onBusy(true);
+    onNote("");
+    onError("");
+    try {
+      const saved = await saveUserGitIdentity(username, { name: gitName.trim(), email: gitEmail.trim() });
+      setIdentity(saved);
+      setGitName(saved.name);
+      setGitEmail(saved.email);
+      onNote("Git identity saved");
+      if (self) onIdentity();
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      onBusy(false);
+    }
+  }
+
   async function remove() {
     onBusy(true);
     onNote("");
@@ -1341,7 +1605,7 @@ function PersonPanel({
     }
   }
 
-  if (!policy || !settings || !env) {
+  if (!policy || !settings || !env || !identity) {
     return (
       <div className="person-panel" aria-busy="true">
         <h2>{username}</h2>
@@ -1354,12 +1618,13 @@ function PersonPanel({
     );
   }
   const allowed = policy.agents.filter((agent) => globalAgents.includes(agent));
+  const fileEditorAllowed = globalFileEditor && policy.fileEditor !== false;
   return (
     <div className="person-panel">
       <h2>{username}</h2>
       <UserConversations username={username} agentNames={agentNames} commandBlockStyle={commandBlockStyle} />
       <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, appearance, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
         <div className="admin-checks">
           {globalAgents.map((agent) => (
             <label className="check" key={agent}>
@@ -1484,6 +1749,12 @@ function PersonPanel({
             <option value="allow">Allow everything</option>
           </select>
         </label>
+        <UserPreferences
+          settings={settings}
+          themes={themes}
+          fileEditorAllowed={fileEditorAllowed}
+          onChange={setSettings}
+        />
         <div className="repo-admin">
           {catalog.map((entry) => (
             <label className="check repo-choice" key={entry.id}>
@@ -1534,6 +1805,20 @@ function PersonPanel({
           <button className="ghost" type="button" onClick={() => setEnv([...env, { key: "", value: "" }])}>Add variable</button>
           <button className="primary" type="submit" disabled={busy}>Save environment</button>
         </div>
+      </form>
+
+      <form onSubmit={(event) => void saveGit(event)}>
+        <h3>Git identity</h3>
+        <p className="muted">Saved as their global git name and email. This does not rename the Linux account.</p>
+        <label>
+          Name
+          <input autoComplete="name" value={gitName} onChange={(event) => setGitName(event.target.value)} required />
+        </label>
+        <label>
+          Email
+          <input type="email" autoComplete="email" value={gitEmail} onChange={(event) => setGitEmail(event.target.value)} required />
+        </label>
+        <button className="primary" type="submit" disabled={busy}>Save git identity</button>
       </form>
 
       {!self && (

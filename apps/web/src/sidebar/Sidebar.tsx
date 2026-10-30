@@ -30,6 +30,7 @@ export function Sidebar({
   onImported,
   fullscreen,
   inert,
+  identityRevision = 0,
 }: {
   session: { username: string; admin: boolean; cliImport?: boolean; appName: string; projectCreate?: boolean; visibleChats?: number };
   chats: ChatMeta[];
@@ -52,6 +53,7 @@ export function Sidebar({
   onImported: (chat: ChatMeta) => void;
   fullscreen: { active: boolean; enabled: boolean; toggle: () => void };
   inert?: boolean;
+  identityRevision?: number;
 }) {
   const [query, setQuery] = useState("");
   const [sessions, setSessions] = useState<ListedSession[] | null>(null);
@@ -197,6 +199,7 @@ export function Sidebar({
         onErrors={onErrors}
         onAdmin={onAdmin}
         onLogout={onLogout}
+        identityRevision={identityRevision}
       />
     </aside>
   );
@@ -213,6 +216,7 @@ function UserMenu({
   onErrors,
   onAdmin,
   onLogout,
+  identityRevision,
 }: {
   username: string;
   admin: boolean;
@@ -224,6 +228,7 @@ function UserMenu({
   onErrors: () => void;
   onAdmin: () => void;
   onLogout: () => void;
+  identityRevision: number;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -239,14 +244,18 @@ function UserMenu({
   }
   const displayName = identity?.name || username;
   const complete = Boolean(identity?.name && identity?.email);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
 
   useEffect(() => {
     let active = true;
     getGitIdentity().then((next) => {
       if (!active) return;
       setIdentity(next);
-      setDraftName(next.name);
-      setDraftEmail(next.email);
+      if (!editingRef.current) {
+        setDraftName(next.name);
+        setDraftEmail(next.email);
+      }
     }).catch((err) => {
       if (active) setError(message(err));
     }).finally(() => {
@@ -255,7 +264,7 @@ function UserMenu({
     return () => {
       active = false;
     };
-  }, []);
+  }, [identityRevision]);
 
   useEffect(() => {
     if (!open) return;

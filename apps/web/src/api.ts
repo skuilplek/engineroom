@@ -99,6 +99,7 @@ export interface UserBundle extends UserAccess {
   username: string;
   home: string;
   uid: number;
+  themes?: ExtensionTheme[];
 }
 
 export class ApiError extends Error {
@@ -510,6 +511,17 @@ export function changePassword(username: string, password: string) {
   return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/password`, {
     method: "POST",
     body: JSON.stringify({ password }),
+  });
+}
+
+export function getUserGitIdentity(username: string) {
+  return api<GitIdentity>(`/api/admin/users/${encodeURIComponent(username)}/git-identity`);
+}
+
+export function saveUserGitIdentity(username: string, identity: GitIdentity) {
+  return api<GitIdentity>(`/api/admin/users/${encodeURIComponent(username)}/git-identity`, {
+    method: "PUT",
+    body: JSON.stringify(identity),
   });
 }
 

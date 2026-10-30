@@ -235,6 +235,69 @@ test("the administrator sets agents and accounts", async () => {
     const carolCookie = (carol.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     const denied = await fetch(`${base}/api/admin/users`, { headers: { Cookie: carolCookie! } });
     assert.equal(denied.status, 403);
+
+    const carolAccess = await fetch(`${base}/api/admin/users/carol`, { headers });
+    assert.equal(carolAccess.status, 200);
+    assert.ok(Array.isArray(((await carolAccess.json()) as { themes?: unknown }).themes));
+
+    const themed = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        theme: "light",
+        wrapText: true,
+        visibleChats: 3,
+        commandBlockStyle: "window",
+        filesReadOnly: true,
+      }),
+    });
+    assert.equal(themed.status, 200);
+    const themedBody = (await themed.json()) as {
+      theme: string;
+      wrapText: boolean;
+      visibleChats: number;
+      commandBlockStyle: string;
+      filesReadOnly: boolean;
+    };
+    assert.equal(themedBody.theme, "light");
+    assert.equal(themedBody.wrapText, true);
+    assert.equal(themedBody.visibleChats, 3);
+    assert.equal(themedBody.commandBlockStyle, "window");
+    assert.equal(themedBody.filesReadOnly, true);
+
+    const blankIdentity = await fetch(`${base}/api/admin/users/carol/git-identity`, { headers });
+    assert.equal(blankIdentity.status, 200);
+    assert.deepEqual(await blankIdentity.json(), { name: "", email: "" });
+    const badEmail = await fetch(`${base}/api/admin/users/carol/git-identity`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name: "Carol", email: "not-an-email" }),
+    });
+    assert.equal(badEmail.status, 400);
+    const savedIdentity = await fetch(`${base}/api/admin/users/carol/git-identity`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name: "  Carol  ", email: "carol@example.com" }),
+    });
+    assert.equal(savedIdentity.status, 200);
+    assert.deepEqual(await savedIdentity.json(), { name: "Carol", email: "carol@example.com" });
+    const carolIdentity = await fetch(`${base}/api/git-identity`, { headers: { Cookie: carolCookie! } });
+    assert.equal(carolIdentity.status, 200);
+    assert.deepEqual(await carolIdentity.json(), { name: "Carol", email: "carol@example.com" });
+    const deniedIdentity = await fetch(`${base}/api/admin/users/carol/git-identity`, {
+      method: "PUT",
+      headers: { Cookie: carolCookie!, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Nope", email: "nope@example.com" }),
+    });
+    assert.equal(deniedIdentity.status, 403);
+    const ownIdentity = await fetch(`${base}/api/admin/users/alice/git-identity`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name: "Alice", email: "alice@example.com" }),
+    });
+    assert.equal(ownIdentity.status, 200);
+    const aliceIdentity = await fetch(`${base}/api/git-identity`, { headers });
+    assert.deepEqual(await aliceIdentity.json(), { name: "Alice", email: "alice@example.com" });
     const deniedName = await fetch(`${base}/api/admin/branding`, {
       method: "PUT",
       headers: { Cookie: carolCookie!, "Content-Type": "application/json" },
