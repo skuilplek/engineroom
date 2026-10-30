@@ -12,6 +12,8 @@ import type {
   PromptAttachment,
   RepoFileContent,
   RepoFilesResult,
+  RepoSearchOptions,
+  RepoSearchResult,
   RepositoryEntry,
   CommandBlockStyle,
   Settings,
@@ -292,6 +294,15 @@ function gitFileAction(workspace: string, action: "stage" | "unstage" | "discard
 
 export function listRepoFiles(workspace: string) {
   return api<RepoFilesResult>(`/api/repositories/files?workspace=${encodeURIComponent(workspace)}`);
+}
+
+export function searchRepoFiles(workspace: string, options: RepoSearchOptions) {
+  const params = new URLSearchParams({ workspace, query: options.query });
+  if (options.caseSensitive) params.set("caseSensitive", "true");
+  if (options.regex) params.set("regex", "true");
+  if (options.wholeWord) params.set("wholeWord", "true");
+  if (options.maxResults != null) params.set("maxResults", String(options.maxResults));
+  return api<RepoSearchResult>(`/api/repositories/search?${params.toString()}`);
 }
 
 export function readRepoFile(workspace: string, filePath: string) {

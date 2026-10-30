@@ -148,7 +148,7 @@ else
     name="$(hostname -s 2>/dev/null || hostname)"
   fi
   url="http://${name}.local/"
-  local_note="On the local network that name is advertised by Avahi, the same way a Raspberry Pi answers to raspberrypi.local."
+  local_note="On the local network that name is advertised by Avahi"
 fi
 
 cat <<EOF

@@ -125,7 +125,7 @@ export function ServerConfig() {
         <div className="agents-card-head">
           <h2>Network name</h2>
           <p className="muted">
-            Other computers on this network can open <strong className="server-address">{address}</strong>. The name is advertised the same way a Raspberry Pi answers to raspberrypi.local.
+            Other computers on this network can open <strong className="server-address">{address}</strong>.
           </p>
         </div>
         {!status && <p className="muted">{checked ? "This machine could not be checked." : "Checking this machine."}</p>}

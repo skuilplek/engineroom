@@ -257,6 +257,36 @@ export interface RepoFileContent {
   size: number;
 }
 
+export interface RepoSearchOptions {
+  query: string;
+  caseSensitive?: boolean;
+  regex?: boolean;
+  wholeWord?: boolean;
+  maxResults?: number;
+}
+
+export interface RepoSearchMatch {
+  path: string;
+  /** 1-based line number. */
+  line: number;
+  /** 1-based column number. */
+  column: number;
+  /** Line text, shortened around the match when needed. */
+  text: string;
+  /** The matched text, shortened when the match is very long. */
+  matchText: string;
+  /** Offset of the match inside `text`. */
+  matchStart: number;
+}
+
+export interface RepoSearchResult {
+  query: string;
+  matches: RepoSearchMatch[];
+  truncated: boolean;
+  filesSearched: number;
+  filesSkipped: number;
+}
+
 /** Largest file the file manager will download or upload. */
 export const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
 
@@ -487,6 +517,12 @@ export type RunnerRequest =
   | { id: string; type: "read_extension_theme"; themeId: string }
   | { id: string; type: "read_extension_doc"; name: string; docId: string }
   | { id: string; type: "list_repo_files"; workspace: string; visibility?: FileVisibility }
+  | ({
+      id: string;
+      type: "search_repo_files";
+      workspace: string;
+      visibility?: FileVisibility;
+    } & RepoSearchOptions)
   | { id: string; type: "read_repo_file"; workspace: string; path: string; visibility?: FileVisibility }
   | { id: string; type: "read_home_file"; path: string }
   | { id: string; type: "write_repo_file"; workspace: string; path: string; content: string; visibility?: FileVisibility }
@@ -969,6 +1005,32 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         id: body.id,
         type: "list_repo_files",
         workspace: workspace.trim(),
+        ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
+      };
+    }
+    case "search_repo_files": {
+      const workspace = optionalString(body.workspace, "workspace", 4096);
+      if (!workspace?.trim()) throw new Error("invalid workspace");
+      if (typeof body.query !== "string") throw new Error("invalid search query");
+      const query = body.query.trim();
+      if (!query || query.length > 256) throw new Error("invalid search query");
+      for (const key of ["caseSensitive", "regex", "wholeWord"] as const) {
+        if (body[key] != null && typeof body[key] !== "boolean") throw new Error("invalid search option");
+      }
+      if (body.maxResults != null) {
+        if (typeof body.maxResults !== "number" || !Number.isInteger(body.maxResults) || body.maxResults < 1 || body.maxResults > 5000) {
+          throw new Error("invalid search option");
+        }
+      }
+      return {
+        id: body.id,
+        type: "search_repo_files",
+        workspace: workspace.trim(),
+        query,
+        ...(body.caseSensitive === true ? { caseSensitive: true } : {}),
+        ...(body.regex === true ? { regex: true } : {}),
+        ...(body.wholeWord === true ? { wholeWord: true } : {}),
+        ...(body.maxResults != null ? { maxResults: body.maxResults as number } : {}),
         ...(body.visibility != null ? { visibility: parseFileVisibility(body.visibility) } : {}),
       };
     }

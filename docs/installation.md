@@ -21,7 +21,7 @@ sudo ./setup.sh
 5. Runs `deploy/install.sh`.
 6. Replaces `/etc/caddy/Caddyfile` with a reverse proxy to the hub. An existing Caddyfile that does not already mention `engineroom` is copied aside first.
 7. Adds the user who invoked `sudo` to the `engineroom-users` group when that account has uid 1000 or higher.
-8. Enables and starts `engineroom-hub.service` and Caddy.
+8. Enables and starts `engineroom-hub.service`, Caddy, and `avahi-daemon`.
 
 ### Hostname and cookies
 
@@ -30,9 +30,9 @@ sudo ./setup.sh
 | unset, `localhost`, or `:80` | `:80` (HTTP) | `0` |
 | any other hostname | that hostname (Caddy HTTPS) | `1` |
 
-On a first install, when `/etc/engineroom/server.json` is missing, setup sets the system hostname to `engineroom` and starts Avahi. Other computers can then open `http://engineroom.local`, the same way a Raspberry Pi answers to `raspberrypi.local`. A later setup leaves a saved name in place. The default Caddy site is `:80`, so that address reaches the login page. A public `ENGINEROOM_HOST` still uses HTTPS, and the session cookie is only sent there.
+Setup enables and starts Avahi on every run. On a first install, when `/etc/engineroom/server.json` is missing, it also sets the system hostname to `engineroom`. Other computers can then open `http://engineroom.local`. A later setup leaves a saved name in place and still starts Avahi. The default Caddy site is `:80`, so that address reaches the login page. A public `ENGINEROOM_HOST` still uses HTTPS, and the session cookie is only sent there.
 
-The Admin Server page changes this name. It also joins a Wi-Fi network when a wireless card is present. An install from before those packages were added needs `avahi-daemon`, `wpasupplicant`, and `iw`.
+The Admin Server page changes this name. It also joins a Wi-Fi network when a wireless card is present.
 
 ```bash
 sudo ENGINEROOM_HOST=chat.example.com ./setup.sh

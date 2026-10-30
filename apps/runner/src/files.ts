@@ -23,6 +23,9 @@ import {
   type RepoFileContent,
   type RepoFileEntry,
   type RepoFilesResult,
+  type RepoSearchMatch,
+  type RepoSearchOptions,
+  type RepoSearchResult,
 } from "@engineroom/protocol";
 import { isVisionMime, type LoadedPromptAttachment } from "./prompt-content.ts";
 import { resolveChatWorkspace, resolveRepoWorkspace } from "./store.ts";
@@ -32,6 +35,10 @@ const MAX_FILES = 5000;
 const MAX_DEPTH = 16;
 const MAX_PREVIEW_BYTES = 256 * 1024;
 const BINARY_SAMPLE_BYTES = 8 * 1024;
+const MAX_SEARCH_RESULTS = 500;
+const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_SEARCH_LINE_MATCHES = 20;
+const MAX_SEARCH_TEXT = 320;
 
 export async function listRepositoryFiles(
   home: string,
@@ -129,6 +136,139 @@ export async function listRepositoryFiles(
     branch: statusInfo.branch,
     files,
     changes: statusInfo.changes,
+  };
+}
+
+export async function searchRepositoryFiles(
+  home: string,
+  workspace: string,
+  options: RepoSearchOptions,
+  visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
+): Promise<RepoSearchResult> {
+  const query = options.query.trim();
+  if (!query || query.length > 256) throw new Error("invalid search query");
+  let matcher: RegExp;
+  try {
+    const source = options.regex ? query : escapeRegExp(query);
+    const body = options.wholeWord ? `(?<!\\w)(?:${source})(?!\\w)` : source;
+    matcher = new RegExp(body, options.caseSensitive ? "g" : "gi");
+  } catch {
+    throw new Error("invalid regular expression");
+  }
+
+  const listing = await listRepositoryFiles(home, workspace, visibility);
+  const repoReal = listing.workspace;
+  const candidates = listing.files.filter((entry) => entry.kind === "file");
+  const limit = Math.min(options.maxResults ?? MAX_SEARCH_RESULTS, 5000);
+  const matches: RepoSearchMatch[] = [];
+  let filesSearched = 0;
+  let filesSkipped = 0;
+  let truncated = false;
+
+  search: for (const entry of candidates) {
+    const candidate = path.resolve(repoReal, entry.path);
+    if (!isInsidePath(repoReal, candidate) || candidate === repoReal) {
+      filesSkipped += 1;
+      continue;
+    }
+    let resolved: string;
+    let size: number;
+    try {
+      resolved = await realpath(candidate);
+      if (!isInsidePath(repoReal, resolved) || resolved === repoReal) {
+        filesSkipped += 1;
+        continue;
+      }
+      const info = await stat(resolved);
+      if (!info.isFile()) {
+        filesSkipped += 1;
+        continue;
+      }
+      size = info.size;
+    } catch {
+      filesSkipped += 1;
+      continue;
+    }
+    if (size > MAX_SEARCH_FILE_BYTES) {
+      filesSkipped += 1;
+      continue;
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await readFile(resolved);
+    } catch {
+      filesSkipped += 1;
+      continue;
+    }
+    if (isBinaryBuffer(buffer)) {
+      filesSkipped += 1;
+      continue;
+    }
+
+    filesSearched += 1;
+    const lines = buffer.toString("utf8").split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const rawLine = lines[lineIndex]!;
+      const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+      matcher.lastIndex = 0;
+      let lineMatches = 0;
+      let match: RegExpExecArray | null;
+      while ((match = matcher.exec(line)) !== null) {
+        if (match[0].length === 0) {
+          if (matcher.lastIndex >= line.length) break;
+          matcher.lastIndex += 1;
+          continue;
+        }
+        if (matches.length >= limit) {
+          truncated = true;
+          break search;
+        }
+        const snippet = searchSnippet(line, match.index, match[0].length);
+        matches.push({
+          path: entry.path,
+          line: lineIndex + 1,
+          column: match.index + 1,
+          ...snippet,
+        });
+        lineMatches += 1;
+        if (lineMatches >= MAX_SEARCH_LINE_MATCHES) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return {
+    query,
+    matches,
+    truncated,
+    filesSearched,
+    filesSkipped,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function searchSnippet(
+  line: string,
+  index: number,
+  length: number,
+): Pick<RepoSearchMatch, "text" | "matchText" | "matchStart"> {
+  let start = Math.max(0, index - 120);
+  let end = Math.min(line.length, index + length + 180);
+  if (end - start > MAX_SEARCH_TEXT) end = start + MAX_SEARCH_TEXT;
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < line.length ? "…" : "";
+  const text = `${prefix}${line.slice(start, end)}${suffix}`;
+  const matchStart = prefix.length + (index - start);
+  return {
+    text,
+    matchStart,
+    matchText: line.slice(index, index + length).slice(0, MAX_SEARCH_TEXT),
   };
 }
 

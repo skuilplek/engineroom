@@ -52,6 +52,7 @@ import {
   readHomeFile,
   readRepositoryFile,
   renameRepositoryEntry,
+  searchRepositoryFiles,
   savePromptAttachment,
   stageRepositoryChange,
   unstageRepositoryChange,
@@ -492,6 +493,8 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return readExtensionDoc(dataRoot(home), "user", request.name, request.docId);
       case "list_repo_files":
         return listRepositoryFiles(home, request.workspace, request.visibility);
+      case "search_repo_files":
+        return searchRepositoryFiles(home, request.workspace, request, request.visibility);
       case "read_repo_file":
         return readRepositoryFile(home, request.workspace, request.path, request.visibility);
       case "read_home_file":

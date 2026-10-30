@@ -638,6 +638,24 @@ test("repository file requests validate relative paths and visibility flags", as
   });
   assert.equal(listReq.type, "list_repo_files");
 
+  const searchReq = parseRunnerRequest({
+    id: "10b",
+    type: "search_repo_files",
+    workspace: "/home/alice/Sites/proj",
+    query: "TODO",
+    caseSensitive: true,
+    regex: false,
+    wholeWord: true,
+  });
+  assert.equal(searchReq.type, "search_repo_files");
+  if (searchReq.type === "search_repo_files") {
+    assert.equal(searchReq.query, "TODO");
+    assert.equal(searchReq.caseSensitive, true);
+    assert.equal(searchReq.wholeWord, true);
+  }
+  assert.throws(() => parseRunnerRequest({ id: "10c", type: "search_repo_files", workspace: "/home/alice/Sites/proj", query: "" }));
+  assert.throws(() => parseRunnerRequest({ id: "10d", type: "search_repo_files", workspace: "/home/alice/Sites/proj", query: "x", regex: "yes" }));
+
   const readReq = parseRunnerRequest({
     id: "11",
     type: "read_repo_file",

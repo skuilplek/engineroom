@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry } from "@engineroom/protocol";
-import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readHomeFile, readRepoFile, renameRepoEntry, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
+import type { RepoChangeEntry, RepoChangeStatus, RepoFileContent, RepoFileEntry, RepoSearchMatch, RepoSearchResult } from "@engineroom/protocol";
+import { ApiError, commitRepoChanges, createRepoEntry, deleteRepoEntry, discardRepoChange, downloadRepoFile, listRepoFiles, readHomeFile, readRepoFile, renameRepoEntry, searchRepoFiles, stageRepoChange, unstageRepoChange, uploadRepoFiles, writeRepoFile } from "../api.ts";
 import { classifyOpenedPath } from "../chat/filePaths.ts";
 import { DiffView } from "../chat/Diff.tsx";
 import { Markdown } from "../chat/Markdown.tsx";
@@ -27,7 +27,14 @@ import {
 } from "../icons.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 
-type DrawerTab = "files" | "changes";
+type DrawerTab = "files" | "changes" | "search";
+
+interface RevealTarget {
+  path: string;
+  line: number;
+  column: number;
+  key: number;
+}
 type FileViewMode = "code" | "diff" | "preview";
 
 interface TreeNode {
@@ -68,6 +75,14 @@ export function FileManagerDrawer({
 }) {
   const [tab, setTab] = useState<DrawerTab>("files");
   const [filter, setFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCase, setSearchCase] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(false);
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
+  const [searchResult, setSearchResult] = useState<RepoSearchResult | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [revealTarget, setRevealTarget] = useState<RevealTarget | null>(null);
   const [branch, setBranch] = useState("");
   const [files, setFiles] = useState<RepoFileEntry[]>([]);
   const [changes, setChanges] = useState<RepoChangeEntry[]>([]);
@@ -103,6 +118,7 @@ export function FileManagerDrawer({
   const forceCodePath = useRef<string | null>(null);
   const autoModeFor = useRef<string | null>(null);
   const seenOpen = useRef(0);
+  const searchSeq = useRef(0);
 
   const isDirty = Boolean(preview && !preview.binary && draftContent !== preview.content);
   const isEditable = Boolean(canEdit && !externalPath && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
@@ -134,6 +150,11 @@ export function FileManagerDrawer({
     setPreviewFailed(false);
     setExpandedDirs(new Set());
     setFilter("");
+    setSearchQuery("");
+    setSearchResult(null);
+    setSearchError("");
+    setSearching(false);
+    setRevealTarget(null);
     setCreateKind(null);
     setRenamingPath(null);
     setConfirmDeletePath(null);
@@ -148,6 +169,44 @@ export function FileManagerDrawer({
     if (!open || !workspace) return;
     void loadFiles(workspace);
   }, [open, workspace, refreshKey, loadFiles]);
+
+  useEffect(() => {
+    if (!open || !workspace || tab !== "search") return;
+    const seq = ++searchSeq.current;
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResult(null);
+      setSearchError("");
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    setSearchError("");
+    const timer = window.setTimeout(() => {
+      searchRepoFiles(workspace, {
+        query,
+        ...(searchCase ? { caseSensitive: true } : {}),
+        ...(searchRegex ? { regex: true } : {}),
+        ...(searchWholeWord ? { wholeWord: true } : {}),
+      })
+        .then((result) => {
+          if (seq !== searchSeq.current) return;
+          setSearchResult(result);
+        })
+        .catch((err) => {
+          if (seq !== searchSeq.current) return;
+          setSearchResult(null);
+          setSearchError(message(err));
+        })
+        .finally(() => {
+          if (seq === searchSeq.current) setSearching(false);
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      searchSeq.current += 1;
+    };
+  }, [open, workspace, tab, searchQuery, searchCase, searchRegex, searchWholeWord, refreshKey]);
 
   useEffect(() => {
     if (!open || !workspace || !selectedPath) return;
@@ -219,6 +278,16 @@ export function FileManagerDrawer({
 
   const tree = useMemo(() => buildTree(filteredFiles, changeMap), [filteredFiles, changeMap]);
 
+  const searchGroups = useMemo(() => {
+    const groups = new Map<string, RepoSearchMatch[]>();
+    for (const match of searchResult?.matches ?? []) {
+      const existing = groups.get(match.path);
+      if (existing) existing.push(match);
+      else groups.set(match.path, [match]);
+    }
+    return [...groups.entries()].map(([path, matches]) => ({ path, matches }));
+  }, [searchResult]);
+
   function expandAncestors(targetPath: string) {
     const parts = targetPath.split("/");
     if (parts.length <= 1) return;
@@ -250,10 +319,11 @@ export function FileManagerDrawer({
     setPreviewMode(mode);
   }
 
-  function selectFile(filePath: string, mode?: "code" | "preview") {
+  function selectFile(filePath: string, mode?: "code" | "preview", reveal?: { line: number; column: number }) {
     if (selectedPath === filePath && !externalPath && !expanded && mode == null) {
       setSelectedPath(null);
       setListOpen(true);
+      setRevealTarget(null);
       return;
     }
     if ((selectedPath !== filePath || externalPath) && isDirty) {
@@ -277,11 +347,15 @@ export function FileManagerDrawer({
     if (narrow) setListOpen(false);
     setRenamingPath(null);
     setConfirmDeletePath(null);
+    setRevealTarget(
+      reveal ? { path: filePath, line: reveal.line, column: reveal.column, key: Date.now() } : null,
+    );
   }
 
   useEffect(() => {
     if (!open || !externalPath) return;
     let cancelled = false;
+    setRevealTarget(null);
     setPreviewLoading(true);
     setPreviewFailed(false);
     setPreview(null);
@@ -323,6 +397,7 @@ export function FileManagerDrawer({
       setPreviewMode(isPlanPath(target.path) ? "preview" : "code");
       setRenamingPath(null);
       setConfirmDeletePath(null);
+      setRevealTarget(null);
       setExternalPath(target.path);
       setListOpen(false);
       setTab("files");
@@ -741,38 +816,111 @@ export function FileManagerDrawer({
           <span>Changed</span>
           {changes.length > 0 && <span className="file-badge">{changes.length}</span>}
         </button>
+        <button
+          className={tab === "search" ? "file-tab active" : "file-tab"}
+          type="button"
+          role="tab"
+          aria-selected={tab === "search"}
+          onClick={() => setTab("search")}
+        >
+          <span>Search</span>
+          {searchResult && searchResult.matches.length > 0 && (
+            <span className="file-badge">
+              {searchResult.matches.length}
+              {searchResult.truncated ? "+" : ""}
+            </span>
+          )}
+        </button>
       </div>
 
-      <div className="file-drawer-search">
-        <input
-          value={filter}
-          placeholder={tab === "files" ? "Filter files…" : "Filter changed files…"}
-          aria-label="Filter files"
-          onChange={(event) => setFilter(event.target.value)}
-        />
-        {canEdit && activeTarget && !createKind && !renamingPath && !confirmDeletePath && (
-          <div className="file-tree-quick-actions">
-            <button
-              className="icon-btn"
-              type="button"
-              title={`Rename ${activeTarget}`}
-              aria-label={`Rename ${activeTarget}`}
-              onClick={() => startRename(activeTarget)}
-            >
-              <IconEdit />
-            </button>
-            <button
-              className="icon-btn"
-              type="button"
-              title={`Delete ${activeTarget}`}
-              aria-label={`Delete ${activeTarget}`}
-              onClick={() => setConfirmDeletePath(activeTarget)}
-            >
-              <IconTrash />
-            </button>
+      {tab === "search" ? (
+        <div className="file-drawer-search file-search-controls">
+          <div className="file-search-row">
+            <input
+              type="search"
+              value={searchQuery}
+              placeholder="Search in files…"
+              aria-label="Search in files"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <div className="file-search-options" role="group" aria-label="Search options">
+              <button
+                className={searchCase ? "search-toggle active" : "search-toggle"}
+                type="button"
+                title="Match case"
+                aria-label="Match case"
+                aria-pressed={searchCase}
+                onClick={() => setSearchCase((value) => !value)}
+              >
+                Aa
+              </button>
+              <button
+                className={searchRegex ? "search-toggle active" : "search-toggle"}
+                type="button"
+                title="Use regular expression"
+                aria-label="Use regular expression"
+                aria-pressed={searchRegex}
+                onClick={() => setSearchRegex((value) => !value)}
+              >
+                .*
+              </button>
+              <button
+                className={searchWholeWord ? "search-toggle active" : "search-toggle"}
+                type="button"
+                title="Match whole word"
+                aria-label="Match whole word"
+                aria-pressed={searchWholeWord}
+                onClick={() => setSearchWholeWord((value) => !value)}
+              >
+                W
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+          <p className="file-search-status">
+            {searching
+              ? "Searching…"
+              : searchError
+                ? "Search failed."
+                : searchResult
+                  ? `${searchResult.matches.length}${searchResult.truncated ? "+" : ""} match${searchResult.matches.length === 1 ? "" : "es"} in ${searchGroups.length} file${searchGroups.length === 1 ? "" : "s"}`
+                  : "Search file contents in this repository."}
+          </p>
+        </div>
+      ) : (
+        <div className="file-drawer-search">
+          <input
+            value={filter}
+            placeholder={tab === "files" ? "Filter files…" : "Filter changed files…"}
+            aria-label="Filter files"
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          {canEdit && activeTarget && !createKind && !renamingPath && !confirmDeletePath && (
+            <div className="file-tree-quick-actions">
+              <button
+                className="icon-btn"
+                type="button"
+                title={`Rename ${activeTarget}`}
+                aria-label={`Rename ${activeTarget}`}
+                onClick={() => startRename(activeTarget)}
+              >
+                <IconEdit />
+              </button>
+              <button
+                className="icon-btn"
+                type="button"
+                title={`Delete ${activeTarget}`}
+                aria-label={`Delete ${activeTarget}`}
+                onClick={() => setConfirmDeletePath(activeTarget)}
+              >
+                <IconTrash />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === "changes" && canEdit && (
         <form
@@ -857,8 +1005,64 @@ export function FileManagerDrawer({
       )}
 
       <div className="file-drawer-body">
-        <div className="file-tree" role="tree" aria-label={tab === "files" ? "Repository file tree" : "Changed files"}>
+        <div
+          className="file-tree"
+          role={tab === "search" ? "list" : "tree"}
+          aria-label={tab === "files" ? "Repository file tree" : tab === "changes" ? "Changed files" : "Search results"}
+        >
           {loading && files.length === 0 && <p className="muted file-empty">Loading files…</p>}
+
+          {tab === "search" && searching && !searchResult && (
+            <p className="muted file-empty">Searching…</p>
+          )}
+
+          {tab === "search" && searchError && (
+            <p className="file-empty file-search-error">{searchError}</p>
+          )}
+
+          {tab === "search" && !searching && !searchError && !searchQuery.trim() && (
+            <p className="muted file-empty">Type a string to search inside repository files.</p>
+          )}
+
+          {tab === "search" && !searching && !searchError && searchResult && searchResult.matches.length === 0 && (
+            <p className="muted file-empty">No matches for “{searchResult.query}”.</p>
+          )}
+
+          {tab === "search" && searchGroups.length > 0 && (
+            <div className="search-results">
+              {searchGroups.map((group) => {
+                const first = group.matches[0]!;
+                return (
+                  <section className="search-result-file" key={group.path}>
+                    <button
+                      className="search-result-head"
+                      type="button"
+                      title={`Open ${group.path}`}
+                      onClick={() => selectFile(group.path, "code", { line: first.line, column: first.column })}
+                    >
+                      <IconFile />
+                      <span className="file-name">{group.path}</span>
+                      <span className="file-badge">{group.matches.length}</span>
+                    </button>
+                    {group.matches.map((match, index) => (
+                      <button
+                        className="search-result-row"
+                        type="button"
+                        key={`${group.path}:${match.line}:${match.column}:${index}`}
+                        title={`${group.path}:${match.line}:${match.column}`}
+                        onClick={() => selectFile(match.path, "code", { line: match.line, column: match.column })}
+                      >
+                        <span className="search-result-line">{match.line}</span>
+                        <span className="search-result-text">
+                          <SearchMatchText match={match} />
+                        </span>
+                      </button>
+                    ))}
+                  </section>
+                );
+              })}
+            </div>
+          )}
 
           {!loading && tab === "files" && tree.length === 0 && (
             <p className="muted file-empty">{isFiltering ? "No matching files." : "No visible files in this repository."}</p>
@@ -1057,6 +1261,7 @@ export function FileManagerDrawer({
                         setListOpen(true);
                         setPreview(null);
                         setDraftContent("");
+                        setRevealTarget(null);
                       }}
                     >
                       ✕
@@ -1080,6 +1285,7 @@ export function FileManagerDrawer({
                         filePath={preview.path}
                         value={draftContent}
                         readOnly={!isEditable}
+                        reveal={revealTarget && revealTarget.path === preview.path ? revealTarget : null}
                         onChange={setDraftContent}
                         onSave={() => void handleSave()}
                       />
@@ -1096,6 +1302,18 @@ export function FileManagerDrawer({
         )}
       </div>
     </aside>
+  );
+}
+
+function SearchMatchText({ match }: { match: RepoSearchMatch }) {
+  const start = Math.max(0, Math.min(match.matchStart, match.text.length));
+  const end = Math.min(match.text.length, start + match.matchText.length);
+  return (
+    <>
+      {match.text.slice(0, start)}
+      {end > start && <mark>{match.text.slice(start, end)}</mark>}
+      {match.text.slice(end)}
+    </>
   );
 }
 

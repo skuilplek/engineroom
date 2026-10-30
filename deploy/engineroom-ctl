@@ -25,7 +25,9 @@ case "$cmd" in
   start)
     # A crash loop leaves the socket unit failed while the inode remains.
     # connect() then returns ECONNREFUSED until the failure count is cleared.
-    systemctl reset-failed "engineroom-runner@${user}.service" "engineroom-runner@${user}.socket"
+    # New users have no loaded units yet, so reset-failed can fail; that must
+    # not stop the socket from being started for the first time.
+    systemctl reset-failed "engineroom-runner@${user}.service" "engineroom-runner@${user}.socket" >/dev/null 2>&1 || true
     systemctl start "engineroom-runner@${user}.socket"
     ;;
   stop)

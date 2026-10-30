@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { lstat, mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -356,6 +356,34 @@ test("the control wrapper refuses names outside the login group", async () => {
   await assert.rejects(execFileAsync(script, ["start", "serveradmin"]));
 });
 
+test("the control wrapper starts a socket when reset-failed finds no loaded unit", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-ctl-"));
+  const bin = path.join(root, "bin");
+  const log = path.join(root, "systemctl.log");
+  await mkdir(bin);
+  await writeFile(
+    path.join(bin, "id"),
+    "#!/bin/sh\ncase \"$1\" in\n  -u) printf '1000\\n' ;;\n  -nG) printf 'engineroom-users\\n' ;;\n  *) /usr/bin/id \"$@\" ;;\nesac\n",
+  );
+  await writeFile(
+    path.join(bin, "systemctl"),
+    `#!/bin/sh\nprintf '%s\\n' \"$*\" >> ${JSON.stringify(log)}\nif [ \"$1\" = reset-failed ]; then exit 1; fi\nexit 0\n`,
+  );
+  await chmod(path.join(bin, "id"), 0o755);
+  await chmod(path.join(bin, "systemctl"), 0o755);
+  try {
+    const script = path.resolve("deploy/engineroom-ctl");
+    await execFileAsync(script, ["start", "ingrid"], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+    });
+    const calls = await readFile(log, "utf8");
+    assert.match(calls, /reset-failed engineroom-runner@ingrid\.service engineroom-runner@ingrid\.socket/);
+    assert.match(calls, /start engineroom-runner@ingrid\.socket/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("home file preview reads a plan outside the repository and rejects escapes", async () => {
   const { readHomeFile } = await import("../apps/runner/src/files.ts");
   const home = await mkdtemp(path.join(tmpdir(), "er-home-file-"));
@@ -566,6 +594,67 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("repository content search respects visibility and search options", async () => {
+  const { searchRepositoryFiles } = await import("../apps/runner/src/files.ts");
+  const home = await mkdtemp(path.join(tmpdir(), "er-search-"));
+  const repo = path.join(home, "Sites", "proj");
+  await mkdir(path.join(repo, "src"), { recursive: true });
+  try {
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repo });
+    await writeFile(path.join(repo, ".gitignore"), "ignored.txt\n");
+    await writeFile(path.join(repo, ".env"), "Foo=1\n");
+    await writeFile(path.join(repo, "ignored.txt"), "Foo\n");
+    await writeFile(path.join(repo, "src", "a.ts"), "const Foo = 1;\nconst foo = 2;\n");
+    await writeFile(path.join(repo, "src", "b.ts"), "export const foobar = 'Foo';\n");
+    await writeFile(path.join(repo, "src", "blob.bin"), Buffer.from([0, 70, 111, 111]));
+    await setEnabledRepositories(home, [repo]);
+
+    const base = await searchRepositoryFiles(home, repo, { query: "Foo" });
+    assert.deepEqual([...new Set(base.matches.map((match) => match.path))], ["src/a.ts", "src/b.ts"]);
+    assert.equal(base.matches.length, 4);
+    assert.equal(base.matches.every((match) => match.matchText.toLowerCase() === "foo"), true);
+    assert.equal(base.filesSearched, 2);
+    assert.equal(base.filesSkipped, 1);
+
+    const wholeWord = await searchRepositoryFiles(home, repo, { query: "foo", wholeWord: true });
+    assert.deepEqual(
+      wholeWord.matches.map((match) => ({ path: match.path, line: match.line })),
+      [
+        { path: "src/a.ts", line: 1 },
+        { path: "src/a.ts", line: 2 },
+        { path: "src/b.ts", line: 1 },
+      ],
+    );
+    assert.equal(wholeWord.matches.some((match) => match.matchText.toLowerCase() === "foobar"), false);
+
+    const regex = await searchRepositoryFiles(home, repo, { query: "fo+bar", regex: true });
+    assert.deepEqual(regex.matches.map((match) => match.path), ["src/b.ts"]);
+
+    const caseSensitive = await searchRepositoryFiles(home, repo, { query: "FOO", caseSensitive: true });
+    assert.equal(caseSensitive.matches.length, 0);
+
+    const limited = await searchRepositoryFiles(home, repo, { query: "Foo", maxResults: 1 });
+    assert.equal(limited.matches.length, 1);
+    assert.equal(limited.truncated, true);
+
+    const revealed = await searchRepositoryFiles(home, repo, { query: "Foo" }, {
+      showHidden: true,
+      showGitignored: true,
+      showGitDir: false,
+    });
+    const paths = revealed.matches.map((match) => match.path);
+    assert.equal(paths.includes(".env"), true);
+    assert.equal(paths.includes("ignored.txt"), true);
+
+    await assert.rejects(
+      () => searchRepositoryFiles(home, repo, { query: "(", regex: true }),
+      /invalid regular expression/,
+    );
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
 });
 

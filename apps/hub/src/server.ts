@@ -65,6 +65,11 @@ interface RunnerCall {
   modelId?: string;
   path?: string;
   newPath?: string;
+  query?: string;
+  caseSensitive?: boolean;
+  regex?: boolean;
+  wholeWord?: boolean;
+  maxResults?: number;
   kind?: "file" | "dir";
   content?: string;
   contentBase64?: string;
@@ -942,6 +947,26 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "list_repo_files", workspace, visibility }));
       return;
     }
+    if (parts[1] === "repositories" && parts[2] === "search" && parts.length === 3 && req.method === "GET") {
+      await assertFileManager(user);
+      const workspace = (url.searchParams.get("workspace") || "").trim();
+      if (!workspace) throw new Error("invalid workspace");
+      const query = url.searchParams.get("query") || "";
+      const maxParam = url.searchParams.get("maxResults") || "";
+      const maxResults = /^\d+$/.test(maxParam) ? Number(maxParam) : undefined;
+      const visibility = loadFileVisibility(reposFile);
+      sendJson(res, 200, await call(user, {
+        type: "search_repo_files",
+        workspace,
+        query,
+        caseSensitive: url.searchParams.get("caseSensitive") === "true",
+        regex: url.searchParams.get("regex") === "true",
+        wholeWord: url.searchParams.get("wholeWord") === "true",
+        ...(maxResults != null ? { maxResults } : {}),
+        visibility,
+      }));
+      return;
+    }
     if (parts[1] === "repositories" && parts[2] === "file" && parts[3] === "download" && parts.length === 4 && req.method === "GET") {
       await assertFileDownload(user);
       const workspace = (url.searchParams.get("workspace") || "").trim();
@@ -1227,6 +1252,7 @@ export function createHub(options: HubOptions) {
       command.type === "set_repositories" ||
       command.type === "probe_agent" ||
       command.type === "list_repo_files" ||
+      command.type === "search_repo_files" ||
       command.type === "read_repo_file" ||
       command.type === "read_home_file" ||
       command.type === "write_repo_file" ||

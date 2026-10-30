@@ -33,7 +33,10 @@ export function ErrorProvider({ children }: { children: ReactNode }) {
 
   const report = useCallback((action: string, error: unknown) => {
     const text = (typeof error === "string" ? error : message(error)).replace(/\0/g, "").trim() || "request failed";
-    const notice = { id: crypto.randomUUID(), action, summary: errorSummary(text) };
+    const id = globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const notice = { id, action, summary: errorSummary(text) };
     setNotices((current) => [...current, notice].slice(-3));
     const stored = text.length > MAX_ACTION_ERROR_CHARS ? text.slice(0, MAX_ACTION_ERROR_CHARS) : text;
     void saveActionError(action, stored).then((saved) => {

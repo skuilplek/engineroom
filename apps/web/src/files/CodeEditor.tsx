@@ -1,25 +1,62 @@
-import { useMemo, useRef, type KeyboardEvent, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, type KeyboardEvent, type UIEvent } from "react";
 import { detectSyntaxLanguage, highlightCodeLines } from "./syntax.ts";
+
+interface RevealTarget {
+  path: string;
+  line: number;
+  column: number;
+  key: number;
+}
 
 export function CodeEditor({
   filePath,
   value,
   readOnly,
+  reveal = null,
   onChange,
   onSave,
 }: {
   filePath: string;
   value: string;
   readOnly: boolean;
+  reveal?: RevealTarget | null;
   onChange?: (next: string) => void;
   onSave?: () => void;
 }) {
+  const viewerRef = useRef<HTMLDivElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const language = useMemo(() => detectSyntaxLanguage(filePath), [filePath]);
   const tokenLines = useMemo(() => highlightCodeLines(value, language), [value, language]);
+
+  useEffect(() => {
+    if (!reveal) return;
+    const line = Math.max(1, Math.min(reveal.line, tokenLines.length));
+    if (readOnly) {
+      const element = viewerRef.current?.querySelector<HTMLElement>(`[data-line="${line}"]`);
+      element?.scrollIntoView({ block: "center" });
+      return;
+    }
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const linesBefore = value.split("\n");
+    let start = 0;
+    for (let i = 0; i < line - 1; i += 1) start += (linesBefore[i]?.length ?? 0) + 1;
+    const lineText = linesBefore[line - 1] ?? "";
+    const column = Math.max(0, Math.min(reveal.column - 1, lineText.length));
+    const caret = start + column;
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(caret, caret);
+    const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 18.75;
+    textarea.scrollTop = Math.max(0, (line - 1) * lineHeight - textarea.clientHeight / 2);
+    if (preRef.current) {
+      preRef.current.scrollTop = textarea.scrollTop;
+      preRef.current.scrollLeft = textarea.scrollLeft;
+    }
+    if (gutterRef.current) gutterRef.current.scrollTop = textarea.scrollTop;
+  }, [reveal, readOnly, filePath]);
 
   function syncScroll(event: UIEvent<HTMLTextAreaElement>) {
     const target = event.currentTarget;
@@ -87,10 +124,14 @@ export function CodeEditor({
 
   if (readOnly) {
     return (
-      <div className="code-viewer" role="region" aria-label={`Contents of ${filePath}`}>
+      <div className="code-viewer" role="region" aria-label={`Contents of ${filePath}`} ref={viewerRef}>
         <pre className="file-code">
           {tokenLines.map((tokens, index) => (
-            <div className="file-code-line" key={index}>
+            <div
+              className={reveal?.line === index + 1 ? "file-code-line revealed" : "file-code-line"}
+              data-line={index + 1}
+              key={index}
+            >
               <span className="file-line-num">{index + 1}</span>
               <span className="file-line-text">
                 {tokens.length === 0
@@ -120,7 +161,10 @@ export function CodeEditor({
       <div className="code-editor-stage">
         <pre className="code-editor-highlight" ref={preRef} aria-hidden="true">
           {tokenLines.map((tokens, index) => (
-            <div className="code-highlight-line" key={index}>
+            <div
+              className={reveal?.line === index + 1 ? "code-highlight-line revealed" : "code-highlight-line"}
+              key={index}
+            >
               <span className="code-highlight-num">{index + 1}</span>
               <span className="code-highlight-text">
                 {tokens.length === 0

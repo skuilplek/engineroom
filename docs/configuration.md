@@ -63,7 +63,7 @@ ENGINEROOM_ADMIN=alice
 
 `ENGINEROOM_HOST` is not read by the hub. `setup.sh` uses it only to choose the Caddy site address and the cookie flag above.
 
-`/etc/engineroom/server.json` stores the hostname chosen from the Admin Server page. `setup.sh` writes `engineroom` there when the file is missing, and does not replace it on a later run. Avahi publishes that name as `http://<hostname>.local`.
+`/etc/engineroom/server.json` stores the hostname chosen from the Admin Server page. `setup.sh` writes `engineroom` there when the file is missing, and does not replace it on a later run. Every setup enables Avahi, which publishes that name as `http://<hostname>.local`.
 
 ## Related
 
