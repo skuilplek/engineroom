@@ -145,6 +145,8 @@ test("the administrator sets agents and accounts", async () => {
       body: JSON.stringify({ username: "carol", password: "new-secret" }),
     });
     assert.equal(added.status, 201);
+    const addedBody = (await added.json()) as { accounts?: Array<{ username: string }> };
+    assert.deepEqual(addedBody.accounts?.map((account) => account.username), ["alice", "carol"]);
     assert.deepEqual(calls.at(-1), { action: "add", username: "carol", password: "new-secret" });
 
     const self = await fetch(`${base}/api/admin/users`, {

@@ -577,7 +577,9 @@ export function createHub(options: HubOptions) {
       const username = assertUsername(typeof body.username === "string" ? body.username : "");
       if (username === adminUser) throw new Error("must not change this account");
       await runAdmin("add", username, cleanPassword(body.password));
-      sendJson(res, 201, { ok: true });
+      // Return the fresh list with the response. The caller can show the new
+      // account even if a separate refresh races with this request.
+      sendJson(res, 201, { ok: true, accounts: accounts() });
       return;
     }
     if (parts[2] === "repository-folder" && parts.length === 3 && req.method === "GET") {

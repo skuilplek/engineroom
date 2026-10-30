@@ -54,8 +54,10 @@ case "$action" in
       echo "password is empty" >&2
       exit 1
     fi
+    created=0
     if ! id "$user" >/dev/null 2>&1; then
       useradd --create-home --shell /bin/bash "$user"
+      created=1
     fi
     uid="$(id -u "$user")"
     if (( uid < 1000 )); then
@@ -64,14 +66,27 @@ case "$action" in
     fi
     printf '%s:%s\n' "$user" "$password" | chpasswd
     usermod -aG engineroom-users "$user"
-    home="$(getent passwd "$user" | cut -d: -f6)"
-    case "$home" in
-      /*/*)
-        if [[ -d "$home" && "$home" != "/root" ]]; then
-          chown -R "${user}:" "$home"
-        fi
-        ;;
-    esac
+    if (( created )); then
+      # A re-added account can already have a home left from the previous
+      # Linux user. Only a newly created account should take ownership of it;
+      # an existing account keeps whatever homes and mounts it already has.
+      home="$(getent passwd "$user" | cut -d: -f6)"
+      case "$home" in
+        /*/*)
+          if [[ -d "$home" && "$home" != "/root" ]]; then
+            chown -R "${user}:" "$home" || echo "could not change home ownership for ${user}" >&2
+          fi
+          ;;
+      esac
+    fi
+    # Make the account usable right away. The hub would also start this on
+    # first sign-in, but doing it here means selecting the new user in the
+    # admin panel does not depend on a later login. A missing or failed unit
+    # is not fatal: the normal runner-start path can still create it.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl reset-failed "engineroom-runner@${user}.service" "engineroom-runner@${user}.socket" >/dev/null 2>&1 || true
+      systemctl start "engineroom-runner@${user}.socket" >/dev/null 2>&1 || true
+    fi
     ;;
   passwd)
     IFS= read -r password || true

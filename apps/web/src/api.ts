@@ -518,7 +518,7 @@ export function listAccounts() {
 }
 
 export function addAccount(username: string, password: string) {
-  return api<{ ok: boolean }>("/api/admin/users", {
+  return api<{ ok: boolean; accounts?: Account[] }>("/api/admin/users", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });

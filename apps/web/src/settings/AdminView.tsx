@@ -552,11 +552,12 @@ export function AdminView({
     setError("");
     setSaved("");
     try {
-      await addAccount(username.trim(), password);
+      const added = await addAccount(username.trim(), password);
       setUsername("");
       setPassword("");
       setSaved("Access granted");
-      await refreshUsers();
+      if (added.accounts) setAccounts(added.accounts);
+      else await refreshUsers();
     } catch (err) {
       setError(message(err));
     } finally {

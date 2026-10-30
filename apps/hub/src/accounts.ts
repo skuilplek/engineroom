@@ -42,7 +42,9 @@ export function runAdminCtl(
   return new Promise((resolve, reject) => {
     const child = spawn("sudo", ["-n", "--", ctl, action, username], { stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    // Creating an account can take a while on a busy machine: useradd,
+    // chpasswd, usermod, and a first chown all run before this returns.
+    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr = (stderr + chunk).slice(-500);
@@ -60,6 +62,9 @@ export function runAdminCtl(
         reject(new Error(stderr.trim() || "admin command failed"));
       }
     });
+    // The child can exit before reading stdin (for example when the account
+    // is reserved). An unhandled EPIPE here would take down the hub.
+    child.stdin.on("error", () => undefined);
     if (action === "add" || action === "passwd") child.stdin.write(`${password}\n`);
     child.stdin.end();
   });
