@@ -1076,11 +1076,11 @@ export function AdminView({
 
         {tab === "users" && selected && (
           <section className="admin-pane admin-detail" aria-label="User">
-            <button className="ghost" type="button" onClick={() => { setError(""); setSaved(""); setSelected(""); }}>All users</button>
             <PersonPanel
               key={selected}
               username={selected}
               self={selected === session.username}
+              onBack={() => { setError(""); setSaved(""); setSelected(""); }}
               globalAgents={inventory.length > 0 ? inventory.filter((agent) => agent.enabled).map((agent) => agent.id) : session.agents}
               globalTerminal={session.rawTerminal}
               globalFileManager={session.fileManagerOffered ?? false}
@@ -1157,10 +1157,14 @@ function UserPreferences({
   ];
   const activeTheme = normalizeTheme(settings.theme, installedIds);
   return (
-    <>
-      <h3>Appearance</h3>
-      <p className="muted">Theme, command blocks, how many chats stay open, and whether long lines wrap.</p>
-      <div className="theme-grid" role="radiogroup" aria-label="Theme">
+    <section className="person-card" aria-labelledby="person-appearance">
+      <header className="person-card-head">
+        <PersonHeading id="person-appearance">Appearance and terminal theme</PersonHeading>
+        <p className="muted">Theme, command blocks, how many chats stay open, and whether long lines wrap.</p>
+      </header>
+      <div>
+        <span className="person-label">Interface themes</span>
+        <div className="theme-grid" role="radiogroup" aria-label="Theme">
         {themeCards.map((item) => {
           const picked = activeTheme === item.id;
           return (
@@ -1211,9 +1215,11 @@ function UserPreferences({
             </button>
           );
         })}
+        </div>
       </div>
-      <h3>Command blocks</h3>
-      <p className="muted">Choose how tool commands appear in chat.</p>
+      <div className="person-split">
+      <div>
+      <span className="person-label">Command blocks render style</span>
       <div className="command-style-grid" role="radiogroup" aria-label="Command blocks">
         {COMMAND_STYLES.map((item) => {
           const picked = settings.commandBlockStyle === item.id;
@@ -1235,8 +1241,11 @@ function UserPreferences({
           );
         })}
       </div>
+      </div>
+      <div className="person-prefs">
       <label>
         Chats shown per project
+        <span className="person-inline">
         <input
           type="number"
           min={0}
@@ -1249,17 +1258,17 @@ function UserPreferences({
             onChange({ ...settings, visibleChats });
           }}
         />
+        <span className="muted">Older chats stay collapsed. Use 0 to show every chat.</span>
+        </span>
       </label>
-      <p className="muted">Older chats stay collapsed. Use 0 to show every chat.</p>
       <label className="check">
         <input
           type="checkbox"
           checked={settings.wrapText}
           onChange={(event) => onChange({ ...settings, wrapText: event.target.checked })}
         />
-        Wrap long lines
+        <span>Wrap long lines <span className="muted">Wrap file text, diffs, and code blocks instead of scrolling sideways.</span></span>
       </label>
-      <p className="muted">Wrap file text, diffs, and code blocks instead of scrolling sideways.</p>
       <label className="check">
         <input
           type="checkbox"
@@ -1267,12 +1276,32 @@ function UserPreferences({
           disabled={!fileEditorAllowed}
           onChange={(event) => onChange({ ...settings, filesReadOnly: event.target.checked })}
         />
-        Read-only file viewer
+        <span>Read-only file viewer <span className="muted">Disable inline workspace edits.</span></span>
       </label>
       {!fileEditorAllowed && (
         <p className="muted">File editing is off for this person, so the viewer stays read-only.</p>
       )}
-    </>
+      </div>
+      </div>
+    </section>
+  );
+}
+
+function PersonHeading({ id, children }: { id?: string; children: string }) {
+  return (
+    <h2 id={id}>
+      <span className="person-mark" aria-hidden="true" />
+      {children}
+    </h2>
+  );
+}
+
+function ToolChip({ checked, label, onChange }: { checked: boolean; label: string; onChange: () => void }) {
+  return (
+    <label className="person-chip" title={label}>
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -1304,6 +1333,7 @@ function WindowPreview() {
 function PersonPanel({
   username,
   self,
+  onBack,
   globalAgents,
   globalTerminal,
   globalFileManager,
@@ -1325,6 +1355,7 @@ function PersonPanel({
 }: {
   username: string;
   self: boolean;
+  onBack: () => void;
   globalAgents: AgentId[];
   globalTerminal: boolean;
   globalFileManager: boolean;
@@ -1356,6 +1387,9 @@ function PersonPanel({
   const [confirm, setConfirm] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [commands, setCommands] = useState<string | null>(null);
+  const [profile, setProfile] = useState<{ home: string; uid: number; shell: string } | null>(null);
+  const [lastActive, setLastActive] = useState<string | null | undefined>(undefined);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const agentKey = globalAgents.join(",");
   const catalogKey = catalog.map((entry) => entry.id).join(",");
@@ -1381,6 +1415,7 @@ function PersonPanel({
       const chosen = agents.length > 0 ? agents : offered.slice(0, 1);
       const listedThemes = bundle.themes ?? [];
       setThemes(listedThemes);
+      setProfile({ home: bundle.home, uid: bundle.uid, shell: bundle.shell });
       setPolicy({ ...bundle.policy, agents: chosen });
       const fallback = chosen[0] || bundle.settings.defaultAgent;
       setSettings(presentPersonSettings({
@@ -1414,7 +1449,7 @@ function PersonPanel({
     return () => {
       cancel = true;
     };
-  }, [username, agentKey, catalogKey]);
+  }, [username, agentKey, catalogKey, reloadToken]);
 
   function toggleAgent(agent: AgentId) {
     if (!policy) return;
@@ -1605,250 +1640,308 @@ function PersonPanel({
     }
   }
 
-  if (!policy || !settings || !env || !identity) {
-    return (
-      <div className="person-panel" aria-busy="true">
-        <h2>{username}</h2>
-        <UserConversations username={username} agentNames={agentNames} commandBlockStyle={commandBlockStyle} />
-        <p className="muted">Loading {username}…</p>
-        <div className="admin-skeleton wide" />
-        <div className="admin-skeleton" />
-        <div className="admin-skeleton short" />
-      </div>
-    );
-  }
-  const allowed = policy.agents.filter((agent) => globalAgents.includes(agent));
-  const fileEditorAllowed = globalFileEditor && policy.fileEditor !== false;
+  const allowed = policy?.agents.filter((agent) => globalAgents.includes(agent)) ?? [];
+  const fileEditorAllowed = policy != null && globalFileEditor && policy.fileEditor !== false;
+  const ready = policy != null && settings != null && env != null && identity != null;
+  const limits = [
+    !globalTerminal ? "The terminal is off for everyone, so this stays off until that is turned on." : "",
+    !globalFileManager ? "The file manager is off for everyone, so this stays off until that is turned on." : "",
+    !globalFileEditor ? "The file editor is off for everyone, so this stays read-only until that is turned on." : "",
+    !globalFileDownload ? "File download is off for everyone, so this stays off until that is turned on." : "",
+    !globalFileUpload ? "File upload is off for everyone, so this stays off until that is turned on." : "",
+    !globalProjectCreate ? "Creating projects is off for everyone, so this stays off until that is turned on." : "",
+  ].filter(Boolean);
   return (
     <div className="person-panel">
-      <h2>{username}</h2>
-      <UserConversations username={username} agentNames={agentNames} commandBlockStyle={commandBlockStyle} />
-      <form onSubmit={(event) => void saveAccess(event)}>
-        <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, appearance, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
-        <div className="admin-checks">
-          {globalAgents.map((agent) => (
-            <label className="check" key={agent}>
-              <input type="checkbox" checked={policy.agents.includes(agent)} onChange={() => toggleAgent(agent)} />
-              {agentLabel(agent, agentNames)}
-            </label>
-          ))}
-        </div>
-        {globalAgents.length === 0 && <p className="muted">Turn on at least one agent above before assigning any.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.rawTerminal}
-            onChange={() => setPolicy({ ...policy, rawTerminal: !policy.rawTerminal })}
-          />
-          Terminal
-        </label>
-        {!globalTerminal && <p className="muted">The terminal is off for everyone, so this stays off until that is turned on.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.fileManager}
-            onChange={() => setPolicy({ ...policy, fileManager: !policy.fileManager })}
-          />
-          File manager
-        </label>
-        {!globalFileManager && <p className="muted">The file manager is off for everyone, so this stays off until that is turned on.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.fileEditor !== false}
-            onChange={() => setPolicy({ ...policy, fileEditor: !(policy.fileEditor !== false) })}
-          />
-          File editor
-        </label>
-        {!globalFileEditor && <p className="muted">The file editor is off for everyone, so this stays read-only until that is turned on.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.fileDownload !== false}
-            onChange={() => setPolicy({ ...policy, fileDownload: !(policy.fileDownload !== false) })}
-          />
-          File download
-        </label>
-        {!globalFileDownload && <p className="muted">File download is off for everyone, so this stays off until that is turned on.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.fileUpload !== false}
-            onChange={() => setPolicy({ ...policy, fileUpload: !(policy.fileUpload !== false) })}
-          />
-          File upload
-        </label>
-        {!globalFileUpload && <p className="muted">File upload is off for everyone, so this stays off until that is turned on.</p>}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={policy.projectCreate}
-            onChange={() => setPolicy({ ...policy, projectCreate: !policy.projectCreate })}
-          />
-          Create projects
-        </label>
-        {!globalProjectCreate && <p className="muted">Creating projects is off for everyone, so this stays off until that is turned on.</p>}
-        {allowed.map((agent) => {
-          const config = agentOptions[agent];
-          const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));
-          const models = (config?.discovered.models ?? []).filter((model) => config?.offered.models.includes(model.id));
-          if (modes.length === 0 && models.length === 0) {
-            return <p className="muted" key={`${agent}-options`}>Load modes and models for {agentLabel(agent, agentNames)} on the Agents tab before choosing any for this person.</p>;
-          }
-          return (
-            <div className="option-block" key={`${agent}-options`}>
-              <h3>{agentLabel(agent, agentNames)}</h3>
-              {modes.length > 0 && (
-                <div className="admin-checks">
-                  <span className="muted">Modes</span>
-                  {modes.map((mode) => (
-                    <label className="check" key={mode.id}>
-                      <input type="checkbox" checked={optionChecked(agent, "modes", mode.id)} onChange={() => toggleOption(agent, "modes", mode.id)} />
-                      {mode.name}
-                    </label>
-                  ))}
-                </div>
-              )}
-              {models.length > 0 && (
-                <div className="admin-checks">
-                  <span className="muted">Models</span>
-                  {models.map((model) => (
-                    <label className="check" key={model.id} title={displayModelName(model.id, model.name)}>
-                      <input type="checkbox" checked={optionChecked(agent, "models", model.id)} onChange={() => toggleOption(agent, "models", model.id)} />
-                      {displayModelName(model.id, model.name)}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <label>
-          Default agent
-          <select
-            value={settings.defaultAgent}
-            onChange={(event) => chooseDefaultAgent(event.target.value as AgentId)}
-          >
-            {allowed.map((agent) => <option key={agent} value={agent}>{agentLabel(agent, agentNames)}</option>)}
-          </select>
-        </label>
-        <DefaultModelField
-          agent={settings.defaultAgent}
-          model={settings.defaultModel}
-          choices={defaultModelChoices(settings.defaultAgent, policy, agentOptions)}
-          onChange={(defaultModel) => setSettings({ ...settings, defaultModel })}
-        />
-        <label>
-          Tool approval
-          <select
-            value={settings.permission}
-            onChange={(event) => setSettings({ ...settings, permission: event.target.value as Settings["permission"] })}
-          >
-            <option value="ask">Ask each time</option>
-            <option value="edits">Allow edits, ask for the rest</option>
-            <option value="allow">Allow everything</option>
-          </select>
-        </label>
-        <UserPreferences
-          settings={settings}
-          themes={themes}
-          fileEditorAllowed={fileEditorAllowed}
-          onChange={setSettings}
-        />
-        <div className="repo-admin">
-          {catalog.map((entry) => (
-            <label className="check repo-choice" key={entry.id}>
-              <input type="checkbox" checked={grants.has(entry.id)} onChange={() => toggleGrant(entry.id)} />
-              <span>
-                <strong>{entry.name}</strong>
-                <span>{entry.url}</span>
-              </span>
-            </label>
-          ))}
-          {catalog.length === 0 && <p className="muted">Add a repository to the catalog before granting one.</p>}
-        </div>
-        <button className="primary" type="submit" disabled={busy || allowed.length === 0}>Save access</button>
-      </form>
-
-      {commands != null && allowed.includes("cursor") && (
-        <form onSubmit={(event) => void saveCommands(event)}>
-          <h3>Cursor commands</h3>
-          <p className="muted">Shell commands Cursor may run for {username}. Saving changes this person only. Apply to all users, or Apply to this user, on the Agents tab replaces this list when it includes them.</p>
-          <CursorCommandFields value={commands} onChange={setCommands} />
-          <button className="primary" type="submit" disabled={busy}>Save commands</button>
-        </form>
-      )}
-
-      <form onSubmit={(event) => void saveEnv(event)}>
-        <h3>Environment</h3>
-        <p className="muted">Values in their ~/.env file. HOME, PATH, and loader variables are left alone when an agent starts.</p>
-        {env.map((entry, index) => (
-          <div className="env-row" key={index}>
-            <label>
-              Name
-              <input
-                value={entry.key}
-                onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item))}
-              />
-            </label>
-            <label>
-              Value
-              <input
-                value={entry.value}
-                onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))}
-              />
-            </label>
-            <button className="ghost" type="button" onClick={() => setEnv(env.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+      <header className="person-bar">
+        <div className="person-identity">
+          <div className="person-crumb">
+            <button className="person-back" type="button" onClick={onBack}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              All users
+            </button>
+            <span aria-hidden="true">/</span>
+            <strong>{username}</strong>
+            {profile && (
+              <span className="person-crumb-meta">({self ? "Administrator" : "User"} · UID: {profile.uid})</span>
+            )}
           </div>
-        ))}
-        <div className="row-actions">
-          <button className="ghost" type="button" onClick={() => setEnv([...env, { key: "", value: "" }])}>Add variable</button>
-          <button className="primary" type="submit" disabled={busy}>Save environment</button>
+          <div className="person-meta">
+            {profile ? (
+              <>
+                <span><strong>Home:</strong> <code>{profile.home}</code></span>
+                <span><strong>Shell:</strong> <code>{profile.shell}</code></span>
+                <span><strong>Last active:</strong> {lastActive ? relativeTime(lastActive) : lastActive === null ? "No conversations" : "…"}</span>
+              </>
+            ) : (
+              <span>Loading {username}…</span>
+            )}
+          </div>
         </div>
-      </form>
+        <div className="person-actions">
+          <button className="ghost" type="button" disabled={busy} onClick={() => setReloadToken((value) => value + 1)}>Refresh</button>
+          <button className="primary" type="submit" form="user-access" disabled={!ready || busy || allowed.length === 0}>[ Save changes ]</button>
+        </div>
+      </header>
+      <UserConversations
+        username={username}
+        agentNames={agentNames}
+        commandBlockStyle={commandBlockStyle}
+        reloadToken={reloadToken}
+        onActivity={setLastActive}
+      />
+      {!ready || !policy || !settings || !env || !identity ? (
+        <div className="person-card" aria-busy="true">
+          <p className="muted">Loading {username}…</p>
+          <div className="admin-skeleton wide" />
+          <div className="admin-skeleton" />
+          <div className="admin-skeleton short" />
+        </div>
+      ) : (
+        <>
+          <form id="user-access" className="person-stack" onSubmit={(event) => void saveAccess(event)}>
+            <section className="person-card" aria-labelledby="person-access">
+              <header className="person-card-head">
+                <PersonHeading id="person-access">Agents, modes, models and tools</PersonHeading>
+                <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+              </header>
+              <div>
+                <span className="person-label">Granted system tools</span>
+                <div className="person-chips">
+                  {globalAgents.map((agent) => (
+                    <ToolChip
+                      key={agent}
+                      label={agentLabel(agent, agentNames)}
+                      checked={policy.agents.includes(agent)}
+                      onChange={() => toggleAgent(agent)}
+                    />
+                  ))}
+                  <ToolChip label="Terminal" checked={policy.rawTerminal} onChange={() => setPolicy({ ...policy, rawTerminal: !policy.rawTerminal })} />
+                  <ToolChip label="File manager" checked={policy.fileManager} onChange={() => setPolicy({ ...policy, fileManager: !policy.fileManager })} />
+                  <ToolChip label="File editor" checked={policy.fileEditor !== false} onChange={() => setPolicy({ ...policy, fileEditor: !(policy.fileEditor !== false) })} />
+                  <ToolChip label="Download" checked={policy.fileDownload !== false} onChange={() => setPolicy({ ...policy, fileDownload: !(policy.fileDownload !== false) })} />
+                  <ToolChip label="Upload" checked={policy.fileUpload !== false} onChange={() => setPolicy({ ...policy, fileUpload: !(policy.fileUpload !== false) })} />
+                  <ToolChip label="Projects" checked={policy.projectCreate} onChange={() => setPolicy({ ...policy, projectCreate: !policy.projectCreate })} />
+                </div>
+                {globalAgents.length === 0 && <p className="muted">Turn on at least one agent above before assigning any.</p>}
+                {limits.map((note) => <p className="muted" key={note}>{note}</p>)}
+              </div>
+              <div className="person-alloc">
+                {allowed.map((agent) => {
+                  const config = agentOptions[agent];
+                  const modes = (config?.discovered.modes ?? []).filter((mode) => config?.offered.modes.includes(mode.id));
+                  const models = (config?.discovered.models ?? []).filter((model) => config?.offered.models.includes(model.id));
+                  return (
+                    <div className="person-alloc-card" key={`${agent}-options`}>
+                      <span className="person-kicker">{agentLabel(agent, agentNames)} allocations</span>
+                      {modes.length === 0 && models.length === 0 && (
+                        <p className="muted">Load modes and models for {agentLabel(agent, agentNames)} on the Agents tab before choosing any for this person.</p>
+                      )}
+                      {modes.length > 0 && (
+                        <div>
+                          <span className="person-label">Modes</span>
+                          <div className="person-chips">
+                            {modes.map((mode) => (
+                              <ToolChip key={mode.id} label={mode.name} checked={optionChecked(agent, "modes", mode.id)} onChange={() => toggleOption(agent, "modes", mode.id)} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {models.length > 0 && (
+                        <div>
+                          <span className="person-label">Allowed models</span>
+                          <div className="person-chips">
+                            {models.map((model) => (
+                              <ToolChip
+                                key={model.id}
+                                label={displayModelName(model.id, model.name)}
+                                checked={optionChecked(agent, "models", model.id)}
+                                onChange={() => toggleOption(agent, "models", model.id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="person-fields">
+                <label>
+                  Default agent
+                  <select
+                    value={settings.defaultAgent}
+                    onChange={(event) => chooseDefaultAgent(event.target.value as AgentId)}
+                  >
+                    {allowed.map((agent) => <option key={agent} value={agent}>{agentLabel(agent, agentNames)}</option>)}
+                  </select>
+                </label>
+                <DefaultModelField
+                  agent={settings.defaultAgent}
+                  model={settings.defaultModel}
+                  choices={defaultModelChoices(settings.defaultAgent, policy, agentOptions)}
+                  onChange={(defaultModel) => setSettings({ ...settings, defaultModel })}
+                />
+                <label>
+                  Tool approval
+                  <select
+                    value={settings.permission}
+                    onChange={(event) => setSettings({ ...settings, permission: event.target.value as Settings["permission"] })}
+                  >
+                    <option value="ask">Ask each time</option>
+                    <option value="edits">Allow edits, ask for the rest</option>
+                    <option value="allow">Allow everything</option>
+                  </select>
+                </label>
+              </div>
+              <div>
+                <span className="person-label">Repositories</span>
+                <div className="person-repos">
+                  {catalog.map((entry) => (
+                    <label className="person-repo" key={entry.id}>
+                      <input type="checkbox" checked={grants.has(entry.id)} onChange={() => toggleGrant(entry.id)} />
+                      <span>
+                        <strong>{entry.name}</strong>
+                        <span>{entry.url}</span>
+                      </span>
+                    </label>
+                  ))}
+                  {catalog.length === 0 && <p className="muted">Add a repository to the catalog before granting one.</p>}
+                </div>
+              </div>
+            </section>
+            <UserPreferences
+              settings={settings}
+              themes={themes}
+              fileEditorAllowed={fileEditorAllowed}
+              onChange={setSettings}
+            />
+          </form>
 
-      <form onSubmit={(event) => void saveGit(event)}>
-        <h3>Git identity</h3>
-        <p className="muted">Saved as their global git name and email. This does not rename the Linux account.</p>
-        <label>
-          Name
-          <input autoComplete="name" value={gitName} onChange={(event) => setGitName(event.target.value)} required />
-        </label>
-        <label>
-          Email
-          <input type="email" autoComplete="email" value={gitEmail} onChange={(event) => setGitEmail(event.target.value)} required />
-        </label>
-        <button className="primary" type="submit" disabled={busy}>Save git identity</button>
-      </form>
-
-      {!self && (
-        <form onSubmit={(event) => void savePassword(event)}>
-          <h3>Password</h3>
-          <label>
-            New password
-            <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-          </label>
-          <label>
-            Confirm password
-            <input type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required />
-          </label>
-          <button className="primary" type="submit" disabled={busy}>Change password</button>
-        </form>
-      )}
-
-      {!self && (
-        <div className="remove-account">
-          <h3>Remove account</h3>
-          <p className="muted">This deletes the Linux account for {username} and leaves their home directory in place.</p>
-          {confirmRemove ? (
-            <div className="row-actions">
-              <button className="danger" type="button" disabled={busy} onClick={() => void remove()}>Confirm removal</button>
-              <button className="ghost" type="button" disabled={busy} onClick={() => setConfirmRemove(false)}>Cancel</button>
-            </div>
-          ) : (
-            <button className="danger" type="button" disabled={busy} onClick={() => setConfirmRemove(true)}>Remove account</button>
+          {commands != null && allowed.includes("cursor") && (
+            <form className="person-card" onSubmit={(event) => void saveCommands(event)}>
+              <header className="person-card-head person-card-head-row">
+                <div>
+                  <PersonHeading>Cursor shell command whitelist</PersonHeading>
+                  <p className="muted">Shell commands Cursor may run for {username}. Saving changes this person only. Apply to all users, or Apply to this user, on the Agents tab replaces this list when it includes them.</p>
+                </div>
+                <button className="primary" type="submit" disabled={busy}>[ Save commands ]</button>
+              </header>
+              <div className="person-terminal">
+                <div className="person-terminal-bar">
+                  <span>Allowed executables, one per line</span>
+                  <span>{commandLines(commands).length} commands</span>
+                </div>
+                <textarea
+                  aria-label="Allowed commands"
+                  rows={8}
+                  value={commands}
+                  spellCheck={false}
+                  onChange={(event) => setCommands(event.target.value)}
+                />
+                <p className="person-terminal-foot">One command per line, such as ls or npm install. These are stored as Shell entries. Write paths already in the Cursor config stay.</p>
+              </div>
+            </form>
           )}
-        </div>
+
+          <div className="person-split">
+            <form className="person-card" onSubmit={(event) => void saveEnv(event)}>
+              <header className="person-card-head person-card-head-row">
+                <div>
+                  <PersonHeading>Environment</PersonHeading>
+                  <p className="muted">Values in their ~/.env file. HOME, PATH, and loader variables are left alone when an agent starts.</p>
+                </div>
+                <button className="ghost" type="button" onClick={() => setEnv([...env, { key: "", value: "" }])}>Add variable</button>
+              </header>
+              <div className="person-env-list">
+                {env.map((entry, index) => (
+                  <div className="person-env" key={index}>
+                    <div className="person-env-label">
+                      <span>Name</span>
+                      <button className="person-remove" type="button" onClick={() => setEnv(env.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+                    </div>
+                    <input
+                      aria-label={`Variable name ${index + 1}`}
+                      value={entry.key}
+                      onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item))}
+                    />
+                    <span className="person-env-label">Value</span>
+                    <input
+                      aria-label={`Variable value ${index + 1}`}
+                      value={entry.value}
+                      onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="person-card-foot">
+                <button className="primary" type="submit" disabled={busy}>[ Save environment ]</button>
+              </div>
+            </form>
+
+            <form className="person-card" onSubmit={(event) => void saveGit(event)}>
+              <header className="person-card-head">
+                <PersonHeading>Git identity</PersonHeading>
+                <p className="muted">Saved as their global git name and email. This does not rename the Linux account.</p>
+              </header>
+              <label>
+                Name
+                <input autoComplete="name" value={gitName} onChange={(event) => setGitName(event.target.value)} required />
+              </label>
+              <label>
+                Email
+                <input type="email" autoComplete="email" value={gitEmail} onChange={(event) => setGitEmail(event.target.value)} required />
+              </label>
+              <div className="person-card-foot">
+                <button className="primary" type="submit" disabled={busy}>[ Save git identity ]</button>
+              </div>
+            </form>
+          </div>
+
+          {!self && (
+            <div className="person-split">
+              <form className="person-card" onSubmit={(event) => void savePassword(event)}>
+                <header className="person-card-head">
+                  <PersonHeading>Security and password</PersonHeading>
+                  <p className="muted">Update the password for this account.</p>
+                </header>
+                <label>
+                  New password
+                  <input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+                </label>
+                <label>
+                  Confirm password
+                  <input type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} required />
+                </label>
+                <div className="person-card-foot">
+                  <button className="primary" type="submit" disabled={busy}>[ Change password ]</button>
+                </div>
+              </form>
+              <div className="person-card person-danger-card">
+                <header className="person-card-head person-card-head-row">
+                  <div>
+                    <h2>
+                      <span className="person-mark person-mark-danger" aria-hidden="true" />
+                      Danger zone
+                    </h2>
+                    <p className="muted">This deletes the Linux account for {username} and leaves their home directory in place.</p>
+                  </div>
+                  <span className="person-restricted">Restricted</span>
+                </header>
+                {confirmRemove ? (
+                  <div className="row-actions">
+                    <button className="danger" type="button" disabled={busy} onClick={() => void remove()}>Confirm removal</button>
+                    <button className="ghost" type="button" disabled={busy} onClick={() => setConfirmRemove(false)}>Cancel</button>
+                  </div>
+                ) : (
+                  <button className="danger person-danger-btn" type="button" disabled={busy} onClick={() => setConfirmRemove(true)}>[ Remove account ]</button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1858,26 +1951,32 @@ function UserConversations({
   username,
   agentNames,
   commandBlockStyle,
+  reloadToken,
+  onActivity,
 }: {
   username: string;
   agentNames?: AgentName[];
   commandBlockStyle: CommandBlockStyle;
+  reloadToken: number;
+  onActivity: (iso: string | null) => void;
 }) {
   const [chats, setChats] = useState<ChatMeta[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ChatDetail | null>(null);
   const [detailFailed, setDetailFailed] = useState(false);
   const report = useReportError();
   const [detailBusy, setDetailBusy] = useState(false);
   const openRef = useRef<string | null>(null);
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
 
   const load = useCallback(async () => {
-    setBusy(true);
     setFailed(false);
     try {
       const next = await listUserChats(username);
+      const newest = next.reduce((latest, chat) => chat.updatedAt > latest ? chat.updatedAt : latest, "");
+      onActivityRef.current(newest || null);
       setChats(next);
       setOpenId((current) => {
         const kept = current && next.some((chat) => chat.id === current) ? current : null;
@@ -1887,8 +1986,6 @@ function UserConversations({
     } catch (err) {
       setFailed(true);
       report("Conversations", err);
-    } finally {
-      setBusy(false);
     }
   }, [username, report]);
 
@@ -1898,7 +1995,7 @@ function UserConversations({
     setDetail(null);
     setDetailFailed(false);
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   const blocks = useMemo(() => groupTranscript(detail?.transcript ?? []), [detail]);
 
@@ -1930,15 +2027,17 @@ function UserConversations({
   }
 
   return (
-    <section className="user-conversations" aria-label="Conversations">
-      <div className="user-conversations-head">
-        <h3>Conversations</h3>
-        <button className="ghost" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Loading…" : "Refresh"}</button>
-      </div>
-      <p className="muted">What this user asked each agent, with the agent's replies.</p>
-      {chats && chats.length === 0 && <p className="muted">No conversations yet.</p>}
-      {!chats && !failed && <p className="muted">Loading conversations…</p>}
-      {failed && !chats && <p className="muted">Conversations could not be loaded.</p>}
+    <section className="person-card user-conversations" aria-labelledby="person-chats">
+      <header className="person-card-head person-card-head-row">
+        <div>
+          <PersonHeading id="person-chats">Recent user conversations</PersonHeading>
+          <p className="muted">What this user asked each agent, with the agent's replies.</p>
+        </div>
+        {chats && <span className="person-count">{chats.length} {chats.length === 1 ? "thread" : "threads"}</span>}
+      </header>
+      {chats && chats.length === 0 && <p className="muted person-pad">No conversations yet.</p>}
+      {!chats && !failed && <p className="muted person-pad">Loading conversations…</p>}
+      {failed && !chats && <p className="muted person-pad">Conversations could not be loaded.</p>}
       <div className="user-chat-list">
         {chats?.map((chat) => (
           <div className={openId === chat.id ? "user-chat open" : "user-chat"} key={chat.id}>
@@ -1948,14 +2047,15 @@ function UserConversations({
               aria-expanded={openId === chat.id}
               onClick={() => void open(chat)}
             >
-              <strong>{chat.title}</strong>
-              <span>
-                {agentLabel(chat.agent, agentNames)}
-                {" · "}
-                {workspaceName(chat.workspace)}
-                {chat.updatedAt ? ` · ${relativeTime(chat.updatedAt)}` : ""}
-                {chat.running ? " · Running" : ""}
+              <span className="user-chat-copy">
+                <strong><span className="person-prompt" aria-hidden="true">❯</span> {chat.title}</strong>
+                <span>
+                  <span className="person-badge">{agentLabel(chat.agent, agentNames)} · {workspaceName(chat.workspace)}</span>
+                  {chat.updatedAt ? <span>{relativeTime(chat.updatedAt)}</span> : null}
+                  {chat.running ? <span>Running</span> : null}
+                </span>
               </span>
+              <span className="user-chat-view">{openId === chat.id ? "Hide chat" : "View chat"}</span>
             </button>
             {openId === chat.id && (
               <div className="user-transcript" aria-live="polite">

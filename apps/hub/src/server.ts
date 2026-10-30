@@ -630,6 +630,7 @@ export function createHub(options: HubOptions) {
         username: target.username,
         home: target.home,
         uid: target.uid,
+        shell: target.shell,
         ...access,
         settings: { ...access.settings, theme: resolveTheme(access.settings.theme, themes.map((theme) => theme.id)) },
         themes,

@@ -99,6 +99,7 @@ export interface UserBundle extends UserAccess {
   username: string;
   home: string;
   uid: number;
+  shell: string;
   themes?: ExtensionTheme[];
 }
 

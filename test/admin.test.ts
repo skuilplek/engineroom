@@ -238,7 +238,11 @@ test("the administrator sets agents and accounts", async () => {
 
     const carolAccess = await fetch(`${base}/api/admin/users/carol`, { headers });
     assert.equal(carolAccess.status, 200);
-    assert.ok(Array.isArray(((await carolAccess.json()) as { themes?: unknown }).themes));
+    const carolBody = (await carolAccess.json()) as { themes?: unknown; shell?: string; home?: string; uid?: number };
+    assert.ok(Array.isArray(carolBody.themes));
+    assert.equal(carolBody.shell, "/bin/bash");
+    assert.equal(carolBody.home, carolHome);
+    assert.equal(typeof carolBody.uid, "number");
 
     const themed = await fetch(`${base}/api/admin/users/carol/settings`, {
       method: "PUT",
