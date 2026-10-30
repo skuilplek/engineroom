@@ -143,7 +143,9 @@ async function streamAgent(options: {
     emit({ type: "done", agentSessionId: parser.sessionId });
     return { agentSessionId: parser.sessionId ?? options.sessionId };
   }
-  if (result.code !== 0 && !sawDone) {
+  const flushed = parser.finish();
+  for (const event of flushed) emit(event);
+  if (result.code !== 0 && !sawDone && !flushed.some((event) => event.type === "error")) {
     const detail = result.stderr.trim().split("\n").slice(-4).join("\n");
     emit({ type: "error", text: detail || `${options.agent} exited with code ${result.code}` });
   }

@@ -309,8 +309,6 @@ export interface AgentOptionList {
   models: string[];
 }
 
-export type PiAuth = "user" | "shared";
-
 export interface UserPolicy {
   agents: AgentId[];
   binaries: Partial<Record<AgentId, string>>;
@@ -320,8 +318,6 @@ export interface UserPolicy {
   fileDownload: boolean;
   fileUpload: boolean;
   projectCreate: boolean;
-  /** Omitted means this person uses the site Pi login choice. */
-  piAuth?: PiAuth;
   /** Omitted means the person inherits the machine offer. */
   options?: Partial<Record<AgentId, AgentOptionList>>;
 }
@@ -469,9 +465,11 @@ export type RunnerRequest =
   | { id: string; type: "import_session"; agent?: AgentId; agentSessionId: string; workspace?: string }
   | { id: string; type: "probe_agent"; agent: AgentId }
   | { id: string; type: "resolve_commands"; names: string[]; refresh?: boolean }
-  | { id: string; type: "put_pi_site"; install: "user" | "global"; auth: PiAuth }
-  | { id: string; type: "put_agent_binaries"; binaries: Partial<Record<AgentId, string>>; allowOverride: AgentId[] }
-  | { id: string; type: "setup_pi"; provider: string; model: string; linkShared: boolean }
+  | { id: string; type: "setup_pi"; provider: string; model: string }
+  | { id: string; type: "apply_harness_defaults"; agent: "pi"; provider: string; model: string }
+  | { id: string; type: "apply_harness_defaults"; agent: "cursor"; writeModel: boolean; commands: string[] }
+  | { id: string; type: "get_cursor_commands" }
+  | { id: string; type: "put_cursor_commands"; commands: string[] }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_extensions" }
   | { id: string; type: "install_extension"; source: string }
@@ -625,6 +623,15 @@ export function cleanModel(value: unknown): string {
   return model;
 }
 
+const OPENROUTER_PREFIX = "openrouter/";
+
+/** Label for a model choice. OpenRouter ids keep their prefix; the list shows the model path. */
+export function displayModelName(id: string, name = ""): string {
+  const label = (name || id).trim();
+  if (id.startsWith(OPENROUTER_PREFIX) && label.startsWith(OPENROUTER_PREFIX)) return label.slice(OPENROUTER_PREFIX.length);
+  return label;
+}
+
 export function cleanTitle(value: unknown): string {
   if (typeof value !== "string") return "";
   const title = value.replace(/\s+/g, " ").trim();
@@ -732,6 +739,7 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "get_policy":
     case "get_env":
     case "get_access":
+    case "get_cursor_commands":
       return { id: body.id, type: body.type };
     case "put_policy":
       return { id: body.id, type: "put_policy", policy: parseUserPolicy(body.policy) };
@@ -830,22 +838,17 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
         names: parseCommandNames(body.names),
         refresh: body.refresh === true,
       };
-    case "put_pi_site":
-      if (body.install !== "user" && body.install !== "global") throw new Error("invalid pi install");
-      if (body.auth !== "user" && body.auth !== "shared") throw new Error("invalid pi auth");
-      return { id: body.id, type: "put_pi_site", install: body.install, auth: body.auth };
-    case "put_agent_binaries": {
-      const site = parseAgentBinarySite(body);
-      return { id: body.id, type: "put_agent_binaries", binaries: site.binaries, allowOverride: site.allowOverride };
-    }
     case "setup_pi":
       return {
         id: body.id,
         type: "setup_pi",
         provider: parsePiValue(body.provider, "pi provider"),
         model: parsePiValue(body.model, "pi model"),
-        linkShared: body.linkShared === true,
       };
+    case "apply_harness_defaults":
+      return parseHarnessDefaults(body);
+    case "put_cursor_commands":
+      return { id: body.id, type: "put_cursor_commands", commands: parseShellCommands(body.commands) };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "list_extensions":
@@ -1458,25 +1461,6 @@ function agentKeys(value: unknown): string[] {
   return keys;
 }
 
-export interface AgentBinarySite {
-  binaries: Partial<Record<AgentId, string>>;
-  allowOverride: AgentId[];
-}
-
-export function parseAgentBinarySite(value: unknown): AgentBinarySite {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid binaries");
-  const body = value as Record<string, unknown>;
-  const binaries = parsePolicyBinaries(body.binaries ?? {});
-  if (body.allowOverride == null) return { binaries, allowOverride: [] };
-  if (!Array.isArray(body.allowOverride) || body.allowOverride.length > MAX_AGENTS) throw new Error("invalid binaries");
-  const allowOverride: AgentId[] = [];
-  for (const item of body.allowOverride) {
-    if (!isAgentId(item) || allowOverride.includes(item)) throw new Error("invalid agent");
-    allowOverride.push(item);
-  }
-  return { binaries, allowOverride };
-}
-
 export function parsePolicyBinaries(value: unknown): Partial<Record<AgentId, string>> {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid binaries");
@@ -1514,7 +1498,6 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   const fileUpload = body.fileUpload == null ? true : body.fileUpload;
   const projectCreate = body.projectCreate == null ? true : body.projectCreate;
   const options = parsePolicyOptions(body.options);
-  const piAuth = parsePiAuth(body.piAuth);
   return {
     agents,
     binaries: parsePolicyBinaries(body.binaries),
@@ -1524,15 +1507,8 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     fileDownload,
     fileUpload,
     projectCreate,
-    ...(piAuth ? { piAuth } : {}),
     ...(options ? { options } : {}),
   };
-}
-
-function parsePiAuth(value: unknown): PiAuth | undefined {
-  if (value == null || value === "") return undefined;
-  if (value === "user" || value === "shared") return value;
-  throw new Error("invalid pi auth");
 }
 
 export function parsePiValue(value: unknown, label: string): string {
@@ -1541,6 +1517,126 @@ export function parsePiValue(value: unknown, label: string): string {
     throw new Error(`invalid ${label}`);
   }
   return value;
+}
+
+export const CURSOR_DEFAULT_MODEL_ID = "grok-4.7";
+export const CURSOR_DEFAULT_MODEL_NAME = "Grok 4.7 256K High";
+export const CURSOR_DEFAULT_PARAMETERS: { id: string; value: string }[] = [
+  { id: "context", value: "256k" },
+  { id: "reasoning_effort", value: "high" },
+  { id: "fast", value: "false" },
+];
+
+const SHELL_COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._+/-]*(?: [A-Za-z0-9][A-Za-z0-9._+/-]*)*$/;
+
+export function parseShellCommands(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 200) throw new Error("invalid commands");
+  const commands: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") throw new Error("invalid commands");
+    const name = item.trim();
+    if (!name || name.length > 64 || !SHELL_COMMAND_RE.test(name)) throw new Error("invalid commands");
+    if (!commands.includes(name)) commands.push(name);
+  }
+  return commands;
+}
+
+export function shellAllowEntry(name: string): string {
+  const commands = parseShellCommands([name]);
+  return `Shell(${commands[0]})`;
+}
+
+export function isShellAllowEntry(value: string): boolean {
+  return value.startsWith("Shell(") && value.endsWith(")");
+}
+
+export function readShellCommands(current: unknown): string[] {
+  const permissions = plainRecord(plainRecord(current)?.permissions);
+  const allow = Array.isArray(permissions?.allow) ? permissions.allow : [];
+  const commands: string[] = [];
+  for (const item of allow) {
+    if (typeof item !== "string" || !isShellAllowEntry(item)) continue;
+    const name = item.slice("Shell(".length, -1).trim();
+    if (!name || name.length > 64 || !SHELL_COMMAND_RE.test(name) || commands.includes(name)) continue;
+    commands.push(name);
+  }
+  return commands;
+}
+
+export function piDefaultAllowed(models: readonly { id: string }[], provider: string, model: string): boolean {
+  if (!provider || !model) return false;
+  const full = `${provider}/${model}`;
+  return models.some((item) => item.id === model || item.id === full);
+}
+
+export function mergePiDefaults(current: unknown, provider: string, model: string): Record<string, unknown> {
+  const next = { ...(plainRecord(current) ?? {}) };
+  next.defaultProvider = provider;
+  next.defaultModel = model;
+  return next;
+}
+
+export function mergeCursorConfig(
+  current: unknown,
+  patch: { writeModel?: boolean; commands?: string[] | null },
+): Record<string, unknown> {
+  const next = { ...(plainRecord(current) ?? {}) };
+  if (patch.writeModel) {
+    const parameters = cursorParameters();
+    const existing = plainRecord(next.model) ?? {};
+    next.model = {
+      ...existing,
+      modelId: CURSOR_DEFAULT_MODEL_ID,
+      displayModelId: CURSOR_DEFAULT_MODEL_ID,
+      displayName: CURSOR_DEFAULT_MODEL_NAME,
+      displayNameShort: CURSOR_DEFAULT_MODEL_NAME,
+      aliases: Array.isArray(existing.aliases) ? existing.aliases : [],
+      maxMode: false,
+    };
+    next.selectedModel = { modelId: CURSOR_DEFAULT_MODEL_ID, parameters };
+    const modelParameters = { ...(plainRecord(next.modelParameters) ?? {}) };
+    modelParameters[CURSOR_DEFAULT_MODEL_ID] = cursorParameters();
+    next.modelParameters = modelParameters;
+    next.hasChangedDefaultModel = true;
+  }
+  if (patch.commands != null) {
+    const permissions = { ...(plainRecord(next.permissions) ?? {}) };
+    const allow = Array.isArray(permissions.allow) ? permissions.allow : [];
+    const kept = allow.filter((item) => !(typeof item === "string" && isShellAllowEntry(item)));
+    permissions.allow = [...patch.commands.map((name) => shellAllowEntry(name)), ...kept];
+    next.permissions = permissions;
+  }
+  return next;
+}
+
+function cursorParameters(): { id: string; value: string }[] {
+  return CURSOR_DEFAULT_PARAMETERS.map((item) => ({
+    id: item.id,
+    value: item.id === "fast" ? "false" : item.value,
+  }));
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function parseHarnessDefaults(body: Record<string, unknown>): RunnerRequest {
+  if (body.agent === "pi") {
+    const provider = parsePiValue(body.provider, "pi provider");
+    const model = parsePiValue(body.model, "pi model");
+    if (!provider || !model) throw new Error("invalid pi model");
+    return { id: body.id as string, type: "apply_harness_defaults", agent: "pi", provider, model };
+  }
+  if (body.agent !== "cursor") throw new Error("invalid agent");
+  if (typeof body.writeModel !== "boolean") throw new Error("invalid model");
+  return {
+    id: body.id as string,
+    type: "apply_harness_defaults",
+    agent: "cursor",
+    writeModel: body.writeModel,
+    commands: parseShellCommands(body.commands),
+  };
 }
 
 export function parseOptionIds(value: unknown, label: string): string[] {

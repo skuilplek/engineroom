@@ -3,6 +3,7 @@ import {
   AGENTS,
   agentLabel,
   DEFAULT_FILE_VISIBILITY,
+  displayModelName,
   type AgentId,
   type AgentName,
   type AgentOptionChoice,
@@ -17,9 +18,11 @@ import {
 } from "@engineroom/protocol";
 import { PackagesSection } from "./PackagesSection.tsx";
 import { ServerConfig } from "./ServerConfig.tsx";
+import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
 import {
   addAccount,
   addCatalog,
+  applyAgentDefaults,
   changePassword,
   createCustomAgent,
   deleteCustomAgent,
@@ -27,6 +30,7 @@ import {
   getRepoDirectory,
   getUserAccess,
   getUserChat,
+  getUserCursorCommands,
   listAccounts,
   listAdminAgents,
   listCatalog,
@@ -37,6 +41,7 @@ import {
   saveAgentOptions,
   saveAgents,
   saveBranding,
+  saveUserCursorCommands,
   saveUserEnv,
   saveUserGrants,
   saveUserPolicy,
@@ -45,6 +50,7 @@ import {
   serverOverview,
   type Account,
   type AgentOptionsState,
+  type HarnessApplyResult,
   type ServerOverview,
   type AdminAgent,
   type Session,
@@ -73,11 +79,9 @@ type OfferSnapshot = {
   fileEditor: boolean;
   fileDownload: boolean;
   fileUpload: boolean;
-  binaries: Record<string, string>;
-  allowOverride: Record<string, boolean>;
-  piAuth: "user" | "shared";
   piProvider: string;
   piModel: string;
+  cursorCommands: string[];
   offered: Partial<Record<string, { modes: string[]; models: string[] }>>;
 };
 
@@ -122,11 +126,10 @@ export function AdminView({
   const [fileEditor, setFileEditor] = useState(session.fileEditor ?? true);
   const [fileDownload, setFileDownload] = useState(session.fileDownloadOffered ?? false);
   const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
-  const [binaryDraft, setBinaryDraft] = useState<Record<string, string>>({});
-  const [allowOverride, setAllowOverride] = useState<Record<string, boolean>>({});
-  const [piAuth, setPiAuth] = useState<"user" | "shared">("user");
   const [piProvider, setPiProvider] = useState("");
   const [piModel, setPiModel] = useState("");
+  const [cursorCommandText, setCursorCommandText] = useState("");
+  const [applyUser, setApplyUser] = useState("");
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
@@ -177,6 +180,7 @@ export function AdminView({
   async function refreshUsers() {
     const next = await listAccounts();
     setAccounts(next);
+    setApplyUser((current) => next.some((account) => account.username === current) ? current : "");
     return next;
   }
 
@@ -205,12 +209,9 @@ export function AdminView({
       setFileEditor(body.fileEditor ?? true);
       setFileDownload(body.fileDownload ?? false);
       setFileUpload(body.fileUpload ?? false);
-      const drafts = draftsFrom(body.agents);
-      setBinaryDraft(drafts.binaries);
-      setAllowOverride(drafts.allowOverride);
-      setPiAuth(body.piAuth === "shared" ? "shared" : "user");
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
+      setCursorCommandText((body.cursorCommands ?? []).join("\n"));
       setSavedOffer((current) => ({
         ...current,
         flags: nextFlags,
@@ -220,13 +221,11 @@ export function AdminView({
         fileEditor: body.fileEditor ?? true,
         fileDownload: body.fileDownload ?? false,
         fileUpload: body.fileUpload ?? false,
-        binaries: drafts.binaries,
-        allowOverride: drafts.allowOverride,
-        piAuth: body.piAuth === "shared" ? "shared" : "user",
         piProvider: body.piProvider ?? "",
         piModel: body.piModel ?? "",
+        cursorCommands: [...(body.cursorCommands ?? [])],
       }));
-      const first = body.agents.find((agent) => agent.available);
+      const first = body.agents[0];
       setAgentTab(first?.id ?? "+");
     }).catch((err) => setError(message(err)));
     getAgentOptions().then((options) => {
@@ -253,10 +252,7 @@ export function AdminView({
   function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
-    const drafts = draftsFrom(body.agents);
     setFlags(nextFlags);
-    setBinaryDraft(drafts.binaries);
-    setAllowOverride(drafts.allowOverride);
     setRawTerminal(body.rawTerminal);
     setCliImport(body.cliImport);
     if (typeof body.fileManager === "boolean") setFileManager(body.fileManager);
@@ -272,8 +268,6 @@ export function AdminView({
       fileEditor: typeof body.fileEditor === "boolean" ? body.fileEditor : current.fileEditor,
       fileDownload: typeof body.fileDownload === "boolean" ? body.fileDownload : current.fileDownload,
       fileUpload: typeof body.fileUpload === "boolean" ? body.fileUpload : current.fileUpload,
-      binaries: drafts.binaries,
-      allowOverride: drafts.allowOverride,
     }));
     if (select) setAgentTab(select);
   }
@@ -301,13 +295,11 @@ export function AdminView({
     setSaved("");
     setError("");
     try {
-      const binaries = binaryPayload(inventory, binaryDraft);
+      const commands = commandLines(cursorCommandText);
       const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, {
-        piAuth,
         piProvider: piProvider.trim(),
         piModel: piModel.trim(),
-        binaries,
-        allowOverride,
+        cursorCommands: commands,
       });
       onAgents(
         savedAgents.agents,
@@ -334,11 +326,9 @@ export function AdminView({
       }
       setPiProvider(provider);
       setPiModel(model);
+      setCursorCommandText(commands.join("\n"));
       const listed = await listAdminAgents();
-      const drafts = draftsFrom(listed.agents);
       setInventory(listed.agents);
-      setBinaryDraft(drafts.binaries);
-      setAllowOverride(drafts.allowOverride);
       setSavedOffer({
         flags,
         rawTerminal: savedAgents.rawTerminal ?? rawTerminal,
@@ -347,11 +337,9 @@ export function AdminView({
         fileEditor: savedAgents.fileEditor ?? fileEditor,
         fileDownload: savedAgents.fileDownload ?? fileDownload,
         fileUpload: savedAgents.fileUpload ?? fileUpload,
-        binaries: drafts.binaries,
-        allowOverride: drafts.allowOverride,
-        piAuth: savedAgents.piAuth === "shared" ? "shared" : piAuth,
         piProvider: savedAgents.piProvider ?? provider,
         piModel: savedAgents.piModel ?? model,
+        cursorCommands: [...(savedAgents.cursorCommands ?? commands)],
         offered: cloneOffered(offered),
       });
       onAccess();
@@ -371,11 +359,9 @@ export function AdminView({
     setFileEditor(savedOffer.fileEditor);
     setFileDownload(savedOffer.fileDownload);
     setFileUpload(savedOffer.fileUpload);
-    setBinaryDraft(savedOffer.binaries);
-    setAllowOverride(savedOffer.allowOverride);
-    setPiAuth(savedOffer.piAuth);
     setPiProvider(savedOffer.piProvider);
     setPiModel(savedOffer.piModel);
+    setCursorCommandText(savedOffer.cursorCommands.join("\n"));
     setOfferedDraft(cloneOffered(savedOffer.offered));
     setError("");
   }
@@ -396,13 +382,24 @@ export function AdminView({
     fileEditor,
     fileDownload,
     fileUpload,
-    binaries: binaryDraft,
-    allowOverride,
-    piAuth,
     piProvider,
     piModel,
+    cursorCommands: commandLines(cursorCommandText),
     offered: offeredDraft,
   }, savedOffer);
+
+  async function applyDefaults(agent: "pi" | "cursor", username?: string) {
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      setSaved(formatApply(agent, await applyAgentDefaults(agent, username || undefined)));
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function toggleOffered(agent: AgentId, kind: "modes" | "models", id: string) {
     setOfferedDraft((current) => {
@@ -420,10 +417,10 @@ export function AdminView({
     try {
       const saved = await createCustomAgent(customLabel.trim(), customCommand.trim());
       const created = saved.agents.find((agent) => !agent.builtin && agent.label === customLabel.trim() && agent.binary === customCommand.trim());
-      applyInventory(saved, created?.available ? created.id : "+");
+      applyInventory(saved, created?.id ?? "+");
       setCustomLabel("");
       setCustomCommand("");
-      setSaved(created?.available ? `${created.label} added` : "Agent saved. It will appear when the command is installed.");
+      setSaved(created ? `${created.label} added. Offer it, then each person can use it after they install ${created.binary}.` : "Agent added");
     } catch (err) {
       setError(message(err));
     } finally {
@@ -437,7 +434,7 @@ export function AdminView({
     setError("");
     try {
       const saved = await deleteCustomAgent(id);
-      const next = saved.agents.find((agent) => agent.available)?.id ?? "+";
+      const next = saved.agents[0]?.id ?? "+";
       applyInventory(saved, agentTab === id ? next : agentTab);
       setSaved("Agent removed");
     } catch (err) {
@@ -451,7 +448,7 @@ export function AdminView({
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
     event.stopPropagation();
-    const ids = [...inventory.filter((agent) => agent.available).map((agent) => agent.id), "+"];
+    const ids = [...inventory.map((agent) => agent.id), "+"];
     const index = Math.max(0, ids.indexOf(agentTab));
     const step = event.key === "ArrowRight" ? 1 : -1;
     const next = ids[(index + step + ids.length) % ids.length];
@@ -569,14 +566,9 @@ export function AdminView({
 
   const names = inventory.length > 0 ? inventory : session.agentCatalog;
   const offered = inventory.length > 0
-    ? inventory.filter((agent) => flags[agent.id] && (agent.builtin || agent.available)).map((agent) => agent.label)
+    ? inventory.filter((agent) => agent.packageName ? agent.enabled : Boolean(flags[agent.id])).map((agent) => agent.label)
     : session.agents.map((agent) => agentLabel(agent, session.agentCatalog));
-  const installed = inventory.filter((agent) => agent.builtin || agent.available);
-  const selectedAgent = installed.find((agent) => agent.id === agentTab);
-  const piRecord = inventory.find((agent) => agent.id === "pi");
-  const piDraft = (binaryDraft.pi ?? "").trim();
-  const piGlobal = Boolean(piDraft || (piRecord?.pathSource === "detected" && piRecord.path));
-  const missingCustom = inventory.filter((agent) => !agent.builtin && !agent.available);
+  const selectedAgent = inventory.find((agent) => agent.id === agentTab);
 
   return (
     <div className="settings admin-view">
@@ -659,7 +651,7 @@ export function AdminView({
               <section className="agents-card">
                 <div className="agents-card-head">
                   <h2>Available agents</h2>
-                  <p className="muted">These are the agents this machine offers. A person can only use the ones you also allow for them. Each command is found with which on the admin account. A server path is saved for everyone. If there is no server path, set the full path, or leave it blank so each person with that agent uses their own command.</p>
+                  <p className="muted">Offer an agent here, then allow it for each person. They can use it only while that offer is on and the command is installed on their account.</p>
                 </div>
                 <div className="agents-privileges">
                   <span className="eyebrow">Global tooling</span>
@@ -692,8 +684,8 @@ export function AdminView({
                 </div>
               </section>
               <div className="agent-switcher">
-                <div className="agent-tabs" role="tablist" aria-label="Installed agents" onKeyDown={onAgentTabKey}>
-                  {installed.map((agent) => (
+                <div className="agent-tabs" role="tablist" aria-label="Agents" onKeyDown={onAgentTabKey}>
+                  {inventory.map((agent) => (
                     <button
                       className={agentTab === agent.id ? "admin-tab active" : "admin-tab"}
                       id={`agent-tab-${agent.id}`}
@@ -733,44 +725,12 @@ export function AdminView({
                   <p className="muted">Offered while the {selectedAgent.packageName} package is enabled.</p>
                 )}
               </div>
-              {installed.length === 0 && agentTab !== "+" && <p className="muted">No agents are installed on this machine.</p>}
+              {inventory.length === 0 && agentTab !== "+" && <p className="muted">No agents are configured.</p>}
               {selectedAgent && (
                 <div className="agents-stack" role="tabpanel" aria-labelledby={`agent-tab-${selectedAgent.id}`}>
                   <section className="agents-card">
-                    <h3>Binary</h3>
-                    {selectedAgent.pathSource === "detected" && selectedAgent.path ? (
-                      <>
-                        <p className="binary-path">{selectedAgent.path}</p>
-                        <p className="muted">Found with which on the admin account. This server path is used for everyone.</p>
-                      </>
-                    ) : (
-                      <>
-                        <label>
-                          Full path
-                          <input
-                            aria-label={`${selectedAgent.label} binary`}
-                            value={binaryDraft[selectedAgent.id] ?? ""}
-                            placeholder="/usr/local/bin/…"
-                            spellCheck={false}
-                            autoCapitalize="off"
-                            autoCorrect="off"
-                            onChange={(event) => setBinaryDraft({ ...binaryDraft, [selectedAgent.id]: event.target.value })}
-                          />
-                        </label>
-                        <p className="muted">which did not find a server install. Set the full path, or leave this blank. People with this agent enabled then use the command on their own account.</p>
-                      </>
-                    )}
-                    <label className="offer-switch">
-                      <span>Allow user override</span>
-                      <input
-                        type="checkbox"
-                        aria-label={`Allow user override for ${selectedAgent.label}`}
-                        checked={Boolean(allowOverride[selectedAgent.id])}
-                        onChange={() => setAllowOverride({ ...allowOverride, [selectedAgent.id]: !allowOverride[selectedAgent.id] })}
-                      />
-                      <span className="switch-track" aria-hidden="true" />
-                    </label>
-                    <p className="muted">When this is on, a person can set a different binary path in their settings.</p>
+                    <h3>{selectedAgent.label}</h3>
+                    <p className="muted">Each person uses the {selectedAgent.binary} command they install on their own account. Turning this offer off hides it, even when the command is already installed.</p>
                     {!selectedAgent.builtin && !selectedAgent.packageName && (
                       <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(selectedAgent.id)}>Remove {selectedAgent.label}</button>
                     )}
@@ -778,22 +738,31 @@ export function AdminView({
                       <p className="muted">This agent comes from the {selectedAgent.packageName} package. Remove that package to drop it.</p>
                     )}
                   </section>
+                  {selectedAgent.id === "cursor" && (
+                    <section className="agents-card">
+                      <h3>Cursor defaults</h3>
+                      <p className="muted">The default model is Grok 4.7 with a 256k context and high reasoning. Fast is always off. Apply writes that model only for a person who is allowed to use grok-4.7, and replaces that person's Shell entries. Apply to all users covers everyone who has Cursor. Apply to this user covers the account you pick.</p>
+                      <CursorCommandFields value={cursorCommandText} onChange={setCursorCommandText} />
+                      <div className="row-actions">
+                        <button className="ghost" type="button" disabled={busy || offerDirty} onClick={() => void applyDefaults("cursor")}>Apply to all users</button>
+                        <select
+                          className="apply-user"
+                          aria-label="User to apply Cursor defaults"
+                          value={applyUser}
+                          onChange={(event) => setApplyUser(event.target.value)}
+                        >
+                          <option value="">Choose a user…</option>
+                          {accounts.map((account) => <option key={account.username} value={account.username}>{account.username}</option>)}
+                        </select>
+                        <button className="ghost" type="button" disabled={busy || offerDirty || !applyUser} onClick={() => void applyDefaults("cursor", applyUser)}>Apply to this user</button>
+                      </div>
+                      {offerDirty && <p className="muted">Save before applying.</p>}
+                    </section>
+                  )}
                   {selectedAgent.id === "pi" && (
                     <section className="agents-card">
                       <h3>Pi setup</h3>
-                      {piGlobal && (
-                        <label>
-                          Login
-                          <select aria-label="Pi login" value={piAuth} onChange={(event) => setPiAuth(event.target.value as "user" | "shared")}>
-                            <option value="user">Each person</option>
-                            <option value="shared">Shared</option>
-                          </select>
-                        </label>
-                      )}
-                      {piGlobal && (
-                        <p className="muted">Each person keeps ~/.pi/agent/auth.json. Shared uses one auth.json unless a person overrides it. After a server install, run sudo /usr/local/lib/engineroom/agents/setup_pi.sh --global if that shared directory is not in place yet.</p>
-                      )}
-                      <p className="muted">The account page offers setup when this person's pi command is missing.</p>
+                      <p className="muted">The account page offers setup when Pi is enabled for that person and their pi command is missing. Setup installs Pi for that account only.</p>
                       <label>
                         Provider
                         <input aria-label="Pi provider" value={piProvider} onChange={(event) => setPiProvider(event.target.value)} placeholder="openrouter" />
@@ -802,7 +771,21 @@ export function AdminView({
                         Model
                         <input aria-label="Pi model" value={piModel} onChange={(event) => setPiModel(event.target.value)} placeholder="recursive/flint-v1.0:free" />
                       </label>
-                      <p className="muted">Provider and model are written to Pi's settings.json when setup runs. Saving here stores them. Run setup again to apply a later change.</p>
+                      <p className="muted">Saving stores the provider and model. Apply writes defaultProvider and defaultModel into the Pi settings of a person who is allowed that model. Apply to all users covers every such person. Apply to this user covers the account you pick. Setup writes the same values when it installs Pi.</p>
+                      <div className="row-actions">
+                        <button className="ghost" type="button" disabled={busy || offerDirty} onClick={() => void applyDefaults("pi")}>Apply to all users</button>
+                        <select
+                          className="apply-user"
+                          aria-label="User to apply Pi defaults"
+                          value={applyUser}
+                          onChange={(event) => setApplyUser(event.target.value)}
+                        >
+                          <option value="">Choose a user…</option>
+                          {accounts.map((account) => <option key={account.username} value={account.username}>{account.username}</option>)}
+                        </select>
+                        <button className="ghost" type="button" disabled={busy || offerDirty || !applyUser} onClick={() => void applyDefaults("pi", applyUser)}>Apply to this user</button>
+                      </div>
+                      {offerDirty && <p className="muted">Save before applying.</p>}
                       <p className="muted">This list is the models this Pi login can call. Nothing is offered until you check it and save.</p>
                     </section>
                   )}
@@ -831,19 +814,6 @@ export function AdminView({
                   <input value={customCommand} onChange={(event) => setCustomCommand(event.target.value)} placeholder="codex" required />
                 </label>
                 <button className="primary" type="submit" disabled={busy}>Add agent</button>
-                {missingCustom.length > 0 && (
-                  <div className="repo-admin">
-                    {missingCustom.map((agent) => (
-                      <div className="account" key={agent.id}>
-                        <div>
-                          <strong>{agent.label}</strong>
-                          <span>{agent.binary} is not installed</span>
-                        </div>
-                        <button className="danger" type="button" disabled={busy} onClick={() => void dropAgent(agent.id)}>Remove</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </form>
             )}
             <footer className="agents-bar">
@@ -1077,8 +1047,6 @@ export function AdminView({
                   globalFileDownload={fileDownload}
                   globalFileUpload={fileUpload}
                   globalProjectCreate={session.projectCreate}
-                  piInstall={piGlobal ? "global" : "user"}
-                  piAuthDefault={piAuth}
                   agentOptions={agentOptions}
                   agentNames={names}
                   catalog={catalog}
@@ -1119,8 +1087,6 @@ function PersonPanel({
   globalFileDownload,
   globalFileUpload,
   globalProjectCreate,
-  piInstall,
-  piAuthDefault,
   agentOptions,
   agentNames,
   catalog,
@@ -1141,8 +1107,6 @@ function PersonPanel({
   globalFileDownload: boolean;
   globalFileUpload: boolean;
   globalProjectCreate: boolean;
-  piInstall: "user" | "global";
-  piAuthDefault: "user" | "shared";
   agentOptions: AgentOptionsState;
   agentNames?: { id: string; label: string }[];
   catalog: CatalogEntry[];
@@ -1161,31 +1125,55 @@ function PersonPanel({
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [commands, setCommands] = useState<string | null>(null);
 
   const agentKey = globalAgents.join(",");
   const catalogKey = catalog.map((entry) => entry.id).join(",");
+  const globalAgentsRef = useRef(globalAgents);
+  const catalogRef = useRef(catalog);
+  const onErrorRef = useRef(onError);
+  const loadGeneration = useRef(0);
+  globalAgentsRef.current = globalAgents;
+  catalogRef.current = catalog;
+  onErrorRef.current = onError;
   useEffect(() => {
+    const generation = ++loadGeneration.current;
     let cancel = false;
-    getUserAccess(username).then((bundle) => {
-      if (cancel) return;
-      const allowed = new Set(globalAgents);
+    getUserAccess(username).then(async (bundle) => {
+      if (cancel || generation !== loadGeneration.current) return;
+      const offered = globalAgentsRef.current;
+      const allowed = new Set(offered);
       const agents = bundle.policy.agents.filter((agent) => allowed.has(agent));
-      const chosen = agents.length > 0 ? agents : globalAgents.slice(0, 1);
+      const chosen = agents.length > 0 ? agents : offered.slice(0, 1);
       setPolicy({ ...bundle.policy, agents: chosen });
       const fallback = chosen[0] || bundle.settings.defaultAgent;
       setSettings({
         ...bundle.settings,
         defaultAgent: chosen.includes(bundle.settings.defaultAgent) ? bundle.settings.defaultAgent : fallback,
       });
-      setGrants(new Set(bundle.grants.filter((id) => catalog.some((entry) => entry.id === id))));
+      const listed = catalogRef.current;
+      setGrants(new Set(bundle.grants.filter((id) => listed.some((entry) => entry.id === id))));
       setEnv(bundle.env);
+      if (chosen.includes("cursor")) {
+        try {
+          const listedCommands = await getUserCursorCommands(username);
+          if (!cancel && generation === loadGeneration.current) setCommands(listedCommands.commands.join("\n"));
+        } catch (err) {
+          if (!cancel && generation === loadGeneration.current) {
+            setCommands("");
+            onErrorRef.current(message(err));
+          }
+        }
+      } else if (!cancel && generation === loadGeneration.current) {
+        setCommands(null);
+      }
     }).catch((err) => {
-      if (!cancel) onError(message(err));
+      if (!cancel && generation === loadGeneration.current) onErrorRef.current(message(err));
     });
     return () => {
       cancel = true;
     };
-  }, [username, agentKey, catalogKey, globalAgents, catalog, onError]);
+  }, [username, agentKey, catalogKey]);
 
   function toggleAgent(agent: AgentId) {
     if (!policy) return;
@@ -1243,6 +1231,8 @@ function PersonPanel({
   async function saveAccess(event: FormEvent) {
     event.preventDefault();
     if (!policy || !settings) return;
+    // A load started before this save must not put the previous agents back.
+    loadGeneration.current += 1;
     onBusy(true);
     onNote("");
     onError("");
@@ -1268,6 +1258,27 @@ function PersonPanel({
       setGrants(new Set(savedGrants.grants));
       onNote("Access saved");
       onSaved();
+      if (savedPolicy.agents.includes("cursor") && commands == null) {
+        const listedCommands = await getUserCursorCommands(username);
+        setCommands(listedCommands.commands.join("\n"));
+      }
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  async function saveCommands(event: FormEvent) {
+    event.preventDefault();
+    if (commands == null) return;
+    onBusy(true);
+    onNote("");
+    onError("");
+    try {
+      const saved = await saveUserCursorCommands(username, commandLines(commands));
+      setCommands(saved.commands.join("\n"));
+      onNote("Allowed commands saved");
     } catch (err) {
       onError(message(err));
     } finally {
@@ -1357,26 +1368,6 @@ function PersonPanel({
           ))}
         </div>
         {globalAgents.length === 0 && <p className="muted">Turn on at least one agent above before assigning any.</p>}
-        {piInstall === "global" && policy.agents.includes("pi") && (
-          <label>
-            Pi login
-            <select
-              aria-label="Pi login for this person"
-              value={policy.piAuth ?? ""}
-              onChange={(event) => {
-                const value = event.target.value;
-                const next = { ...policy };
-                if (value === "user" || value === "shared") next.piAuth = value;
-                else delete next.piAuth;
-                setPolicy(next);
-              }}
-            >
-              <option value="">Site default ({piAuthDefault === "shared" ? "shared login" : "their own login"})</option>
-              <option value="user">Their own login</option>
-              <option value="shared">Shared login</option>
-            </select>
-          </label>
-        )}
         <label className="check">
           <input
             type="checkbox"
@@ -1456,9 +1447,9 @@ function PersonPanel({
                 <div className="admin-checks">
                   <span className="muted">Models</span>
                   {models.map((model) => (
-                    <label className="check" key={model.id}>
+                    <label className="check" key={model.id} title={displayModelName(model.id, model.name)}>
                       <input type="checkbox" checked={optionChecked(agent, "models", model.id)} onChange={() => toggleOption(agent, "models", model.id)} />
-                      {model.name}
+                      {displayModelName(model.id, model.name)}
                     </label>
                   ))}
                 </div>
@@ -1506,6 +1497,15 @@ function PersonPanel({
         </div>
         <button className="primary" type="submit" disabled={busy || allowed.length === 0}>Save access</button>
       </form>
+
+      {commands != null && allowed.includes("cursor") && (
+        <form onSubmit={(event) => void saveCommands(event)}>
+          <h3>Cursor commands</h3>
+          <p className="muted">Shell commands Cursor may run for {username}. Saving changes this person only. Apply to all users, or Apply to this user, on the Agents tab replaces this list when it includes them.</p>
+          <CursorCommandFields value={commands} onChange={setCommands} />
+          <button className="primary" type="submit" disabled={busy}>Save commands</button>
+        </form>
+      )}
 
       <form onSubmit={(event) => void saveEnv(event)}>
         <h3>Environment</h3>
@@ -1830,7 +1830,10 @@ function DefaultModelField({
     <label>
       Default model
       <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+        {choices.map((choice) => {
+          const label = displayModelName(choice.id, choice.name);
+          return <option key={choice.id} value={choice.id} title={label}>{label}</option>;
+        })}
       </select>
     </label>
   );
@@ -1857,7 +1860,8 @@ function AgentOptions({
   const query = filter.trim().toLowerCase();
   const visible = models.filter((model) => {
     if (!query) return true;
-    return model.name.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
+    const label = displayModelName(model.id, model.name);
+    return label.toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
   });
   const groups = groupModels(visible);
   const selectedCount = models.filter((model) => draft.models.includes(model.id)).length;
@@ -1942,15 +1946,18 @@ function AgentOptions({
                 <div className="model-group" key={group.label || "all"}>
                   {group.label && <h4 className="model-group-label">{group.label}</h4>}
                   <div className="model-grid">
-                    {group.models.map((model) => (
-                      <label className={draft.models.includes(model.id) ? "choice-card on" : "choice-card"} key={model.id}>
-                        <input type="checkbox" checked={draft.models.includes(model.id)} onChange={() => onToggle("models", model.id)} />
-                        <span className="choice-copy">
-                          <strong>{model.name}</strong>
-                          {model.description && <span className="choice-sub">{model.description}</span>}
-                        </span>
-                      </label>
-                    ))}
+                    {group.models.map((model) => {
+                      const label = displayModelName(model.id, model.name);
+                      return (
+                        <label className={draft.models.includes(model.id) ? "choice-card on" : "choice-card"} key={model.id} title={label}>
+                          <input type="checkbox" checked={draft.models.includes(model.id)} onChange={() => onToggle("models", model.id)} />
+                          <span className="choice-copy">
+                            <strong title={label}>{label}</strong>
+                            {model.description && <span className="choice-sub">{model.description}</span>}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -1960,6 +1967,19 @@ function AgentOptions({
       )}
     </>
   );
+}
+
+function formatApply(agent: "pi" | "cursor", result: HarnessApplyResult): string {
+  const updated = result.applied.map((item) => item.username);
+  const pieces = [updated.length > 0 ? `Applied to ${updated.join(", ")}` : "Applied to nobody"];
+  if (agent === "cursor") {
+    const held = result.applied.filter((item) => !item.model).map((item) => item.username);
+    if (held.length > 0) pieces.push(`left grok-4.7 unchanged for ${held.join(", ")}`);
+  }
+  if (result.skipped.length > 0) {
+    pieces.push(`skipped ${result.skipped.map((item) => `${item.username} (${item.reason})`).join(", ")}`);
+  }
+  return `${pieces.join("; ")}.`;
 }
 
 function agentFlags(agents: AgentId[]): Record<string, boolean> {
@@ -1977,11 +1997,9 @@ function sessionOffer(session: Session): OfferSnapshot {
     fileEditor: session.fileEditor ?? true,
     fileDownload: session.fileDownloadOffered ?? false,
     fileUpload: session.fileUploadOffered ?? false,
-    binaries: {},
-    allowOverride: {},
-    piAuth: "user",
     piProvider: "",
     piModel: "",
+    cursorCommands: [],
     offered: {},
   };
 }
@@ -2009,38 +2027,6 @@ function listsEqual(left: string[] = [], right: string[] = []): boolean {
   return left.every((item) => seen.has(item));
 }
 
-function draftsFrom(agents: AdminAgent[]): { binaries: Record<string, string>; allowOverride: Record<string, boolean> } {
-  const binaries: Record<string, string> = {};
-  const allowOverride: Record<string, boolean> = {};
-  for (const agent of agents) {
-    binaries[agent.id] = agent.pathSource === "manual" && agent.path ? agent.path : "";
-    allowOverride[agent.id] = Boolean(agent.allowOverride);
-  }
-  return { binaries, allowOverride };
-}
-
-function binaryPayload(agents: AdminAgent[], draft: Record<string, string>): Record<string, string> {
-  const binaries: Record<string, string> = {};
-  for (const agent of agents) binaries[agent.id] = (draft[agent.id] ?? "").trim();
-  return binaries;
-}
-
-function recordsEqual(left: Record<string, string> = {}, right: Record<string, string> = {}): boolean {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const key of keys) {
-    if ((left[key] ?? "") !== (right[key] ?? "")) return false;
-  }
-  return true;
-}
-
-function boolRecordsEqual(left: Record<string, boolean> = {}, right: Record<string, boolean> = {}): boolean {
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-  for (const key of keys) {
-    if (Boolean(left[key]) !== Boolean(right[key])) return false;
-  }
-  return true;
-}
-
 function flagsEqual(left: Record<string, boolean>, right: Record<string, boolean>): boolean {
   const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
   for (const key of keys) {
@@ -2057,11 +2043,10 @@ function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
   if (left.fileEditor !== right.fileEditor) return false;
   if (left.fileDownload !== right.fileDownload) return false;
   if (left.fileUpload !== right.fileUpload) return false;
-  if (!recordsEqual(left.binaries, right.binaries)) return false;
-  if (!boolRecordsEqual(left.allowOverride, right.allowOverride)) return false;
-  if (left.piAuth !== right.piAuth) return false;
   if (left.piProvider !== right.piProvider) return false;
   if (left.piModel !== right.piModel) return false;
+  if (left.cursorCommands.length !== right.cursorCommands.length) return false;
+  if (left.cursorCommands.some((item, index) => item !== right.cursorCommands[index])) return false;
   const keys = new Set([...Object.keys(left.offered), ...Object.keys(right.offered)]);
   for (const key of keys) {
     const a = left.offered[key] ?? { modes: [], models: [] };

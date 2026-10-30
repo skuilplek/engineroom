@@ -1359,6 +1359,7 @@ textarea { resize: vertical; }
 .person-panel, .people { display: grid; gap: 12px; }
 .env-row { display: grid; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr) auto; gap: 8px; align-items: end; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row-actions select.apply-user { width: auto; min-width: 12rem; flex: none; }
 .remove-account { display: grid; gap: 8px; }
 .repo-choice strong { display: block; color: var(--ink); font-weight: 600; }
 .settings form + form, .settings .people, .settings .repo-access, .settings .server-panel + form { margin-top: 28px; padding-top: 8px; }

@@ -3,6 +3,7 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   AGENTS,
   cleanModel,
+  displayModelName,
   effectiveAgentOptions,
   isAgentId,
   parseOptionIds,
@@ -117,7 +118,8 @@ export function choicesFrom(value: unknown): AgentOptionChoice[] {
     }
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const name = typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 200) : id;
+    const rawName = typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 200) : id;
+    const name = displayModelName(id, rawName);
     const description = typeof record.description === "string" && record.description.trim()
       ? record.description.trim().slice(0, 500)
       : undefined;

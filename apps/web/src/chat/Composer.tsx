@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, type DragEvent, type FormEvent, type ReactNode } from "react";
-import type { GitStatus, QueuedPrompt } from "@engineroom/protocol";
+import { displayModelName, type GitStatus, type QueuedPrompt } from "@engineroom/protocol";
 import { gitWorkspace, initGitWorkspace, switchGitBranch } from "../api.ts";
 import { useReportError } from "../errors.tsx";
 import { modeTone } from "../format.ts";
@@ -246,8 +246,11 @@ export function Composer({
             )}
             {models.length > 0 && (
               <select aria-label="Model" value={model} onChange={(event) => onModel?.(event.target.value)}>
-                {model && !models.some((item) => item.id === model) && <option value={model}>{model}</option>}
-                {models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                {model && !models.some((item) => item.id === model) && <option value={model} title={displayModelName(model, model)}>{displayModelName(model, model)}</option>}
+                {models.map((item) => {
+                  const label = displayModelName(item.id, item.name);
+                  return <option key={item.id} value={item.id} title={label}>{label}</option>;
+                })}
               </select>
             )}
           </div>

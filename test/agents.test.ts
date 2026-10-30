@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chooseServerPath, effectivePiAuth, isAccountPath, loadAgentBinaries, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
+import { isAccountPath, loadCursorCommands, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
 
 function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
   return {
@@ -51,37 +51,37 @@ test("claude counts as installed when only its ACP adapter is on PATH", () => {
   assert.deepEqual(agents, ["claude"]);
 });
 
-test("a resolved binary override keeps an agent that is not on PATH", () => {
+test("an installed agent stays hidden when it is not offered", () => {
   const agents = usableAgentIds(
     { cursor: true, claude: false, pi: true },
-    [listed("cursor", false), listed("claude", false), listed("pi", false)],
-    ["cursor", "pi"],
-    { pi: "/opt/pi" },
-    new Map([["/opt/pi", "/opt/pi"]]),
+    [listed("cursor", true), listed("claude", true), listed("pi", true)],
+    ["cursor", "claude", "pi"],
   );
-  assert.deepEqual(agents, ["pi"]);
+  assert.deepEqual(agents, ["cursor", "pi"]);
 });
 
-test("a saved server path keeps an agent available when the person has no copy", () => {
+test("an installed agent stays hidden when it is not allowed for the person", () => {
   const agents = usableAgentIds(
     { cursor: true, claude: true, pi: true },
-    [listed("cursor", false), listed("claude", false), listed("pi", false)],
-    ["pi"],
-    {},
-    new Map(),
-    new Set(["pi"]),
+    [listed("cursor", true), listed("claude", true), listed("pi", true)],
+    ["cursor"],
   );
-  assert.deepEqual(agents, ["pi"]);
+  assert.deepEqual(agents, ["cursor"]);
 });
 
-test("which keeps a server path and ignores an account path", () => {
-  assert.equal(chooseServerPath(["/home/admin/.local/bin/pi", "/usr/local/bin/pi"], "/home/admin"), "/usr/local/bin/pi");
-  assert.equal(chooseServerPath(["/home/admin/.local/bin/pi"], "/home/admin"), null);
+test("a system path does not count as this account's install", () => {
+  const resolved = withResolvedCommands(
+    [listed("cursor", true), listed("claude", false), listed("pi", true)],
+    new Map([["claude", "/home/zoe/.local/bin/claude"]]),
+  );
+  assert.equal(resolved.find((agent) => agent.id === "cursor")?.available, false);
+  assert.equal(resolved.find((agent) => agent.id === "pi")?.available, false);
+  assert.equal(resolved.find((agent) => agent.id === "claude")?.path, "/home/zoe/.local/bin/claude");
   assert.equal(isAccountPath("/root/.local/bin/pi"), true);
   assert.equal(isAccountPath("/usr/local/bin/pi", "/home/admin"), false);
 });
 
-test("pi install, login, and model survive a later agent save", async () => {
+test("pi provider and model survive a later agent save", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "er-pi-"));
   const file = path.join(dir, "agents.json");
   try {
@@ -89,33 +89,29 @@ test("pi install, login, and model survive a later agent save", async () => {
       cursor: true,
       claude: false,
       pi: true,
-      piAuth: "shared",
       piProvider: "openrouter",
       piModel: "recursive/flint-v1.0:free",
       binaries: { pi: "/usr/local/bin/pi" },
-      allowOverride: { pi: true },
     });
     const saved = loadPiConfig(file);
     assert.deepEqual(saved, {
-      install: "global",
-      auth: "shared",
       provider: "openrouter",
       model: "recursive/flint-v1.0:free",
     });
+    const stored = JSON.parse(await readFile(file, "utf8")) as { piAuth?: string; piInstall?: string; agentBinaries?: unknown };
+    assert.equal(stored.piAuth, undefined);
+    assert.equal(stored.piInstall, undefined);
+    assert.equal(stored.agentBinaries, undefined);
+    saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorCommands: ["ls", "npm install"] });
+    assert.deepEqual(loadCursorCommands(file), ["ls", "npm install"]);
     saveAgentFlags(file, { cursor: true, claude: false, pi: true });
     assert.equal(loadPiConfig(file).model, "recursive/flint-v1.0:free");
-    assert.equal(loadAgentBinaries(file).pi?.path, "/usr/local/bin/pi");
-    assert.equal(loadAgentBinaries(file).pi?.allowOverride, true);
-    assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, binaries: { pi: "/home/admin/.local/bin/pi" } }));
-    assert.equal(effectivePiAuth(saved), "shared");
-    assert.equal(effectivePiAuth(saved, "user"), "user");
-    assert.equal(piSetupAllowed(saved, true, true, "user", false), true);
-    assert.equal(piSetupAllowed(saved, true, true, "user", true), false);
-    assert.equal(piSetupAllowed(saved, true, true, "shared", false), false);
-    assert.equal(piSetupAllowed(saved, false, true, "user", false), false);
-    assert.equal(piSetupAllowed(saved, true, false, "user", false), false);
-    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared", false), true);
-    assert.equal(piSetupAllowed({ ...saved, install: "user" }, true, true, "shared", true), false);
+    assert.deepEqual(loadCursorCommands(file), ["ls", "npm install"]);
+    assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, cursorCommands: ["rm -rf /"] }));
+    assert.equal(piSetupAllowed(true, true, false), true);
+    assert.equal(piSetupAllowed(true, true, true), false);
+    assert.equal(piSetupAllowed(false, true, false), false);
+    assert.equal(piSetupAllowed(true, false, false), false);
     assert.throws(() => saveAgentFlags(file, { cursor: true, claude: false, pi: true, piModel: "bad model" }));
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import type { AgentId, StreamEvent } from "./index.ts";
 export interface CliParser {
   readonly sessionId: string | null;
   push(value: unknown): StreamEvent[];
+  finish(): StreamEvent[];
 }
 
 export function createCliParser(agent: AgentId, knownSessionId: string | null): CliParser {
@@ -11,6 +12,7 @@ export function createCliParser(agent: AgentId, knownSessionId: string | null): 
   let accumulated = "";
   let sawText = false;
   let toolSeq = 0;
+  const piRun: PiRun = { pendingError: "", shownError: "" };
 
   function noteSession(value: unknown) {
     if (locked) return;
@@ -39,11 +41,14 @@ export function createCliParser(agent: AgentId, knownSessionId: string | null): 
     get sessionId() {
       return sessionId;
     },
+    finish(): StreamEvent[] {
+      return takePiError(piRun);
+    },
     push(value: unknown): StreamEvent[] {
       if (!value || typeof value !== "object") return [];
       const msg = value as Record<string, unknown>;
       noteSession(msg.session_id);
-      if (agent === "pi") return pushPi(msg, noteSession, () => `tool-${++toolSeq}`);
+      if (agent === "pi") return pushPi(msg, noteSession, () => `tool-${++toolSeq}`, piRun);
       if (msg.type === "stream_event") return pushClaudeStream(msg.event, textFromAssistant);
       if (msg.type === "assistant") {
         return pushAssistantMessage(msg.message, textFromAssistant, () => {
@@ -175,10 +180,16 @@ function pushCursorTool(msg: Record<string, unknown>, nextId: () => string): Str
   ];
 }
 
+interface PiRun {
+  pendingError: string;
+  shownError: string;
+}
+
 function pushPi(
   msg: Record<string, unknown>,
   noteSession: (value: unknown) => void,
   nextId: () => string,
+  run: PiRun,
 ): StreamEvent[] {
   noteSession(msg.session_id ?? msg.sessionId ?? (msg.type === "session" ? msg.id : undefined));
   const update = msg.assistantMessageEvent;
@@ -189,6 +200,10 @@ function pushPi(
     }
     if (event.type === "thinking_delta" && typeof event.delta === "string" && event.delta) {
       return [{ type: "thinking", text: event.delta }];
+    }
+    if (event.type === "error") {
+      notePiFailure(run, event);
+      return [];
     }
     if (event.type === "toolcall_start") {
       const id = typeof event.id === "string" ? event.id : nextId();
@@ -210,6 +225,10 @@ function pushPi(
       ];
     }
   }
+  if (msg.type === "message_end") {
+    notePiAssistant(run, msg.message);
+    return [];
+  }
   if (msg.type === "tool_execution_start" || msg.type === "tool_execution_end") {
     const id = typeof msg.toolCallId === "string" ? msg.toolCallId : nextId();
     const name = typeof msg.toolName === "string" ? msg.toolName : "tool";
@@ -226,11 +245,24 @@ function pushPi(
       },
     ];
   }
-  if (msg.type === "turn_end" || msg.type === "agent_end") return [];
-  if (msg.type === "agent_settled") return [{ type: "done", agentSessionId: null }];
+  if (msg.type === "turn_end") {
+    notePiAssistant(run, msg.message);
+    return [];
+  }
+  if (msg.type === "agent_end") {
+    notePiMessages(run, msg.messages);
+    if (msg.willRetry === true) return [];
+    return takePiError(run);
+  }
+  if (msg.type === "agent_settled") return [...takePiError(run), { type: "done", agentSessionId: null }];
   if (msg.type === "auto_retry_start") {
     const detail = stringField(msg, "errorMessage");
     return [{ type: "status", text: detail ? `Retrying · ${detail}` : "Retrying" }];
+  }
+  if (msg.type === "auto_retry_end") {
+    if (msg.success !== false) return [];
+    rememberPiError(run, stringField(msg, "finalError"));
+    return takePiError(run);
   }
   if (msg.type === "compaction_start") {
     const reason = stringField(msg, "reason");
@@ -240,6 +272,54 @@ function pushPi(
     return [{ type: "error", text: stringField(msg, "message") || stringField(msg, "error") || "agent error" }];
   }
   return [];
+}
+
+function notePiFailure(run: PiRun, event: Record<string, unknown>) {
+  if (typeof event.error === "string") rememberPiError(run, event.error);
+  else notePiAssistant(run, event.error);
+  rememberPiError(run, stringField(event, "errorMessage"));
+}
+
+function notePiAssistant(run: PiRun, message: unknown) {
+  if (!message || typeof message !== "object") return;
+  const record = message as Record<string, unknown>;
+  if (record.role != null && record.role !== "assistant") return;
+  if (record.stopReason === "error") {
+    rememberPiError(run, stringField(record, "errorMessage"));
+    return;
+  }
+  if (typeof record.stopReason === "string" && record.stopReason) clearPiError(run);
+}
+
+function notePiMessages(run: PiRun, messages: unknown) {
+  if (!Array.isArray(messages)) return;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index];
+    if (!item || typeof item !== "object" || (item as Record<string, unknown>).role !== "assistant") continue;
+    notePiAssistant(run, item);
+    return;
+  }
+}
+
+function rememberPiError(run: PiRun, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const clipped = trimmed.length > 4000 ? trimmed.slice(0, 4000) : trimmed;
+  if (clipped === run.shownError) return;
+  run.pendingError = clipped;
+}
+
+function clearPiError(run: PiRun) {
+  run.pendingError = "";
+  run.shownError = "";
+}
+
+function takePiError(run: PiRun): StreamEvent[] {
+  if (!run.pendingError) return [];
+  const text = run.pendingError;
+  run.pendingError = "";
+  run.shownError = text;
+  return [{ type: "error", text }];
 }
 
 function contentBlocks(message: unknown): Record<string, unknown>[] {

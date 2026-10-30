@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rename, rm, chmod, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, chmod, unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -31,6 +31,7 @@ import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
 import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture, whichAll } from "./cli.ts";
+import { applyCursorDefaults, applyPiDefaults, loadCursorCommands } from "./harness-config.ts";
 import { gitClone } from "./clone.ts";
 import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
@@ -392,12 +393,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return probeAgent(request.agent);
       case "resolve_commands":
         return resolveCommands(request.names, request.refresh === true);
-      case "put_pi_site":
-        return putPiSite(request.install, request.auth);
-      case "put_agent_binaries":
-        return putAgentBinaries(request.binaries, request.allowOverride);
       case "setup_pi":
-        return runPiSetup(request.provider, request.model, request.linkShared);
+        return runPiSetup(request.provider, request.model);
+      case "apply_harness_defaults":
+        if (request.agent === "pi") await applyPiDefaults(home, request.provider, request.model);
+        else await applyCursorDefaults(home, { writeModel: request.writeModel, commands: request.commands });
+        return { ok: true };
+      case "get_cursor_commands":
+        return { commands: await loadCursorCommands(home) };
+      case "put_cursor_commands":
+        await applyCursorDefaults(home, { writeModel: false, commands: request.commands });
+        return { commands: request.commands };
       case "cancel":
         cancel(request.chatId);
         return { ok: true };
@@ -558,30 +564,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
 
   let commandPathAt = 0;
 
-  async function putAgentBinaries(binaries: Partial<Record<string, string>>, allowOverride: readonly string[]) {
-    const root = path.join(home, ".engineroom");
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const file = path.join(root, "agent-binaries.json");
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify({ binaries, allowOverride })}\n`, { mode: 0o600 });
-    await rename(tmp, file);
-    return { ok: true };
-  }
-
-  async function putPiSite(install: "user" | "global", auth: "user" | "shared") {
-    const root = path.join(home, ".engineroom");
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const file = path.join(root, "pi-site.json");
-    const tmp = `${file}.${process.pid}.tmp`;
-    await writeFile(tmp, `${JSON.stringify({ install, auth })}\n`, { mode: 0o600 });
-    await rename(tmp, file);
-    return { ok: true };
-  }
-
-  async function runPiSetup(provider: string, model: string, linkShared: boolean) {
+  async function runPiSetup(provider: string, model: string) {
     const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../agents/setup_pi.sh");
     const args: string[] = [];
-    if (linkShared) args.push("--link-shared");
     if (provider && model) args.push("--provider", provider, "--model", model);
     const stderr = await new Promise<string>((resolve, reject) => {
       let output = "";

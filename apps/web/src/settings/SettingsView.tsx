@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { isCommandBlockStyle, isTheme, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type ExtensionTheme, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
+import { displayModelName, isCommandBlockStyle, isTheme, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type ExtensionTheme, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
-import { getSettings, saveSettings, type Session } from "../api.ts";
+import { getCursorCommands, getSettings, saveCursorCommands, saveSettings, type Session } from "../api.ts";
+import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
 import { useReportError } from "../errors.tsx";
 import { message } from "../format.ts";
 import { PackagesSection } from "./PackagesSection.tsx";
@@ -36,6 +37,8 @@ export function SettingsView({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [failed, setFailed] = useState(false);
   const [saved, setSaved] = useState("");
+  const [commands, setCommands] = useState<string | null>(null);
+  const cursorOn = agents.includes("cursor");
   const report = useReportError();
   function setError(value: string) {
     if (value) report("Settings", value);
@@ -74,6 +77,22 @@ export function SettingsView({
     });
   }, [agents, options, installedIds.join(",")]);
 
+  useEffect(() => {
+    if (!cursorOn) {
+      setCommands(null);
+      return;
+    }
+    let cancel = false;
+    getCursorCommands().then((body) => {
+      if (!cancel) setCommands(body.commands.join("\n"));
+    }).catch((err) => {
+      if (!cancel) setError(message(err));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [cursorOn]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!settings) return;
@@ -101,6 +120,23 @@ export function SettingsView({
     }
   }
 
+  async function saveCommands(event: FormEvent) {
+    event.preventDefault();
+    if (commands == null) return;
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const savedCommands = await saveCursorCommands(commandLines(commands));
+      setCommands(savedCommands.commands.join("\n"));
+      setSaved("Allowed commands saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function chooseAgent(agent: Settings["defaultAgent"]) {
     if (!settings) return;
     const models = options[agent]?.models ?? [];
@@ -118,7 +154,6 @@ export function SettingsView({
     return <p className="settings muted">{failed ? "Settings could not be loaded." : "Loading settings…"}</p>;
   }
   const models = options[settings.defaultAgent]?.models ?? [];
-  const pathAgents = agents.filter((agent) => (settings.lockedBinaries?.includes(agent) ?? false) || (settings.binaryOverride?.includes(agent) ?? false));
   const activeTheme = normalizeTheme(settings.theme, installedIds);
 
   return (
@@ -261,7 +296,10 @@ export function SettingsView({
                 value={settings.defaultModel}
                 onChange={(event) => setSettings({ ...settings, defaultModel: event.target.value })}
               >
-                {models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+                {models.map((model) => {
+                  const label = displayModelName(model.id, model.name);
+                  return <option key={model.id} value={model.id} title={label}>{label}</option>;
+                })}
               </select>
             </label>
           )}
@@ -290,34 +328,17 @@ export function SettingsView({
       {!fileEditorAllowed && (
         <p className="muted">File editing is turned off by your administrator.</p>
       )}
-      {pathAgents.length > 0 && (
-        <details>
-          <summary>CLI paths</summary>
-          {pathAgents.map((agent) => {
-            const locked = settings.lockedBinaries?.includes(agent) ?? false;
-            return (
-              <label key={agent}>
-                {agentLabel(agent, agentCatalog)}
-                <input
-                  value={settings.binaries[agent] || ""}
-                  placeholder={locked ? "" : "Absolute path, or blank to use the server binary or your PATH"}
-                  disabled={locked}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      binaries: { ...settings.binaries, [agent]: event.target.value },
-                    })
-                  }
-                />
-                {locked && <span className="muted">Set by the administrator</span>}
-              </label>
-            );
-          })}
-        </details>
-      )}
       {saved && <p className="muted">{saved}</p>}
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
+    {commands != null && (
+      <form onSubmit={(event) => void saveCommands(event)}>
+        <h2>Cursor commands</h2>
+        <p className="muted">Shell commands Cursor may run for you. An administrator can replace this list from the Agents tab.</p>
+        <CursorCommandFields value={commands} onChange={setCommands} />
+        <button className="primary" type="submit" disabled={busy}>Save commands</button>
+      </form>
+    )}
     <PackagesSection scope="user" onChanged={onPackagesChanged} />
     </div>
   );

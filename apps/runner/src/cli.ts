@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { constants, readFileSync } from "node:fs";
+import { constants } from "node:fs";
 import { access, lstat, open, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { agentBinary, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
+import { agentBinary, displayModelName, isBuiltinAgent, type AgentId, type PermissionPolicy } from "@engineroom/protocol";
 import { envKeyBlocked, readEnvFileSync } from "./envfile.ts";
 
 const PATH_MARKER = "__ENGINEROOM_PATH__";
@@ -56,32 +56,8 @@ export function childEnv(base: NodeJS.ProcessEnv, home: string): NodeJS.ProcessE
   delete env.LISTEN_FDS;
   delete env.LISTEN_PID;
   delete env.LISTEN_FDNAMES;
-  applyPiAgentDir(env, home);
+  if (env.PI_CODING_AGENT_DIR === "/usr/local/share/pi/agent") delete env.PI_CODING_AGENT_DIR;
   return env;
-}
-
-const SHARED_PI_DIR = "/usr/local/share/pi/agent";
-
-function applyPiAgentDir(env: NodeJS.ProcessEnv, home: string): void {
-  const site = readJson(path.join(home, ".engineroom", "pi-site.json"));
-  if (!site) return;
-  const install = site.install === "global" ? "global" : site.install === "user" ? "user" : "";
-  if (!install) return;
-  let auth = site.auth === "shared" ? "shared" : "user";
-  const policy = readJson(path.join(home, ".engineroom", "policy.json"));
-  if (policy?.piAuth === "user" || policy?.piAuth === "shared") auth = policy.piAuth;
-  if (install === "global" && auth === "shared") env.PI_CODING_AGENT_DIR = SHARED_PI_DIR;
-  else delete env.PI_CODING_AGENT_DIR;
-}
-
-function readJson(file: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 export function rememberedLoginDirs(home: string): string[] {
@@ -413,7 +389,7 @@ export function parsePiModelList(stdout: string): { id: string; name: string }[]
     const id = `${provider}/${model}`;
     if (id.length > 200 || seen.has(id)) continue;
     seen.add(id);
-    models.push({ id, name: id });
+    models.push({ id, name: displayModelName(id, id) });
   }
   return models;
 }

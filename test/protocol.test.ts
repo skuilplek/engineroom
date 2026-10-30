@@ -19,7 +19,11 @@ import {
   parseCatalogEntries,
   parseEnvEntries,
   effectiveAgentOptions,
+  mergeCursorConfig,
+  mergePiDefaults,
   parseClientCommand,
+  piDefaultAllowed,
+  readShellCommands,
   parseAgentCatalog,
   parseAgentCommand,
   parseRunnerRequest,
@@ -193,12 +197,8 @@ test("child env takes ~/.env values except identity and loader variables", async
     assert.equal(env.LISTEN_FDS, undefined);
     assert.equal(env.ANTHROPIC_API_KEY, "secret");
     assert.equal(env.CUSTOM, "1");
-    const dir = path.join(home, ".engineroom");
-    await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, "pi-site.json"), JSON.stringify({ install: "global", auth: "shared" }));
-    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, "/usr/local/share/pi/agent");
-    await writeFile(path.join(dir, "policy.json"), JSON.stringify({ piAuth: "user" }));
-    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, undefined);
+    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/tmp/ignore" }, home).PI_CODING_AGENT_DIR, "/tmp/ignore");
+    assert.equal(childEnv({ PATH: "/usr/bin", PI_CODING_AGENT_DIR: "/usr/local/share/pi/agent" }, home).PI_CODING_AGENT_DIR, undefined);
   } finally {
     await rm(home, { recursive: true, force: true });
   }
@@ -249,12 +249,9 @@ fi
 test("policy options stay optional and narrow the offered catalog", () => {
   const inherited = parseUserPolicy({ agents: ["cursor"], rawTerminal: true });
   assert.equal(inherited.options, undefined);
-  assert.equal(inherited.piAuth, undefined);
   assert.equal(inherited.fileManager, true);
-  const ownLogin = parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "user" });
-  assert.equal(ownLogin.piAuth, "user");
-  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "" }).piAuth, undefined);
-  assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "both" }));
+  const ownLogin = parseUserPolicy({ agents: ["cursor"], rawTerminal: true, piAuth: "shared" });
+  assert.equal("piAuth" in ownLogin, false);
   const narrowed = parseUserPolicy({
     agents: ["cursor"],
     rawTerminal: false,
@@ -296,24 +293,68 @@ test("policy options stay optional and narrow the offered catalog", () => {
   assert.equal(probed.type, "probe_agent");
   assert.throws(() => parseRunnerRequest({ id: "2", type: "probe_agent", agent: "Nope" }));
   assert.equal(parseRunnerRequest({ id: "3", type: "probe_agent", agent: "codex" }).type, "probe_agent");
-  const binarySite = parseRunnerRequest({
-    id: "4b",
-    type: "put_agent_binaries",
-    binaries: { pi: "/usr/local/bin/pi" },
-    allowOverride: ["pi"],
-  });
-  if (binarySite.type === "put_agent_binaries") {
-    assert.equal(binarySite.binaries.pi, "/usr/local/bin/pi");
-    assert.deepEqual(binarySite.allowOverride, ["pi"]);
-  }
   const resolved = parseRunnerRequest({ id: "4", type: "resolve_commands", names: ["agent", "agent", "/usr/local/bin/codex"] });
   if (resolved.type === "resolve_commands") assert.deepEqual(resolved.names, ["agent", "/usr/local/bin/codex"]);
   assert.throws(() => parseRunnerRequest({ id: "5", type: "resolve_commands", names: [] }));
-  const site = parseRunnerRequest({ id: "6", type: "put_pi_site", install: "global", auth: "shared" });
-  if (site.type === "put_pi_site") assert.equal(site.auth, "shared");
-  const setup = parseRunnerRequest({ id: "7", type: "setup_pi", provider: "openrouter", model: "recursive/flint-v1.0:free", linkShared: true });
+  assert.throws(() => parseRunnerRequest({ id: "6", type: "put_pi_site", install: "global", auth: "shared" }));
+  const setup = parseRunnerRequest({ id: "7", type: "setup_pi", provider: "openrouter", model: "recursive/flint-v1.0:free" });
   if (setup.type === "setup_pi") assert.equal(setup.model, "recursive/flint-v1.0:free");
   assert.throws(() => parseRunnerRequest({ id: "8", type: "setup_pi", provider: "bad provider", model: "ok" }));
+  const applied = parseRunnerRequest({
+    id: "9",
+    type: "apply_harness_defaults",
+    agent: "cursor",
+    writeModel: true,
+    commands: ["ls", "npm install", "ls"],
+  });
+  if (applied.type === "apply_harness_defaults" && applied.agent === "cursor") {
+    assert.equal(applied.writeModel, true);
+    assert.deepEqual(applied.commands, ["ls", "npm install"]);
+  }
+  assert.throws(() => parseRunnerRequest({ id: "10", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["rm -rf /"] }));
+  assert.throws(() => parseRunnerRequest({ id: "11", type: "put_cursor_commands", commands: ["bad!"] }));
+});
+
+test("harness defaults keep personal cursor config and force fast off", () => {
+  const pi = mergePiDefaults({ lastChangelogVersion: "1.4.0", defaultProvider: "old" }, "openrouter", "recursive/flint-v1.0:free");
+  assert.equal(pi.lastChangelogVersion, "1.4.0");
+  assert.equal(pi.defaultProvider, "openrouter");
+  assert.equal(pi.defaultModel, "recursive/flint-v1.0:free");
+  assert.equal(piDefaultAllowed([{ id: "openrouter/recursive/flint-v1.0:free" }], "openrouter", "recursive/flint-v1.0:free"), true);
+  assert.equal(piDefaultAllowed([{ id: "anthropic/claude-sonnet-4" }], "openrouter", "recursive/flint-v1.0:free"), false);
+
+  const cursor = mergeCursorConfig({
+    authInfo: { email: "ada@example.com" },
+    permissions: { allow: ["Shell(old)", "Write(/tmp/x)"], deny: ["Shell(rm)"] },
+    modelParameters: {
+      "grok-4.7": [{ id: "fast", value: "true" }],
+      "gemini-4-argon": [{ id: "reasoning_effort", value: "medium" }],
+    },
+    sandbox: { mode: "disabled" },
+  }, { writeModel: true, commands: ["ls", "npm install"] });
+  const model = cursor.model as { modelId: string; displayName: string; maxMode: boolean };
+  const selected = cursor.selectedModel as { parameters: { id: string; value: string }[] };
+  const parameters = cursor.modelParameters as Record<string, { id: string; value: string }[]>;
+  const permissions = cursor.permissions as { allow: string[]; deny: string[] };
+  assert.equal(model.modelId, "grok-4.7");
+  assert.equal(model.displayName, "Grok 4.7 256K High");
+  assert.equal(model.maxMode, false);
+  assert.equal(selected.parameters.find((item) => item.id === "fast")?.value, "false");
+  assert.equal(selected.parameters.find((item) => item.id === "reasoning_effort")?.value, "high");
+  assert.equal(parameters["grok-4.7"]?.find((item) => item.id === "fast")?.value, "false");
+  assert.deepEqual(parameters["gemini-4-argon"], [{ id: "reasoning_effort", value: "medium" }]);
+  assert.deepEqual(permissions.allow, ["Shell(ls)", "Shell(npm install)", "Write(/tmp/x)"]);
+  assert.deepEqual(permissions.deny, ["Shell(rm)"]);
+  assert.deepEqual(cursor.authInfo, { email: "ada@example.com" });
+  assert.deepEqual(cursor.sandbox, { mode: "disabled" });
+  assert.equal(cursor.hasChangedDefaultModel, true);
+
+  const commandsOnly = mergeCursorConfig(cursor, { commands: ["cat"] });
+  const keptModel = commandsOnly.model as { modelId: string };
+  const keptAllow = (commandsOnly.permissions as { allow: string[] }).allow;
+  assert.equal(keptModel.modelId, "grok-4.7");
+  assert.deepEqual(keptAllow, ["Shell(cat)", "Write(/tmp/x)"]);
+  assert.deepEqual(readShellCommands(commandsOnly), ["cat"]);
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {
@@ -416,7 +457,7 @@ test("pi model list keeps provider and model columns, including ids with slashes
   const table = ["Warning: ignored before the table", line(headers), ...rows.map(line)].join("\n");
   assert.deepEqual(parsePiModelList(table), [
     { id: "anthropic/claude-sonnet-4", name: "anthropic/claude-sonnet-4" },
-    { id: "openrouter/recursive/flint-v1.0:free", name: "openrouter/recursive/flint-v1.0:free" },
+    { id: "openrouter/recursive/flint-v1.0:free", name: "recursive/flint-v1.0:free" },
   ]);
   assert.deepEqual(parsePiModelList("No models available. Run /login or set an API key.\n"), []);
 });
@@ -523,6 +564,35 @@ test("pi keeps streaming after the first turn", () => {
     { type: "status", text: "Compacting · threshold" },
   ]);
   assert.deepEqual(parser.push({ type: "agent_settled", aborted: false }), [{ type: "done", agentSessionId: null }]);
+});
+
+test("pi shows a final assistant error such as an expired api key", () => {
+  const parser = createCliParser("pi", "erabc");
+  const failed = { role: "assistant", stopReason: "error", errorMessage: "401:" };
+  assert.deepEqual(parser.push({ type: "message_end", message: failed }), []);
+  assert.deepEqual(parser.push({ type: "turn_end", message: failed, toolResults: [] }), []);
+  assert.deepEqual(parser.push({ type: "agent_end", messages: [], willRetry: false }), [{ type: "error", text: "401:" }]);
+  assert.deepEqual(parser.push({ type: "auto_retry_end", success: false, finalError: "401:" }), []);
+  assert.deepEqual(parser.push({ type: "agent_settled", aborted: false }), [{ type: "done", agentSessionId: null }]);
+});
+
+test("pi hides an assistant error that a retry recovers from", () => {
+  const parser = createCliParser("pi", "erabc");
+  assert.deepEqual(
+    parser.push({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "401:" } }),
+    [],
+  );
+  assert.deepEqual(parser.push({ type: "agent_end", messages: [], willRetry: true }), []);
+  assert.deepEqual(parser.push({ type: "message_end", message: { role: "assistant", stopReason: "stop" } }), []);
+  assert.deepEqual(parser.push({ type: "agent_end", messages: [], willRetry: false }), []);
+  assert.deepEqual(parser.finish(), []);
+});
+
+test("pi flushes an assistant error when the process ends first", () => {
+  const parser = createCliParser("pi", "erabc");
+  parser.push({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "401:" } });
+  assert.deepEqual(parser.finish(), [{ type: "error", text: "401:" }]);
+  assert.deepEqual(parser.finish(), []);
 });
 
 test("a fresh claude run records the first session id", () => {

@@ -3,16 +3,16 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseUserPolicy, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentBinaries, loadAgentFlags, loadAppName, loadCliImport, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, serverBinariesFor, storeDetectedBinaries, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { cleanInterface, cleanSsid, cleanWifiPassword, normalizeHostname, runNetworkCtl } from "./network.ts";
-import { SYSTEM_COMMAND_DIRS, serverOverview } from "./overview.ts";
+import { serverOverview } from "./overview.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { readUpload } from "./multipart.ts";
@@ -72,12 +72,9 @@ interface RunnerCall {
   visibility?: FileVisibility;
   names?: string[];
   refresh?: boolean;
-  install?: "user" | "global";
-  auth?: "user" | "shared";
-  binaries?: Partial<Record<AgentId, string>>;
-  allowOverride?: AgentId[];
   provider?: string;
-  linkShared?: boolean;
+  writeModel?: boolean;
+  commands?: string[];
   name?: string;
   email?: string;
   url?: string;
@@ -288,34 +285,21 @@ export function createHub(options: HubOptions) {
     options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
   }> {
     const flags = loadAgentFlags(agentsFile);
-    const pi = loadPiConfig(agentsFile);
-    await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth }).catch(() => undefined);
-    await pushAgentBinaries(user);
     await syncAgentCatalog(user).catch(() => undefined);
     const listed = await visibleAgents(user, refresh);
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const stored = loadAgentOptions(agentOptionsFile);
-    const site = loadAgentBinaries(agentsFile);
-    const globalPaths = new Set(Object.entries(site).filter(([, record]) => record.path).map(([id]) => id));
-    const missing = policy.agents.filter((agent) => !globalPaths.has(agent) && !listed.some((item) => item.id === agent && item.available));
-    const overrides: Partial<Record<string, string>> = {};
-    const resolvedOverrides = new Map<string, string>();
-    if (missing.length > 0) {
-      const settings = (await call(user, { type: "get_settings" })) as Settings;
-      for (const agent of missing) {
-        if (site[agent]?.allowOverride && settings.binaries[agent]) overrides[agent] = settings.binaries[agent];
+    const agents = usableAgentIds(flags, listed, policy.agents);
+    const personal = enabledPackageAgents(await userPackages(user));
+    if (personal.length > 0) {
+      const resolved = await resolveCommands(user, [...new Set(personal.flatMap((agent) => detectionNames(agent)))], refresh);
+      for (const agent of personal) {
+        if (agents.includes(agent.id)) continue;
+        if (detectionNames(agent).some((name) => resolved.has(name))) agents.push(agent.id);
       }
-      const paths = [...new Set(Object.values(overrides).filter((value): value is string => Boolean(value)))];
-      const resolved = await resolveCommands(user, paths);
-      for (const [name, found] of resolved) resolvedOverrides.set(name, found.path);
-    }
-    const personalAgents = enabledPackageAgents(await userPackages(user)).map((agent) => agent.id);
-    const agents = usableAgentIds(flags, listed, policy.agents, overrides, resolvedOverrides, globalPaths);
-    for (const agent of personalAgents) {
-      if (!agents.includes(agent)) agents.push(agent);
     }
     const piInstalled = listed.some((item) => item.id === "pi" && item.available);
-    const piSetup = piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, piInstalled);
+    const piSetup = piSetupAllowed(Boolean(flags.pi), policy.agents.includes("pi"), piInstalled);
     const optionMap: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>> = {};
     for (const agent of agents) {
       const config = stored[agent];
@@ -342,15 +326,13 @@ export function createHub(options: HubOptions) {
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     const listed = await visibleAgents(user, true);
     const installed = listed.some((item) => item.id === "pi" && item.available);
-    if (!piSetupAllowed(pi, Boolean(flags.pi), policy.agents.includes("pi"), policy.piAuth, installed)) {
+    if (!piSetupAllowed(Boolean(flags.pi), policy.agents.includes("pi"), installed)) {
       throw new Error("invalid pi setup");
     }
-    await call(user, { type: "put_pi_site", install: pi.install, auth: pi.auth });
     await call(user, {
       type: "setup_pi",
       provider: pi.provider,
       model: pi.model,
-      linkShared: false,
     });
   }
 
@@ -507,7 +489,6 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "PUT") {
       const body = await readJson(req);
-      const detected = await detectedBinaries(user);
       const flags = saveAgentFlags(
         agentsFile,
         body,
@@ -517,9 +498,7 @@ export function createHub(options: HubOptions) {
         fileEditorFrom(body),
         fileDownloadFrom(body),
         fileUploadFrom(body),
-        detected,
       );
-      await pushAgentBinaries(user);
       const listed = await visibleAgents(user);
       sendJson(res, 200, {
         agents: offeredAgentIds(flags, listed),
@@ -549,6 +528,19 @@ export function createHub(options: HubOptions) {
       removeCustomAgent(agentsFile, decodeURIComponent(parts[4] || ""));
       await syncAgentCatalog(user).catch(() => undefined);
       sendJson(res, 200, await agentState(user));
+      return;
+    }
+    if (parts[2] === "agent-defaults" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { agent?: unknown; username?: unknown };
+      if (body.agent !== "pi" && body.agent !== "cursor") throw new Error("invalid agent");
+      const username = body.username == null
+        ? null
+        : assertUsername(typeof body.username === "string" ? body.username : "");
+      if (username) {
+        const target = lookup(username);
+        if (!userMayLogin(target)) throw new Error("not found");
+      }
+      sendJson(res, 200, await applyHarnessDefaults(body.agent, username));
       return;
     }
     if (parts[2] === "agent-options" && parts.length === 3 && req.method === "GET") {
@@ -630,6 +622,18 @@ export function createHub(options: HubOptions) {
     if (parts[2] === "users" && parts.length === 5) {
       const target = managedUser(parts[3] || "");
       const action = parts[4];
+      if (action === "cursor-commands" && req.method === "GET") {
+        await assertCursorAllowed(target);
+        sendJson(res, 200, await call(target, { type: "get_cursor_commands" }));
+        return;
+      }
+      if (action === "cursor-commands" && req.method === "PUT") {
+        await assertCursorAllowed(target);
+        const body = (await readJson(req)) as { commands?: unknown };
+        const commands = parseShellCommands(body.commands);
+        sendJson(res, 200, await call(target, { type: "put_cursor_commands", commands }));
+        return;
+      }
       if (action === "policy" && req.method === "PUT") {
         const policy = restrictPolicy(parseUserPolicy(await readJson(req)), loadAgentOptions(agentOptionsFile));
         const flags = loadAgentFlags(agentsFile);
@@ -739,6 +743,18 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(user, { type: "delete_error", errorId: parts[2] || "" }));
       return;
     }
+    if (parts[1] === "cursor-commands" && parts.length === 2 && req.method === "GET") {
+      await assertCursorAllowed(user);
+      sendJson(res, 200, await call(user, { type: "get_cursor_commands" }));
+      return;
+    }
+    if (parts[1] === "cursor-commands" && parts.length === 2 && req.method === "PUT") {
+      await assertCursorAllowed(user);
+      const body = (await readJson(req)) as { commands?: unknown };
+      const commands = parseShellCommands(body.commands);
+      sendJson(res, 200, await call(user, { type: "put_cursor_commands", commands }));
+      return;
+    }
     if (parts[1] === "git-identity" && parts.length === 2 && req.method === "GET") {
       sendJson(res, 200, await call(user, { type: "git_identity_get" }));
       return;
@@ -753,7 +769,6 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (parts[1] === "settings" && parts.length === 2 && req.method === "GET") {
-      await pushAgentBinaries(user);
       sendJson(res, 200, await presentSettings(user, (await call(user, { type: "get_settings" })) as Settings));
       return;
     }
@@ -763,7 +778,6 @@ export function createHub(options: HubOptions) {
       if (patch.defaultAgent) await assertAgentAllowed(user, patch.defaultAgent);
       await assertSettingsModel(user, patch);
       await assertThemeChoice(user, patch.theme);
-      await pushAgentBinaries(user);
       sendJson(res, 200, await presentSettings(user, (await call(user, { type: "put_settings", settings: patch })) as Settings));
       return;
     }
@@ -1299,6 +1313,56 @@ export function createHub(options: HubOptions) {
     }
   }
 
+  async function assertCursorAllowed(user: LinuxUser) {
+    if (!loadAgentFlags(agentsFile).cursor) throw new Error("invalid agent");
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    if (!policy.agents.includes("cursor")) throw new Error("invalid agent");
+  }
+
+  async function applyHarnessDefaults(agent: "pi" | "cursor", username: string | null = null) {
+    const flags = loadAgentFlags(agentsFile);
+    if (!flags[agent]) throw new Error("invalid agent");
+    const pi = loadPiConfig(agentsFile);
+    if (agent === "pi" && (!pi.provider || !pi.model)) throw new Error("invalid pi model");
+    const commands = loadCursorCommands(agentsFile);
+    const stored = loadAgentOptions(agentOptionsFile);
+    const applied: { username: string; model: boolean; commands: boolean }[] = [];
+    const skipped: { username: string; reason: string }[] = [];
+    const names = username ? [username] : accounts().map((account) => account.username);
+    for (const name of names) {
+      const target = lookup(name);
+      if (!target || !userMayLogin(target)) {
+        if (username) throw new Error("not found");
+        skipped.push({ username: name, reason: "not available" });
+        continue;
+      }
+      try {
+        const policy = (await call(target, { type: "get_policy" })) as UserPolicy;
+        if (!policy.agents.includes(agent)) {
+          skipped.push({ username: name, reason: `${agent === "pi" ? "Pi" : "Cursor"} is off for this person` });
+          continue;
+        }
+        const config = stored[agent];
+        const effective = effectiveAgentOptions(config?.discovered, config?.offered, policy.options?.[agent]);
+        if (agent === "pi") {
+          if (!piDefaultAllowed(effective.models, pi.provider, pi.model)) {
+            skipped.push({ username: name, reason: "model is not allowed" });
+            continue;
+          }
+          await call(target, { type: "apply_harness_defaults", agent: "pi", provider: pi.provider, model: pi.model });
+          applied.push({ username: name, model: true, commands: false });
+          continue;
+        }
+        const writeModel = effective.models.some((item) => item.id === CURSOR_DEFAULT_MODEL_ID);
+        await call(target, { type: "apply_harness_defaults", agent: "cursor", writeModel, commands });
+        applied.push({ username: name, model: writeModel, commands: true });
+      } catch (error) {
+        skipped.push({ username: name, reason: error instanceof Error ? error.message : "request failed" });
+      }
+    }
+    return { applied, skipped };
+  }
+
   async function assertSettingsModel(user: LinuxUser, patch: SettingsPatch) {
     if (patch.defaultModel == null && !patch.defaultAgent) return;
     const current = (await call(user, { type: "get_settings" })) as Settings;
@@ -1308,7 +1372,6 @@ export function createHub(options: HubOptions) {
   }
 
   async function agentState(user: LinuxUser) {
-    await refreshDetectedBinaries(user);
     const listed = await listAgents(agentsFile, commandDirs, user.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
     return {
       agents: listed,
@@ -1324,7 +1387,7 @@ export function createHub(options: HubOptions) {
 
   async function visibleAgents(user: LinuxUser, refresh = false) {
     const listed = await listAgents(agentsFile, commandDirs, user.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
-    const names = [...new Set(listed.filter((agent) => !agent.available).flatMap((agent) => detectionNames(agent)))];
+    const names = [...new Set(listed.flatMap((agent) => detectionNames(agent)))];
     const resolved = await resolveCommands(user, names, refresh);
     const first = new Map<string, string>();
     for (const [name, found] of resolved) first.set(name, found.path);
@@ -1351,32 +1414,6 @@ export function createHub(options: HubOptions) {
     } catch {
       return new Map();
     }
-  }
-
-  async function detectedBinaries(admin: LinuxUser): Promise<Record<string, string>> {
-    const specs = await listAgents(agentsFile, commandDirs, admin.home, enabledPackageAgents(await siteExtensionRecords(agentsFile)));
-    const names = [...new Set(specs.flatMap((agent) => detectionNames(agent)))];
-    const resolved = await resolveCommands(admin, names, false);
-    const paths = new Map<string, string[]>();
-    for (const [name, found] of resolved) paths.set(name, found.paths);
-    return serverBinariesFor(specs, admin.home, paths, commandDirs ?? SYSTEM_COMMAND_DIRS);
-  }
-
-  async function refreshDetectedBinaries(admin: LinuxUser) {
-    if (!agentsFile) return;
-    storeDetectedBinaries(agentsFile, await detectedBinaries(admin));
-  }
-
-  function pushAgentBinaries(user: LinuxUser) {
-    const stored = loadAgentBinaries(agentsFile);
-    const binaries: Partial<Record<AgentId, string>> = {};
-    const allowOverride: AgentId[] = [];
-    for (const [id, record] of Object.entries(stored)) {
-      if (!isAgentId(id)) continue;
-      if (record.path) binaries[id] = record.path;
-      if (record.allowOverride) allowOverride.push(id);
-    }
-    return call(user, { type: "put_agent_binaries", binaries, allowOverride }).catch(() => undefined);
   }
 
   async function syncAgentCatalog(user: LinuxUser) {
@@ -1723,7 +1760,7 @@ function rawBytes(data: Buffer | ArrayBuffer | Buffer[]): Uint8Array {
 
 function piPayload(file: string) {
   const pi = loadPiConfig(file);
-  return { piInstall: pi.install, piAuth: pi.auth, piProvider: pi.provider, piModel: pi.model };
+  return { piProvider: pi.provider, piModel: pi.model, cursorCommands: loadCursorCommands(file) };
 }
 
 function statusFor(message: string): number {

@@ -82,10 +82,9 @@ export interface AgentInventory {
   fileEditor?: boolean;
   fileDownload?: boolean;
   fileUpload?: boolean;
-  piInstall?: "user" | "global";
-  piAuth?: "user" | "shared";
   piProvider?: string;
   piModel?: string;
+  cursorCommands?: string[];
 }
 
 export interface Account {
@@ -639,11 +638,9 @@ export function saveAgents(
   fileDownload?: boolean,
   fileUpload?: boolean,
   extra?: {
-    piAuth?: "user" | "shared";
     piProvider?: string;
     piModel?: string;
-    binaries?: Record<string, string>;
-    allowOverride?: Record<string, boolean>;
+    cursorCommands?: string[];
   },
 ) {
   return api<{
@@ -655,10 +652,9 @@ export function saveAgents(
     fileDownload?: boolean;
     fileUpload?: boolean;
     agentCatalog?: { id: string; label: string }[];
-    piInstall?: "user" | "global";
-    piAuth?: "user" | "shared";
     piProvider?: string;
     piModel?: string;
+    cursorCommands?: string[];
   }>("/api/admin/agents", {
     method: "PUT",
     body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...extra }),
@@ -667,6 +663,40 @@ export function saveAgents(
 
 export function setupPi() {
   return api<Session>("/api/pi/setup", { method: "POST" });
+}
+
+export interface HarnessApplyResult {
+  applied: { username: string; model: boolean; commands: boolean }[];
+  skipped: { username: string; reason: string }[];
+}
+
+export function applyAgentDefaults(agent: "pi" | "cursor", username?: string) {
+  return api<HarnessApplyResult>("/api/admin/agent-defaults", {
+    method: "POST",
+    body: JSON.stringify(username ? { agent, username } : { agent }),
+  });
+}
+
+export function getCursorCommands() {
+  return api<{ commands: string[] }>("/api/cursor-commands");
+}
+
+export function saveCursorCommands(commands: string[]) {
+  return api<{ commands: string[] }>("/api/cursor-commands", {
+    method: "PUT",
+    body: JSON.stringify({ commands }),
+  });
+}
+
+export function getUserCursorCommands(username: string) {
+  return api<{ commands: string[] }>(`/api/admin/users/${encodeURIComponent(username)}/cursor-commands`);
+}
+
+export function saveUserCursorCommands(username: string, commands: string[]) {
+  return api<{ commands: string[] }>(`/api/admin/users/${encodeURIComponent(username)}/cursor-commands`, {
+    method: "PUT",
+    body: JSON.stringify({ commands }),
+  });
 }
 
 export function cancelChat(id: string) {

@@ -618,6 +618,13 @@ test("the administrator sets one person's access, environment, and password", as
     const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
     const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
 
+    const created = await fetch(`${base}/api/admin/agents/custom`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ label: "Harness", binary: "erharness" }),
+    });
+    assert.equal(created.status, 201);
+
     const agentSave = await fetch(`${base}/api/admin/agents`, {
       method: "PUT",
       headers,
@@ -625,22 +632,53 @@ test("the administrator sets one person's access, environment, and password", as
         cursor: true,
         claude: true,
         pi: true,
-        binaries: { cursor: "/bin/true" },
-        allowOverride: { cursor: false },
+        harness: true,
+        binaries: { harness: "/bin/true" },
       }),
     });
     assert.equal(agentSave.status, 200);
+    const savedAgents = JSON.parse(await readFile(agentsFile, "utf8")) as { agentBinaries?: unknown; piInstall?: string };
+    assert.equal(savedAgents.agentBinaries, undefined);
+    assert.equal(savedAgents.piInstall, undefined);
 
     const policy = await fetch(`${base}/api/admin/users/carol/policy`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ agents: ["cursor"], binaries: {}, rawTerminal: false }),
+      body: JSON.stringify({ agents: ["cursor", "harness"], binaries: {}, rawTerminal: false }),
     });
     assert.equal(policy.status, 200);
 
-    const me = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[]; rawTerminal: boolean };
-    assert.deepEqual(me.agents, ["cursor"]);
-    assert.equal(me.rawTerminal, false);
+    const missing = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[]; rawTerminal: boolean };
+    assert.equal(missing.agents.includes("harness"), false);
+    assert.equal(missing.rawTerminal, false);
+
+    await installCommand(carolHome, "erharness");
+    const installed = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[] };
+    assert.equal(installed.agents.includes("harness"), true);
+
+    const offerOff = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: true, pi: true, harness: false }),
+    });
+    assert.equal(offerOff.status, 200);
+    const hidden = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[] };
+    assert.equal(hidden.agents.includes("harness"), false);
+
+    const offerOn = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: true, pi: true, harness: true }),
+    });
+    assert.equal(offerOn.status, 200);
+    const notAllowed = await fetch(`${base}/api/admin/users/carol/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ agents: ["cursor"], binaries: {}, rawTerminal: false }),
+    });
+    assert.equal(notAllowed.status, 200);
+    const deniedHarness = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[] };
+    assert.equal(deniedHarness.agents.includes("harness"), false);
 
     const blocked = await fetch(`${base}/api/chats`, {
       method: "POST",
@@ -649,47 +687,12 @@ test("the administrator sets one person's access, environment, and password", as
     });
     assert.equal(blocked.status, 400);
 
-    await fetch(`${base}/api/settings`, {
-      method: "PUT",
-      headers: carolHeaders,
-      body: JSON.stringify({ binaries: { cursor: "/usr/bin/true" } }),
-    });
     const settings = (await (await fetch(`${base}/api/settings`, { headers: carolHeaders })).json()) as {
-      binaries: { cursor?: string };
       lockedBinaries?: string[];
       binaryOverride?: string[];
     };
-    assert.equal(settings.binaries.cursor, "/bin/true");
-    assert.deepEqual(settings.lockedBinaries, ["cursor"]);
+    assert.equal(settings.lockedBinaries?.includes("cursor"), false);
     assert.equal(settings.binaryOverride?.includes("cursor"), false);
-    const stored = JSON.parse(await readFile(path.join(carolHome, ".engineroom", "settings.json"), "utf8")) as { binaries?: { cursor?: string } };
-    assert.equal(stored.binaries?.cursor, undefined);
-
-    const opened = await fetch(`${base}/api/admin/agents`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({
-        cursor: true,
-        claude: true,
-        pi: true,
-        binaries: { cursor: "/bin/true" },
-        allowOverride: { cursor: true },
-      }),
-    });
-    assert.equal(opened.status, 200);
-    await fetch(`${base}/api/settings`, {
-      method: "PUT",
-      headers: carolHeaders,
-      body: JSON.stringify({ binaries: { cursor: "/bin/echo" } }),
-    });
-    const overridden = (await (await fetch(`${base}/api/settings`, { headers: carolHeaders })).json()) as {
-      binaries: { cursor?: string };
-      lockedBinaries?: string[];
-      binaryOverride?: string[];
-    };
-    assert.equal(overridden.binaries.cursor, "/bin/echo");
-    assert.equal(overridden.lockedBinaries?.includes("cursor"), false);
-    assert.equal(overridden.binaryOverride?.includes("cursor"), true);
 
     const env = await fetch(`${base}/api/admin/users/carol/env`, {
       method: "PUT",
@@ -1179,11 +1182,11 @@ test("offered modes and models are probed, then narrowed per person", async () =
     await chmod(path.join(piBin, "pi"), 0o755);
     const pi = await fetch(`${base}/api/admin/agent-options/pi/probe`, { method: "POST", headers });
     assert.equal(pi.status, 200);
-    const piBody = (await pi.json()) as { discovered: { modes: unknown[]; models: { id: string }[] }; offered: { models: string[] } };
+    const piBody = (await pi.json()) as { discovered: { modes: unknown[]; models: { id: string; name: string }[] }; offered: { models: string[] } };
     assert.deepEqual(piBody.discovered.modes, []);
-    assert.deepEqual(piBody.discovered.models.map((model) => model.id), [
-      "anthropic/claude-sonnet-4",
-      "openrouter/recursive/flint-v1.0:free",
+    assert.deepEqual(piBody.discovered.models, [
+      { id: "anthropic/claude-sonnet-4", name: "anthropic/claude-sonnet-4" },
+      { id: "openrouter/recursive/flint-v1.0:free", name: "recursive/flint-v1.0:free" },
     ]);
     assert.deepEqual(piBody.offered.models, []);
     const piUnknown = await fetch(`${base}/api/admin/agent-options`, {
@@ -2057,6 +2060,264 @@ test("a person can archive and delete a project", async () => {
   } finally {
     hub.close();
     await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("harness defaults apply only within each person's agents and models", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-defaults-"));
+  const aliceHome = path.join(root, "alice");
+  const bobHome = path.join(root, "bob");
+  const socketDir = path.join(root, "socks");
+  const agentsFile = path.join(root, "agents.json");
+  await mkdir(aliceHome, { recursive: true });
+  await mkdir(path.join(bobHome, ".cursor"), { recursive: true });
+  await mkdir(path.join(aliceHome, ".pi", "agent"), { recursive: true });
+  await mkdir(socketDir);
+  await writeFile(path.join(aliceHome, ".pi", "agent", "settings.json"), `${JSON.stringify({ lastChangelogVersion: "1.4.0" })}\n`);
+  await writeFile(path.join(bobHome, ".cursor", "cli-config.json"), `${JSON.stringify({
+    authInfo: { email: "bob@example.com" },
+    permissions: { allow: ["Shell(old)", "Write(/tmp/x)"], deny: ["Shell(rm)"] },
+    model: { modelId: "other-model" },
+    modelParameters: {
+      "grok-4.7": [{ id: "fast", value: "true" }],
+      "gemini-4-argon": [{ id: "reasoning_effort", value: "medium" }],
+    },
+    sandbox: { mode: "disabled" },
+  })}\n`);
+  await writeFile(agentsFile, JSON.stringify({
+    cursor: true,
+    claude: false,
+    pi: true,
+    piProvider: "openrouter",
+    piModel: "recursive/flint-v1.0:free",
+    cursorCommands: ["ls", "npm install"],
+  }));
+  await writeFile(path.join(root, "agent-options.json"), JSON.stringify({
+    cursor: {
+      discovered: {
+        modes: [],
+        models: [{ id: "grok-4.7", name: "Grok" }, { id: "other", name: "Other" }],
+        probedAt: "2026-01-01T00:00:00.000Z",
+      },
+      offered: { modes: [], models: ["grok-4.7", "other"] },
+    },
+    pi: {
+      discovered: {
+        modes: [],
+        models: [{ id: "openrouter/recursive/flint-v1.0:free", name: "recursive/flint-v1.0:free" }],
+        probedAt: "2026-01-01T00:00:00.000Z",
+      },
+      offered: { modes: [], models: ["openrouter/recursive/flint-v1.0:free"] },
+    },
+  }));
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home: aliceHome,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const bob: LinuxUser = { ...alice, username: "bob", home: bobHome };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { return { agentSessionId: null }; } },
+    claude: { id: "claude", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const aliceRunner = await startRunner({ home: aliceHome, socketPath: socketPathForUser(socketDir, "alice"), drivers });
+  const bobRunner = await startRunner({ home: bobHome, socketPath: socketPathForUser(socketDir, "bob"), drivers });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("defaults-test-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    listAccounts: () => [
+      { username: "alice", home: aliceHome, uid },
+      { username: "bob", home: bobHome, uid },
+    ],
+    lookup: (username) => (username === "alice" ? alice : username === "bob" ? bob : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const policy = await fetch(`${base}/api/admin/users/bob/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        agents: ["cursor"],
+        rawTerminal: false,
+        options: { cursor: { modes: [], models: ["other"] } },
+      }),
+    });
+    assert.equal(policy.status, 200);
+
+    const cursor = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor" }),
+    });
+    assert.equal(cursor.status, 200);
+    const cursorBody = (await cursor.json()) as {
+      applied: { username: string; model: boolean; commands: boolean }[];
+      skipped: { username: string }[];
+    };
+    assert.equal(cursorBody.skipped.length, 0);
+    assert.equal(cursorBody.applied.find((item) => item.username === "alice")?.model, true);
+    assert.equal(cursorBody.applied.find((item) => item.username === "bob")?.model, false);
+    assert.equal(cursorBody.applied.find((item) => item.username === "bob")?.commands, true);
+
+    const aliceCursor = JSON.parse(await readFile(path.join(aliceHome, ".cursor", "cli-config.json"), "utf8")) as {
+      version: number;
+      model: { modelId: string; displayName: string };
+      selectedModel: { parameters: { id: string; value: string }[] };
+      permissions: { allow: string[] };
+      authInfo?: unknown;
+    };
+    assert.equal(aliceCursor.version, 1);
+    assert.equal(aliceCursor.model.modelId, "grok-4.7");
+    assert.equal(aliceCursor.model.displayName, "Grok 4.7 256K High");
+    assert.equal(aliceCursor.selectedModel.parameters.find((item) => item.id === "fast")?.value, "false");
+    assert.deepEqual(aliceCursor.permissions.allow, ["Shell(ls)", "Shell(npm install)"]);
+    assert.equal(aliceCursor.authInfo, undefined);
+
+    const bobCursor = JSON.parse(await readFile(path.join(bobHome, ".cursor", "cli-config.json"), "utf8")) as {
+      authInfo: { email: string };
+      model: { modelId: string };
+      modelParameters: { "grok-4.7": { id: string; value: string }[]; "gemini-4-argon": unknown };
+      permissions: { allow: string[]; deny: string[] };
+      sandbox: { mode: string };
+    };
+    assert.equal(bobCursor.authInfo.email, "bob@example.com");
+    assert.equal(bobCursor.model.modelId, "other-model");
+    assert.equal(bobCursor.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "true");
+    assert.deepEqual(bobCursor.modelParameters["gemini-4-argon"], [{ id: "reasoning_effort", value: "medium" }]);
+    assert.deepEqual(bobCursor.permissions.allow, ["Shell(ls)", "Shell(npm install)", "Write(/tmp/x)"]);
+    assert.deepEqual(bobCursor.permissions.deny, ["Shell(rm)"]);
+    assert.equal(bobCursor.sandbox.mode, "disabled");
+
+    const edited = await fetch(`${base}/api/admin/users/bob/cursor-commands`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ commands: ["cat"] }),
+    });
+    assert.equal(edited.status, 200);
+    const editedFile = JSON.parse(await readFile(path.join(bobHome, ".cursor", "cli-config.json"), "utf8")) as {
+      model: { modelId: string };
+      permissions: { allow: string[] };
+    };
+    assert.equal(editedFile.model.modelId, "other-model");
+    assert.deepEqual(editedFile.permissions.allow, ["Shell(cat)", "Write(/tmp/x)"]);
+
+    const own = await fetch(`${base}/api/cursor-commands`, { headers });
+    assert.equal(own.status, 200);
+    assert.deepEqual(((await own.json()) as { commands: string[] }).commands, ["ls", "npm install"]);
+    const ownSaved = await fetch(`${base}/api/cursor-commands`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ commands: ["echo"] }),
+    });
+    assert.equal(ownSaved.status, 200);
+    const aliceAfter = JSON.parse(await readFile(path.join(aliceHome, ".cursor", "cli-config.json"), "utf8")) as {
+      model: { modelId: string };
+      selectedModel: { parameters: { id: string; value: string }[] };
+      permissions: { allow: string[] };
+    };
+    assert.equal(aliceAfter.model.modelId, "grok-4.7");
+    assert.equal(aliceAfter.selectedModel.parameters.find((item) => item.id === "fast")?.value, "false");
+    assert.deepEqual(aliceAfter.permissions.allow, ["Shell(echo)"]);
+
+    const single = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", username: "bob" }),
+    });
+    assert.equal(single.status, 200);
+    const singleBody = (await single.json()) as {
+      applied: { username: string; model: boolean; commands: boolean }[];
+      skipped: { username: string }[];
+    };
+    assert.deepEqual(singleBody.applied.map((item) => item.username), ["bob"]);
+    assert.equal(singleBody.applied[0]?.model, false);
+    assert.equal(singleBody.applied[0]?.commands, true);
+    assert.equal(singleBody.skipped.length, 0);
+    const aliceAfterSingle = JSON.parse(await readFile(path.join(aliceHome, ".cursor", "cli-config.json"), "utf8")) as {
+      model: { modelId: string };
+      permissions: { allow: string[] };
+    };
+    assert.equal(aliceAfterSingle.model.modelId, "grok-4.7");
+    assert.deepEqual(aliceAfterSingle.permissions.allow, ["Shell(echo)"]);
+    const bobAfterSingle = JSON.parse(await readFile(path.join(bobHome, ".cursor", "cli-config.json"), "utf8")) as {
+      model: { modelId: string };
+      permissions: { allow: string[] };
+    };
+    assert.equal(bobAfterSingle.model.modelId, "other-model");
+    assert.deepEqual(bobAfterSingle.permissions.allow, ["Shell(ls)", "Shell(npm install)", "Write(/tmp/x)"]);
+
+    const unknown = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", username: "nobody" }),
+    });
+    assert.equal(unknown.status, 404);
+
+    const empty = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "cursor", username: "" }),
+    });
+    assert.equal(empty.status, 400);
+
+    const pi = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "pi" }),
+    });
+    assert.equal(pi.status, 200);
+    const piBody = (await pi.json()) as {
+      applied: { username: string }[];
+      skipped: { username: string; reason: string }[];
+    };
+    assert.deepEqual(piBody.applied.map((item) => item.username), ["alice"]);
+    assert.equal(piBody.skipped[0]?.username, "bob");
+    assert.match(piBody.skipped[0]?.reason ?? "", /Pi is off/);
+    const piSettings = JSON.parse(await readFile(path.join(aliceHome, ".pi", "agent", "settings.json"), "utf8")) as {
+      lastChangelogVersion: string;
+      defaultProvider: string;
+      defaultModel: string;
+    };
+    assert.equal(piSettings.lastChangelogVersion, "1.4.0");
+    assert.equal(piSettings.defaultProvider, "openrouter");
+    assert.equal(piSettings.defaultModel, "recursive/flint-v1.0:free");
+
+    const cleared = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, claude: false, pi: true, piProvider: "", piModel: "" }),
+    });
+    assert.equal(cleared.status, 200);
+    const missing = await fetch(`${base}/api/admin/agent-defaults`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ agent: "pi" }),
+    });
+    assert.equal(missing.status, 400);
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await bobRunner.close();
     await rm(root, { recursive: true, force: true });
   }
 });

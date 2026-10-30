@@ -19,7 +19,7 @@ import {
   type SettingsPatch,
   type TranscriptEntry,
 } from "@engineroom/protocol";
-import { loadAgentBinarySiteSync, loadPolicy, withLocks } from "./policy.ts";
+import { loadPolicy, withLocks } from "./policy.ts";
 import { isGitRepository, listGitRepositories, repositoryPathAllowed, resolveWorkspace } from "./workspace.ts";
 
 export function dataRoot(home: string): string {
@@ -72,17 +72,7 @@ export async function loadSettings(home: string): Promise<Settings> {
 export async function saveSettings(home: string, patch: SettingsPatch): Promise<Settings> {
   await ensureRoot(home);
   const policy = await loadPolicy(home);
-  const site = loadAgentBinarySiteSync(home);
-  const editable: SettingsPatch = { ...patch };
-  if (patch.binaries) {
-    const binaries = { ...patch.binaries };
-    const allow = new Set(site.allowOverride);
-    for (const agent of Object.keys(binaries)) {
-      if (!allow.has(agent)) delete binaries[agent];
-    }
-    editable.binaries = binaries;
-  }
-  const next = applySettings(await loadSettings(home), editable);
+  const next = applySettings(await loadSettings(home), patch);
   await writeAtomic(path.join(dataRoot(home), "settings.json"), `${JSON.stringify(next, null, 2)}\n`);
   return withLocks(next, policy, home);
 }
