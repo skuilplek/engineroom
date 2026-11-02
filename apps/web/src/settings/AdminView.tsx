@@ -2154,7 +2154,7 @@ function PersonPanel({
               <header className="person-card-head person-card-head-row">
                 <div>
                   <PersonHeading>Environment</PersonHeading>
-                  <p className="muted">Values in their ~/.env file. HOME, PATH, and loader variables are left alone when an agent starts.</p>
+                  <p className="muted">Names stay visible. Saved values stay in their ~/.env file for agents and are not shown again. Leave a value blank to keep it, or type a new one to replace it. HOME, PATH, and loader variables are left alone when an agent starts.</p>
                 </div>
                 <button className="ghost" type="button" onClick={() => setEnv([...env, { key: "", value: "" }])}>Add variable</button>
               </header>
@@ -2168,11 +2168,18 @@ function PersonPanel({
                     <input
                       aria-label={`Variable name ${index + 1}`}
                       value={entry.key}
+                      readOnly={entry.saved === true}
+                      autoComplete="off"
+                      spellCheck={false}
                       onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item))}
                     />
                     <span className="person-env-label">Value</span>
                     <input
                       aria-label={`Variable value ${index + 1}`}
+                      type="password"
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      placeholder={entry.saved ? "Saved" : undefined}
                       value={entry.value}
                       onChange={(event) => setEnv(env.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))}
                     />

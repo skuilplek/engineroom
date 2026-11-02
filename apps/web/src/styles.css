@@ -2554,6 +2554,7 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   border-radius: 8px;
   background: var(--sunken);
 }
+.person-env input[readonly] { color: var(--muted); }
 .person-env-label {
   display: flex;
   align-items: center;

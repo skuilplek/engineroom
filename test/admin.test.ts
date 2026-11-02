@@ -765,8 +765,45 @@ test("the administrator sets one person's access, environment, and password", as
       body: JSON.stringify({ entries: [{ key: "ANTHROPIC_API_KEY", value: "secret" }] }),
     });
     assert.equal(env.status, 200);
+    const savedEnv = (await env.json()) as Array<{ key: string; value: string; saved?: boolean }>;
+    assert.deepEqual(savedEnv, [{ key: "ANTHROPIC_API_KEY", value: "", saved: true }]);
+    assert.equal(JSON.stringify(savedEnv).includes("secret"), false);
     const file = await readFile(path.join(carolHome, ".env"), "utf8");
     assert.match(file, /ANTHROPIC_API_KEY=secret/);
+    const person = (await (await fetch(`${base}/api/admin/users/carol`, { headers })).json()) as {
+      env: Array<{ key: string; value: string; saved?: boolean }>;
+    };
+    assert.deepEqual(person.env, [{ key: "ANTHROPIC_API_KEY", value: "", saved: true }]);
+    assert.equal(JSON.stringify(person.env).includes("secret"), false);
+
+    const kept = await fetch(`${base}/api/admin/users/carol/env`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ entries: [{ key: "ANTHROPIC_API_KEY", value: "" }] }),
+    });
+    assert.equal(kept.status, 200);
+    const keptEnv = (await kept.json()) as Array<{ key: string; value: string; saved?: boolean }>;
+    assert.deepEqual(keptEnv, [{ key: "ANTHROPIC_API_KEY", value: "", saved: true }]);
+    assert.match(await readFile(path.join(carolHome, ".env"), "utf8"), /ANTHROPIC_API_KEY=secret/);
+
+    const replaced = await fetch(`${base}/api/admin/users/carol/env`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ entries: [{ key: "ANTHROPIC_API_KEY", value: "rotated" }] }),
+    });
+    assert.equal(replaced.status, 200);
+    const replacedFile = await readFile(path.join(carolHome, ".env"), "utf8");
+    assert.match(replacedFile, /ANTHROPIC_API_KEY=rotated/);
+    assert.equal(replacedFile.includes("secret"), false);
+
+    const removed = await fetch(`${base}/api/admin/users/carol/env`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ entries: [] }),
+    });
+    assert.equal(removed.status, 200);
+    assert.deepEqual(await removed.json(), []);
+    assert.equal((await readFile(path.join(carolHome, ".env"), "utf8")).includes("ANTHROPIC_API_KEY"), false);
 
     const password = await fetch(`${base}/api/admin/users/carol/password`, {
       method: "POST",

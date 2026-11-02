@@ -354,6 +354,8 @@ export interface UserPolicy {
 export interface EnvEntry {
   key: string;
   value: string;
+  /** Set on reads when a value is stored and omitted from this response. */
+  saved?: boolean;
 }
 
 export interface UserAccess {

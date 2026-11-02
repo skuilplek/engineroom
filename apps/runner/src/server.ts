@@ -35,7 +35,7 @@ import { applyCursorDefaults, applyPiDefaults, loadCursorCommands } from "./harn
 import { gitClone } from "./clone.ts";
 import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
-import { loadEnv, saveEnv } from "./envfile.ts";
+import { loadEnv, redactEnvEntries, saveEnv } from "./envfile.ts";
 import { appendActionError, clearActionErrors, deleteActionError, listActionErrors } from "./errors.ts";
 import { TranscriptWriter } from "./persist.ts";
 import { binaryFor, loadPolicy, savePolicy, withLocks } from "./policy.ts";
@@ -348,16 +348,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "put_policy":
         return savePolicy(home, request.policy);
       case "get_env":
-        return loadEnv(home);
+        return redactEnvEntries(await loadEnv(home));
       case "put_env":
-        return saveEnv(home, request.entries);
+        return redactEnvEntries(await saveEnv(home, request.entries));
       case "get_access": {
         const policy = await loadPolicy(home);
         return {
           policy,
           settings: withLocks(await loadSettings(home), policy, home),
           grants: await loadGrants(home),
-          env: await loadEnv(home),
+          env: redactEnvEntries(await loadEnv(home)),
         };
       }
       case "sync_repositories":

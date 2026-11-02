@@ -66,6 +66,10 @@ export async function loadEnv(home: string): Promise<EnvEntry[]> {
   }
 }
 
+export function redactEnvEntries(entries: EnvEntry[]): EnvEntry[] {
+  return entries.map((entry) => ({ key: entry.key, value: "", saved: true }));
+}
+
 export async function saveEnv(home: string, entries: EnvEntry[]): Promise<EnvEntry[]> {
   const clean = parseEnvEntries(entries);
   const file = envPath(home);
@@ -75,7 +79,12 @@ export async function saveEnv(home: string, entries: EnvEntry[]): Promise<EnvEnt
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  const next = applyEnvEntries(current, clean);
+  const existing = new Map(readEnvEntries(current).map((entry) => [entry.key, entry.value]));
+  const merged = clean.map((entry) => ({
+    key: entry.key,
+    value: entry.value === "" && existing.has(entry.key) ? existing.get(entry.key)! : entry.value,
+  }));
+  const next = applyEnvEntries(current, merged);
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(tmp, next, { mode: 0o600 });
   await rename(tmp, file);
