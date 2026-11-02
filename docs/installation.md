@@ -15,7 +15,7 @@ sudo ./setup.sh
 `setup.sh` does the following:
 
 1. Installs `build-essential`, `python3`, `libpam0g-dev`, `curl`, `xz-utils`, Caddy, `avahi-daemon`, `wpasupplicant`, and `iw`.
-2. Installs Node.js 24 under `/usr/local` when the current `node` is older than 24 (linux-x64 tarball from nodejs.org).
+2. Installs Node.js 24 under `/usr/local` when `node` is missing, older than 24, or cannot execute TypeScript. The tarball is the current linux-x64 or linux-arm64 build from nodejs.org, checked against that release's SHA256 sums.
 3. Writes `/etc/engineroom/hub.env` with `ENGINEROOM_COOKIE_SECURE` and `ENGINEROOM_ADMIN`.
 4. Writes `/etc/engineroom/checks.json` if it is missing. That file lists commands the overview page probes (`node`, `git`, `caddy`, `agent`, `pi`, `obscura`, `python3`).
 5. Runs `deploy/install.sh`.
@@ -65,7 +65,7 @@ It creates:
 - Application tree at `/usr/local/lib/engineroom`
 - Built web UI at `/usr/local/share/engineroom/web`
 
-`npm install` runs when `node_modules` is missing. `npm run build:web` always runs. The hub unit is enabled and started.
+`npm ci` runs when dependencies are missing or `node-pty` does not load under the current Node. `npm run build:web` always runs. The hub unit is enabled and started.
 
 ## Updates
 

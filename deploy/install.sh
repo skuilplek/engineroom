@@ -11,8 +11,18 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-if ! command -v node >/dev/null; then
-  echo "Node.js 24 or newer is required" >&2
+if [[ -x /usr/local/bin/node ]]; then
+  export PATH="/usr/local/bin:${PATH}"
+fi
+hash -r
+
+if ! command -v node >/dev/null \
+  || ! node -e 'const major = Number(process.versions.node.split(".")[0]); if (major < 24 || !process.features.typescript) process.exit(1);'; then
+  found="not installed"
+  if command -v node >/dev/null; then
+    found="$(node --version)"
+  fi
+  echo "Node.js 24 or newer, able to execute TypeScript, is required (found ${found}). Run setup.sh." >&2
   exit 1
 fi
 
@@ -43,7 +53,9 @@ install -m 0644 deploy/systemd/engineroom-runner@.socket /etc/systemd/system/eng
 # Vite's launcher imports ../dist/node/cli.js. That resolves only when
 # node_modules/.bin/vite is a symlink into the vite package. A copied
 # launcher looks for node_modules/dist/node/cli.js and the build fails.
-if [[ ! -L node_modules/.bin/vite ]]; then
+# node-pty is compiled for one Node ABI, so a tree installed with the
+# distro Node has to be installed again once Node 24 is on the PATH.
+if [[ ! -L node_modules/.bin/vite ]] || ! node --input-type=module -e 'await import("node-pty")' >/dev/null 2>&1; then
   owner="$(stat -c '%U' "$root")"
   if [[ -d node_modules && "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
     chown -R "$owner" node_modules
@@ -54,6 +66,7 @@ if [[ ! -L node_modules/.bin/vite ]]; then
     npm ci
   fi
 fi
+node --input-type=module -e 'await import("node-pty")'
 npm run build:web
 
 install -d -m 0755 /usr/local/lib /usr/local/share/engineroom

@@ -17,8 +17,85 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
-apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl caddy nodejs npm avahi-daemon wpasupplicant iw
+apt-get install -y build-essential python3 libpam0g-dev ca-certificates curl xz-utils caddy avahi-daemon wpasupplicant iw
 
+# Ubuntu's nodejs package is too old for this repo, and that build also
+# ships with Node's TypeScript support turned off. Vite loads
+# apps/web/vite.config.ts with --configLoader native, which needs Node 24.
+install_node() {
+  node_is_usable() {
+    local bin="$1"
+    [[ -x "$bin" ]] || return 1
+    "$bin" -e 'const major = Number(process.versions.node.split(".")[0]); if (major < 24 || !process.features.typescript) process.exit(1);'
+  }
+
+  if [[ -x /usr/local/bin/node ]]; then
+    if node_is_usable /usr/local/bin/node; then
+      return
+    fi
+  elif command -v node >/dev/null 2>&1 && node_is_usable "$(command -v node)"; then
+    return
+  fi
+
+  local arch
+  case "$(uname -m)" in
+    x86_64) arch="x64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)
+      echo "node: unsupported architecture $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+
+  local tmp name dir bin
+  tmp="$(mktemp -d)"
+  echo "Installing Node.js 24 under /usr/local..."
+  curl -fsSL -o "$tmp/SHASUMS256.txt" https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt || {
+    rm -rf "$tmp"
+    exit 1
+  }
+  name="$(awk -v arch="$arch" '$2 ~ ("^node-v24\\.[0-9]+\\.[0-9]+-linux-" arch "\\.tar\\.xz$") { print $2; exit }' "$tmp/SHASUMS256.txt")"
+  if [[ -z "$name" ]]; then
+    echo "node: Node.js 24 release has no linux-${arch} tarball" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  curl -fsSL -o "$tmp/$name" "https://nodejs.org/dist/latest-v24.x/${name}" || {
+    rm -rf "$tmp"
+    exit 1
+  }
+  awk -v name="$name" '$2 == name { print; exit }' "$tmp/SHASUMS256.txt" > "$tmp/check.txt"
+  if [[ ! -s "$tmp/check.txt" ]]; then
+    echo "node: no checksum for ${name}" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  if ! (cd "$tmp" && sha256sum -c --strict check.txt); then
+    echo "node: checksum mismatch for ${name}" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+
+  dir="${name%.tar.xz}"
+  install -d -m 0755 /usr/local/lib/nodejs /usr/local/bin
+  rm -rf "/usr/local/lib/nodejs/${dir}"
+  tar -C /usr/local/lib/nodejs -xJf "$tmp/$name"
+  ln -sfn "/usr/local/lib/nodejs/${dir}" /usr/local/lib/nodejs/current
+  for bin in node npm npx corepack; do
+    if [[ -x "/usr/local/lib/nodejs/current/bin/${bin}" ]]; then
+      ln -sfn "/usr/local/lib/nodejs/current/bin/${bin}" "/usr/local/bin/${bin}"
+    fi
+  done
+  find /usr/local/lib/nodejs -mindepth 1 -maxdepth 1 -type d -name 'node-v*' ! -name "$dir" -exec rm -rf {} +
+  rm -rf "$tmp"
+  if [[ ! -x /usr/local/bin/node || ! -x /usr/local/bin/npm ]] || ! node_is_usable /usr/local/bin/node; then
+    echo "node: install did not provide a usable Node.js 24" >&2
+    exit 1
+  fi
+}
+
+install_node
+export PATH="/usr/local/bin:${PATH}"
 hash -r
 node --version
 
