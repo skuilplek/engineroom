@@ -53,9 +53,34 @@ install -m 0644 deploy/systemd/engineroom-runner@.socket /etc/systemd/system/eng
 # Vite's launcher imports ../dist/node/cli.js. That resolves only when
 # node_modules/.bin/vite is a symlink into the vite package. A copied
 # launcher looks for node_modules/dist/node/cli.js and the build fails.
-# node-pty is compiled for one Node ABI, so a tree installed with the
-# distro Node has to be installed again once Node 24 is on the PATH.
-if [[ ! -L node_modules/.bin/vite ]] || ! node --input-type=module -e 'await import("node-pty")' >/dev/null 2>&1; then
+# node-pty is compiled for one Node ABI. Loading a binary built by the
+# distro Node segfaults, so compare the ABI stamped into pty.node instead
+# of importing the module.
+node_pty_built_for_this_node() {
+  node --input-type=module <<'EOF'
+import { readFileSync } from "node:fs";
+
+const abi = process.versions.modules;
+let binary;
+try {
+  binary = readFileSync("node_modules/node-pty/build/Release/pty.node");
+} catch {
+  process.exit(1);
+}
+const tagged = binary.toString("latin1").match(/node_register_module_v(\d+)/);
+if (tagged) process.exit(tagged[1] === abi ? 0 : 1);
+
+let gypi;
+try {
+  gypi = readFileSync("node_modules/node-pty/build/config.gypi", "utf8");
+} catch {
+  process.exit(1);
+}
+const fromGypi = gypi.match(/["']node_module_version["']\s*:\s*["']?(\d+)/);
+process.exit(fromGypi && fromGypi[1] === abi ? 0 : 1);
+EOF
+}
+if [[ ! -L node_modules/.bin/vite ]] || ! node_pty_built_for_this_node; then
   owner="$(stat -c '%U' "$root")"
   if [[ -d node_modules && "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
     chown -R "$owner" node_modules

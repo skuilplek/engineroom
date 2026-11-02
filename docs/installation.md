@@ -65,7 +65,7 @@ It creates:
 - Application tree at `/usr/local/lib/engineroom`
 - Built web UI at `/usr/local/share/engineroom/web`
 
-`npm ci` runs when dependencies are missing or `node-pty` does not load under the current Node. `npm run build:web` always runs. The hub unit is enabled and started.
+`npm ci` runs when dependencies are missing or `node-pty` was built for a different Node. `npm run build:web` always runs. The hub unit is enabled and started.
 
 ## Updates
 
