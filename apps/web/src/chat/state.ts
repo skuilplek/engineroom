@@ -67,7 +67,7 @@ export function applySnapshot(state: ChatLive, snapshot: {
     title: snapshot.chat.title,
     agent: snapshot.chat.agent,
     workspace: snapshot.chat.workspace,
-    mode: snapshot.modes?.currentModeId || snapshot.chat.mode || state.mode,
+    mode: liveAhead ? state.mode : (snapshot.modes?.currentModeId || snapshot.chat.mode || state.mode),
     model: snapshot.models?.currentModelId || snapshot.chat.model || state.model,
     modes: snapshot.modes?.availableModes || state.modes,
     models: snapshot.models?.availableModels || state.models,

@@ -186,6 +186,10 @@ export class AcpSession {
     if (this.suppress) return;
     for (const event of mapUpdate(update)) {
       if (event.type === "user_message" && this.ignoreUser) continue;
+      if (event.type === "mode") {
+        if (this.modes?.currentModeId === event.modeId) continue;
+        if (this.modes) this.modes = { ...this.modes, currentModeId: event.modeId };
+      }
       this.start.onEvent(event);
     }
   }

@@ -108,6 +108,36 @@ test("a late snapshot keeps a queue that already arrived", () => {
   assert.deepEqual(live.queue, [{ text: "stay", attachments: [] }]);
 });
 
+test("a mode update follows the agent and a late snapshot keeps it", () => {
+  const planned = { ...chat, mode: "plan" };
+  const modes = { currentModeId: "plan", availableModes: [{ id: "plan", name: "Plan" }, { id: "agent", name: "Agent" }] };
+  let live = applySnapshot(emptyLive(planned), { transcript: [], seq: 1, running: true, chat: planned, modes });
+  assert.equal(live.mode, "plan");
+  live = applyEvent(live, { type: "mode", modeId: "agent" }, 2);
+  assert.equal(live.mode, "agent");
+  live = applySnapshot(live, { transcript: [], seq: 1, running: true, chat: planned, modes });
+  assert.equal(live.mode, "agent");
+});
+
+test("a config option update reports the session mode", () => {
+  assert.deepEqual(
+    mapUpdate({
+      sessionUpdate: "config_option_update",
+      configOptions: [
+        { id: "model", category: "model", currentValue: "fast" },
+        { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "agent" },
+      ],
+    }),
+    [{ type: "mode", modeId: "agent" }],
+  );
+  assert.deepEqual(mapUpdate({ sessionUpdate: "current_mode_update", modeId: "plan" }), [{ type: "mode", modeId: "plan" }]);
+  assert.deepEqual(
+    mapUpdate({ sessionUpdate: "config_option_update", configOptions: [{ configId: "mode", currentValue: "ask" }] }),
+    [{ type: "mode", modeId: "ask" }],
+  );
+  assert.deepEqual(mapUpdate({ sessionUpdate: "config_option_update", configOptions: [{ id: "model", currentValue: "fast" }] }), []);
+});
+
 test("agent text chunks accept a list of blocks", () => {
   assert.deepEqual(
     mapUpdate({

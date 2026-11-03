@@ -23,10 +23,10 @@ export function mapUpdate(update: unknown): StreamEvent[] {
       return [toolEvent(body, phaseOf(body.status))];
     case "plan":
       return [{ type: "plan", entries: planEntries(body.entries) }];
-    case "current_mode_update": {
-      const modeId = typeof body.currentModeId === "string" ? body.currentModeId : "";
-      return modeId ? [{ type: "mode", modeId }] : [];
-    }
+    case "current_mode_update":
+      return modeEvent(modeIdOf(body));
+    case "config_option_update":
+      return modeEvent(modeFromConfig(body.configOptions));
     case "session_info_update": {
       const text = typeof body.title === "string" ? body.title.trim() : "";
       return text ? [{ type: "title", text }] : [];
@@ -123,6 +123,24 @@ function diffContent(value: unknown): ToolContent[] | undefined {
     }];
   }
   return undefined;
+}
+
+function modeEvent(modeId: string): StreamEvent[] {
+  return modeId ? [{ type: "mode", modeId }] : [];
+}
+
+function modeIdOf(body: Record<string, unknown>): string {
+  if (typeof body.currentModeId === "string" && body.currentModeId) return body.currentModeId;
+  if (typeof body.modeId === "string" && body.modeId) return body.modeId;
+  return "";
+}
+
+function modeFromConfig(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  const options = value.filter((item) => item && typeof item === "object") as Record<string, unknown>[];
+  const mode = options.find((item) => item.category === "mode")
+    ?? options.find((item) => item.id === "mode" || item.configId === "mode");
+  return mode && typeof mode.currentValue === "string" ? mode.currentValue : "";
 }
 
 function planEntries(value: unknown): PlanEntry[] {

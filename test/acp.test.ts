@@ -187,6 +187,36 @@ test("a missing agent session starts a new one instead of failing the turn", asy
   }
 });
 
+test("an agent mode change updates the saved chat mode", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-acp-switch-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({
+    launch: async () => ({ binary: process.execPath, args: [fake] }),
+  });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", mode: "plan", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p", type: "prompt", chatId, prompt: "switch-mode" });
+    const switched = await live.next((message) => message.event?.type === "mode" && message.event.modeId === "agent");
+    assert.equal(switched.event?.modeId, "agent");
+    await live.next((message) => message.event?.type === "done");
+    let mode = "";
+    for (let attempt = 0; attempt < 50 && mode !== "agent"; attempt += 1) {
+      mode = (await getChat(home, chatId, false)).chat.mode || "";
+      if (mode !== "agent") await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(mode, "agent");
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("a running turn does not wait on set_mode", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-acp-busy-"));
   const sock = path.join(home, "runner.sock");
@@ -348,7 +378,7 @@ interface Line {
   type?: string;
   result?: unknown;
   error?: string;
-  event?: { type?: string; text?: string; requestId?: string };
+  event?: { type?: string; text?: string; requestId?: string; modeId?: string };
 }
 
 function once(socketPath: string, request: Record<string, unknown>): Promise<Line> {

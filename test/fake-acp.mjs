@@ -67,6 +67,24 @@ async function handle(msg) {
       notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "held" } } });
       return;
     }
+    if (text === "switch-mode") {
+      notify("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: [{
+            id: "mode",
+            name: "Mode",
+            category: "mode",
+            type: "select",
+            currentValue: "agent",
+            options: [{ value: "agent", name: "Agent" }, { value: "plan", name: "Plan" }],
+          }],
+        },
+      });
+      notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "building" } } });
+      return reply(msg.id, { stopReason: "end_turn" });
+    }
     if (text === "run-terminal") {
       const created = await request(11, "terminal/create", {
         command: process.execPath,
