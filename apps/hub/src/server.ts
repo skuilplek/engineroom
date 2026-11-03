@@ -392,6 +392,16 @@ export function createHub(options: HubOptions) {
     if (!access.agents.includes(agent)) throw new Error("invalid agent");
   }
 
+  // Naming a default does not require the command on that account yet.
+  // Starting a chat still does, through assertAgentAllowed.
+  async function assertAgentGrantable(user: LinuxUser, agent: AgentId) {
+    const flags = loadAgentFlags(agentsFile);
+    const listed = await visibleAgents(user);
+    if (!offeredAgentIds(flags, listed).includes(agent)) throw new Error("invalid agent");
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    if (!policy.agents.includes(agent)) throw new Error("invalid agent");
+  }
+
   async function assertProjectCreate(user: LinuxUser) {
     const access = await loadAccess(user);
     if (!access.projectCreate) throw new Error("project creation is not enabled");
@@ -670,8 +680,8 @@ export function createHub(options: HubOptions) {
       }
       if (action === "settings" && req.method === "PUT") {
         const body = (await readJson(req)) as SettingsPatch;
-        if (body.defaultAgent) await assertAgentAllowed(target, body.defaultAgent);
-        await assertSettingsModel(target, body);
+        if (body.defaultAgent) await assertAgentGrantable(target, body.defaultAgent);
+        await assertGrantedSettingsModel(target, body);
         await assertThemeChoice(target, body.theme);
         sendJson(res, 200, await presentSettings(target, (await call(target, { type: "put_settings", settings: body })) as Settings));
         return;
@@ -1439,6 +1449,21 @@ export function createHub(options: HubOptions) {
     const agent = patch.defaultAgent ?? current.defaultAgent;
     const model = patch.defaultModel != null ? patch.defaultModel : current.defaultModel;
     await assertModelChoice(user, agent, model);
+  }
+
+  async function assertGrantedSettingsModel(user: LinuxUser, patch: SettingsPatch) {
+    if (patch.defaultModel == null && !patch.defaultAgent) return;
+    const current = (await call(user, { type: "get_settings" })) as Settings;
+    const agent = patch.defaultAgent ?? current.defaultAgent;
+    const model = patch.defaultModel != null ? patch.defaultModel : current.defaultModel;
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    const config = loadAgentOptions(agentOptionsFile)[agent];
+    const allowed = effectiveAgentOptions(config?.discovered, config?.offered, policy.options?.[agent]).models;
+    if (allowed.length === 0) {
+      if (model) throw new Error("invalid model");
+      return;
+    }
+    if (!allowed.some((choice) => choice.id === model)) throw new Error("invalid model");
   }
 
   async function agentState(user: LinuxUser) {

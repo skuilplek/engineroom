@@ -717,6 +717,83 @@ test("the administrator sets one person's access, environment, and password", as
     assert.equal(missing.agents.includes("harness"), false);
     assert.equal(missing.rawTerminal, false);
 
+    const grantedDefault = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ defaultAgent: "harness" }),
+    });
+    assert.equal(grantedDefault.status, 200);
+    assert.equal(((await grantedDefault.json()) as { defaultAgent: string }).defaultAgent, "harness");
+
+    const notGranted = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ defaultAgent: "pi" }),
+    });
+    assert.equal(notGranted.status, 400);
+
+    await writeFile(path.join(root, "agent-options.json"), JSON.stringify({
+      harness: {
+        discovered: {
+          modes: [],
+          models: [
+            { id: "fast", name: "Fast" },
+            { id: "other", name: "Other" },
+            { id: "slow", name: "Slow" },
+          ],
+          probedAt: "2026-01-01T00:00:00.000Z",
+        },
+        offered: { modes: [], models: ["fast", "other"] },
+      },
+    }));
+    const scoped = await fetch(`${base}/api/admin/users/carol/policy`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        agents: ["cursor", "harness"],
+        binaries: {},
+        rawTerminal: false,
+        options: { harness: { modes: [], models: ["fast"] } },
+      }),
+    });
+    assert.equal(scoped.status, 200);
+
+    const withModel = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ defaultAgent: "harness", defaultModel: "fast" }),
+    });
+    assert.equal(withModel.status, 200);
+    assert.equal(((await withModel.json()) as { defaultModel: string }).defaultModel, "fast");
+
+    const outsideOffer = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ defaultAgent: "harness", defaultModel: "slow" }),
+    });
+    assert.equal(outsideOffer.status, 400);
+
+    const outsidePersonal = await fetch(`${base}/api/admin/users/carol/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ defaultAgent: "harness", defaultModel: "other" }),
+    });
+    assert.equal(outsidePersonal.status, 400);
+
+    const selfDefault = await fetch(`${base}/api/settings`, {
+      method: "PUT",
+      headers: carolHeaders,
+      body: JSON.stringify({ defaultAgent: "harness" }),
+    });
+    assert.equal(selfDefault.status, 400);
+
+    const blockedHarness = await fetch(`${base}/api/chats`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ agent: "harness", workspace: carolHome }),
+    });
+    assert.equal(blockedHarness.status, 400);
+
     await installCommand(carolHome, "erharness");
     const installed = (await (await fetch(`${base}/api/me`, { headers: carolHeaders })).json()) as { agents: string[] };
     assert.equal(installed.agents.includes("harness"), true);
