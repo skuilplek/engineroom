@@ -18,9 +18,9 @@ export function mapUpdate(update: unknown): StreamEvent[] {
       return text ? [{ type: "user_message", text }] : [];
     }
     case "tool_call":
-      return [toolEvent(body, "start")];
+      return withSwitchMode(body, [toolEvent(body, "start")]);
     case "tool_call_update":
-      return [toolEvent(body, phaseOf(body.status))];
+      return withSwitchMode(body, [toolEvent(body, phaseOf(body.status))]);
     case "plan":
       return [{ type: "plan", entries: planEntries(body.entries) }];
     case "current_mode_update":
@@ -123,6 +123,31 @@ function diffContent(value: unknown): ToolContent[] | undefined {
     }];
   }
   return undefined;
+}
+
+function withSwitchMode(body: Record<string, unknown>, events: StreamEvent[]): StreamEvent[] {
+  const modeId = modeFromTool(body);
+  return modeId ? [...events, { type: "mode", modeId }] : events;
+}
+
+function modeFromTool(body: Record<string, unknown>): string {
+  const kind = typeof body.kind === "string" ? body.kind : "";
+  const title = typeof body.title === "string" ? body.title : "";
+  if (kind !== "switch_mode" && !/^switch mode\b/i.test(title)) return "";
+  const fromInput = modeFromRaw(body.rawInput);
+  if (fromInput) return fromInput;
+  const suffix = /^switch mode:\s*(\S+)/i.exec(title)?.[1] ?? "";
+  return suffix.toLowerCase() === "unknown" ? "" : suffix;
+}
+
+function modeFromRaw(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  for (const key of ["targetModeId", "target_mode_id", "modeId"]) {
+    const modeId = record[key];
+    if (typeof modeId === "string" && modeId && modeId.toLowerCase() !== "unknown") return modeId;
+  }
+  return "";
 }
 
 function modeEvent(modeId: string): StreamEvent[] {

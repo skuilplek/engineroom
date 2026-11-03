@@ -119,6 +119,42 @@ test("a mode update follows the agent and a late snapshot keeps it", () => {
   assert.equal(live.mode, "agent");
 });
 
+test("a switch mode tool call reports the target mode", () => {
+  const switched = mapUpdate({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call-1",
+    title: "Switch Mode: agent",
+    status: "in_progress",
+    rawInput: { targetModeId: "agent", explanation: "build it" },
+  });
+  assert.equal(switched[0]?.type, "tool");
+  assert.deepEqual(switched[1], { type: "mode", modeId: "agent" });
+  assert.equal(switched.length, 2);
+  const titled = mapUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call-2",
+    title: "Switch Mode: plan",
+    status: "pending",
+  });
+  assert.deepEqual(titled.at(-1), { type: "mode", modeId: "plan" });
+  const placeholder = mapUpdate({
+    sessionUpdate: "tool_call",
+    toolCallId: "call-1",
+    kind: "switch_mode",
+    title: "Switch Mode: unknown",
+    status: "pending",
+    rawInput: {},
+  });
+  assert.equal(placeholder.some((event) => event.type === "mode"), false);
+  const finished = mapUpdate({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call-1",
+    status: "completed",
+  });
+  assert.equal(finished.some((event) => event.type === "mode"), false);
+  assert.equal(finished[0]?.type === "tool" ? finished[0].phase : "", "done");
+});
+
 test("a config option update reports the session mode", () => {
   assert.deepEqual(
     mapUpdate({
