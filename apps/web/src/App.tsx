@@ -16,7 +16,7 @@ import { DocsView } from "./settings/DocsView.tsx";
 import { ErrorsView } from "./settings/ErrorsView.tsx";
 import { SettingsView } from "./settings/SettingsView.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
-import { onAgent, startAgentSocket, stopAgentSocket } from "./socket.ts";
+import { onAgent, sendCommand, startAgentSocket, stopAgentSocket } from "./socket.ts";
 import { applyTheme, rememberTheme } from "./theme.ts";
 
 function applyWrap(wrapText: boolean) {
@@ -359,6 +359,17 @@ function Shell({
     showChat(chat, reposRef.current);
   }
 
+  function pinChat(chat: ChatMeta, pinned: boolean) {
+    setChats((current) => current.map((item) => {
+      if (item.id !== chat.id) return item;
+      if (pinned) return { ...item, pinned: true };
+      const next = { ...item };
+      delete next.pinned;
+      return next;
+    }));
+    sendCommand({ type: "set_chat_pinned", chatId: chat.id, pinned });
+  }
+
   function openView(next: View) {
     choseRef.current = true;
     setNavOpen(false);
@@ -454,6 +465,7 @@ function Shell({
         onToggleCollapsed={narrow ? () => setNavOpen(false) : toggleSidebar}
         onNew={choose}
         onOpen={openChat}
+        onPin={pinChat}
         onSettings={() => openView("settings")}
         onDocs={() => openView("docs")}
         onErrors={() => openView("errors")}

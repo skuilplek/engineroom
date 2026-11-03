@@ -386,6 +386,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         if (!(await allowsAgent(agent, policy.agents))) throw new Error("invalid agent");
         return createChat(home, request);
       }
+      case "set_chat_pinned": {
+        const chat = await updateChat(
+          home,
+          request.chatId,
+          request.pinned ? { pinned: true } : { pinned: false },
+          { touch: false },
+        );
+        bus.changed();
+        return chat;
+      }
       case "set_mode":
         return applyMode(request.chatId, request.modeId);
       case "set_model":

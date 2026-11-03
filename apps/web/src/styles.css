@@ -463,7 +463,7 @@ textarea { resize: vertical; }
   border-top: 0;
   padding-top: 0;
 }
-.nav-item:hover, .repo-line:hover, .chat-row:hover { background: var(--hover); }
+.nav-item:hover, .repo-line:hover, .chat-row:hover, .chat-line:hover { background: var(--hover); }
 .side-nav { display: grid; gap: 2px; margin-top: 8px; }
 .nav-item {
   display: flex;
@@ -474,7 +474,7 @@ textarea { resize: vertical; }
   color: var(--soft);
   text-align: left;
 }
-.nav-item.active, .repo-line.active, .chat-row.active { background: var(--active); color: var(--ink); }
+.nav-item.active, .repo-line.active, .chat-row.active, .chat-line.active { background: var(--active); color: var(--ink); }
 .section-label {
   margin: 18px 10px 6px;
   color: var(--muted);
@@ -525,6 +525,37 @@ textarea { resize: vertical; }
   color: var(--ink);
 }
 .chat-row { padding-left: 30px; border-radius: 8px; }
+.chat-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  border-radius: 8px;
+}
+.pinned-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.chat-pin {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: 8px;
+}
+.chat-pin:hover { color: var(--ink); background: var(--line-strong); }
+.chat-pin[aria-pressed="true"] { color: var(--ink); }
+.chat-project {
+  color: var(--muted);
+  font-size: 12px;
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .repo-name, .chat-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1639,9 +1670,9 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   .permission .row button { min-height: 44px; }
   .shell input, .shell select, .shell textarea,
   .shell .code-editor-input, .shell .code-editor-highlight, .shell .file-code { font-size: 16px; }
-  .nav-item, .chat-row, .repo-select, .account-button, .sidebar-toggle, .plus { min-height: 44px; }
-  .plus { width: 44px; height: 44px; }
-  .repo-line { grid-template-columns: minmax(0, 1fr) 44px; }
+  .nav-item, .chat-row, .repo-select, .account-button, .sidebar-toggle, .plus, .chat-pin { min-height: 44px; }
+  .plus, .chat-pin { width: 44px; height: 44px; }
+  .repo-line, .chat-line { grid-template-columns: minmax(0, 1fr) 44px; }
   .file-preview-meta { flex-wrap: wrap; }
   .file-preview-meta strong { overflow-wrap: anywhere; }
   .repo-manage-row > button, .repo-manage-actions { flex: 1 1 100%; }

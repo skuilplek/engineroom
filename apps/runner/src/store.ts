@@ -225,10 +225,15 @@ export async function getChat(home: string, chatId: string, running: boolean): P
 
 const chatWrites = new Map<string, Promise<void>>();
 
-export function updateChat(home: string, chatId: string, patch: Partial<ChatMeta>): Promise<ChatMeta> {
+export function updateChat(
+  home: string,
+  chatId: string,
+  patch: Partial<ChatMeta>,
+  options?: { touch?: boolean },
+): Promise<ChatMeta> {
   const key = `${home}\0${chatId}`;
   const previous = chatWrites.get(key) ?? Promise.resolve();
-  const run = previous.catch(() => undefined).then(() => writeChatPatch(home, chatId, patch));
+  const run = previous.catch(() => undefined).then(() => writeChatPatch(home, chatId, patch, options));
   const tracked = run.then(() => undefined, () => undefined);
   chatWrites.set(key, tracked);
   return run.finally(() => {
@@ -236,7 +241,12 @@ export function updateChat(home: string, chatId: string, patch: Partial<ChatMeta
   });
 }
 
-async function writeChatPatch(home: string, chatId: string, patch: Partial<ChatMeta>): Promise<ChatMeta> {
+async function writeChatPatch(
+  home: string,
+  chatId: string,
+  patch: Partial<ChatMeta>,
+  options?: { touch?: boolean },
+): Promise<ChatMeta> {
   const chat = await readMeta(home, chatId);
   const next: ChatMeta = {
     ...chat,
@@ -244,9 +254,10 @@ async function writeChatPatch(home: string, chatId: string, patch: Partial<ChatM
     id: chat.id,
     agent: chat.agent,
     createdAt: chat.createdAt,
-    updatedAt: new Date().toISOString(),
+    updatedAt: options?.touch === false ? chat.updatedAt : new Date().toISOString(),
   };
   delete next.running;
+  if (next.pinned !== true) delete next.pinned;
   await writeAtomic(path.join(chatDir(home, chatId), "meta.json"), `${JSON.stringify(next, null, 2)}\n`);
   return next;
 }

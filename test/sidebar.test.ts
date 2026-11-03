@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMeta, RepositoryEntry } from "@engineroom/protocol";
-import { buildGroups, modeTone, visibleProjectChats } from "../apps/web/src/format.ts";
+import { buildGroups, modeTone, pinnedChats, visibleProjectChats } from "../apps/web/src/format.ts";
 
 function chat(workspace: string, title: string): ChatMeta {
   return {
@@ -69,6 +69,28 @@ test("buildGroups leaves archived projects out of the main list", () => {
 function dated(title: string, createdAt: string, updatedAt: string): ChatMeta {
   return { ...chat("/home/serveradmin/Sites/internet", title), id: title, createdAt, updatedAt };
 }
+
+test("pinned chats leave their project and stay in creation order", () => {
+  const home = "/home/serveradmin";
+  const repos: RepositoryEntry[] = [
+    { path: "/home/serveradmin/Sites/internet", name: "internet", enabled: true, archived: false },
+    { path: "/home/serveradmin/Sites/old", name: "old", enabled: true, archived: true },
+  ];
+  const chats = [
+    { ...dated("older", "2026-10-01T00:00:00.000Z", "2026-10-18T05:00:00.000Z"), pinned: true },
+    { ...dated("newer", "2026-10-04T00:00:00.000Z", "2026-10-18T01:00:00.000Z"), pinned: true, workspace: "/home/serveradmin/Sites/old" },
+    dated("stay", "2026-10-03T00:00:00.000Z", "2026-10-18T04:00:00.000Z"),
+    { ...dated("loose", "2026-10-06T00:00:00.000Z", "2026-10-18T06:00:00.000Z"), pinned: true, workspace: "/home/serveradmin/Sites/missing" },
+  ];
+  assert.deepEqual(pinnedChats(chats, repos, home).map((item) => item.id), ["newer", "older"]);
+  assert.deepEqual(pinnedChats(chats, repos, home, "older").map((item) => item.id), ["older"]);
+  const groups = buildGroups(chats, repos, home);
+  assert.deepEqual(groups.map((group) => group.label), ["internet"]);
+  assert.deepEqual(groups[0]?.chats.map((item) => item.id), ["stay"]);
+  const archived = buildGroups(chats, repos, home, "", true);
+  assert.deepEqual(archived.map((group) => group.label), ["old"]);
+  assert.deepEqual(archived[0]?.chats, []);
+});
 
 test("visibleProjectChats shows the last active chats in created order", () => {
   const chats = [

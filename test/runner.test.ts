@@ -56,6 +56,26 @@ test("overlapping chat saves keep both fields", async () => {
   }
 });
 
+test("pinning a chat keeps its updated time", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-pin-"));
+  try {
+    const chat = await createChat(home, { title: "Needs attention" });
+    const pinned = await updateChat(home, chat.id, { pinned: true }, { touch: false });
+    assert.equal(pinned.pinned, true);
+    assert.equal(pinned.updatedAt, chat.updatedAt);
+    const listed = (await listChats(home, new Set())).find((item) => item.id === chat.id);
+    assert.equal(listed?.pinned, true);
+    assert.equal(listed?.updatedAt, chat.updatedAt);
+    const cleared = await updateChat(home, chat.id, { pinned: false }, { touch: false });
+    assert.equal(cleared.pinned, undefined);
+    assert.equal(cleared.updatedAt, chat.updatedAt);
+    const raw = JSON.parse(await readFile(path.join(home, ".engineroom", "chats", chat.id, "meta.json"), "utf8")) as { pinned?: boolean };
+    assert.equal(raw.pinned, undefined);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("a missing chat is reported as not found and left out of the list", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-missing-chat-"));
   try {

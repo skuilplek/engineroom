@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { getGitIdentity, saveGitIdentity } from "../api.ts";
 import { useReportError } from "../errors.tsx";
-import { buildGroups, message, modeTone, relativeTime, strip, visibleProjectChats, type RepoGroup } from "../format.ts";
-import { IconAlert, IconBook, IconChevron, IconFolder, IconFullscreen, IconGear, IconPanelLeft, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
+import { buildGroups, message, modeTone, pinnedChats, relativeTime, strip, visibleProjectChats, workspaceLabel, type RepoGroup } from "../format.ts";
+import { IconAlert, IconBook, IconChevron, IconFolder, IconFullscreen, IconGear, IconPanelLeft, IconPin, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
 type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
@@ -21,6 +21,7 @@ export function Sidebar({
   onToggleCollapsed,
   onNew,
   onOpen,
+  onPin,
   onSettings,
   onDocs,
   onErrors,
@@ -44,6 +45,7 @@ export function Sidebar({
   onToggleCollapsed: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
+  onPin: (chat: ChatMeta, pinned: boolean) => void;
   onSettings: () => void;
   onDocs: () => void;
   onErrors: () => void;
@@ -62,6 +64,7 @@ export function Sidebar({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
   const groups = buildGroups(chats, repos, home, query);
   const archivedGroups = buildGroups(chats, repos, home, query, true);
+  const pinned = pinnedChats(chats, repos, home, query);
   const appName = session.appName.trim() || "AgentWrapper";
   const visibleChats = session.visibleChats ?? 5;
   const searching = query.trim() !== "";
@@ -144,6 +147,21 @@ export function Sidebar({
           {session.projectCreate && <NewProject onCreate={onCreateProject} />}
           <p className="section-label">Conversations</p>
           <div className="tree">
+            {pinned.length > 0 && (
+              <div className="pinned-chats">
+                {pinned.map((chat) => (
+                  <ChatLine
+                    key={chat.id}
+                    chat={chat}
+                    active={view === "chat" && chat.id === activeId}
+                    project={workspaceLabel(chat.workspace, home, repos)}
+                    pinned
+                    onOpen={onOpen}
+                    onPin={onPin}
+                  />
+                ))}
+              </div>
+            )}
             {groups.map((group) => (
               <Group
                 key={group.key}
@@ -157,6 +175,7 @@ export function Sidebar({
                 onToggleOlder={() => toggleOlder(group.key)}
                 onNew={onNew}
                 onOpen={onOpen}
+                onPin={onPin}
               />
             ))}
             {archivedGroups.length > 0 && (
@@ -183,6 +202,7 @@ export function Sidebar({
                 onToggleOlder={() => toggleOlder(group.key)}
                 onNew={onNew}
                 onOpen={onOpen}
+                onPin={onPin}
               />
             ))}
           </div>
@@ -549,6 +569,7 @@ function Group({
   onToggleOlder,
   onNew,
   onOpen,
+  onPin,
 }: {
   group: RepoGroup;
   view: View;
@@ -560,6 +581,7 @@ function Group({
   onToggleOlder: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
+  onPin: (chat: ChatMeta, pinned: boolean) => void;
 }) {
   const selected = view === "start" && strip(target) === strip(group.path);
   const { shown, older } = visibleProjectChats(group.chats, limit, view === "chat" ? activeId : null, { expanded, uncapped: searching });
@@ -584,16 +606,14 @@ function Group({
         )}
       </div>
       {shown.map((chat) => (
-        <button
-          className={view === "chat" && chat.id === activeId ? "chat-row active" : "chat-row"}
+        <ChatLine
           key={chat.id}
-          type="button"
-          onClick={() => onOpen(chat)}
-        >
-          <span className={chatDotClass(chat)} data-mode={modeTone(chat.mode) || undefined} />
-          <span className="chat-title">{chat.title}</span>
-          <span className="chat-time">{relativeTime(chat.updatedAt)}</span>
-        </button>
+          chat={chat}
+          active={view === "chat" && chat.id === activeId}
+          pinned={false}
+          onOpen={onOpen}
+          onPin={onPin}
+        />
       ))}
       {older > 0 && (
         <button className="section-toggle older-chats" type="button" aria-expanded={expanded} onClick={onToggleOlder}>
@@ -601,6 +621,47 @@ function Group({
           {expanded ? "Hide older" : `Show ${older} older`}
         </button>
       )}
+    </div>
+  );
+}
+
+function ChatLine({
+  chat,
+  active,
+  project,
+  pinned,
+  onOpen,
+  onPin,
+}: {
+  chat: ChatMeta;
+  active: boolean;
+  project?: string;
+  pinned: boolean;
+  onOpen: (chat: ChatMeta) => void;
+  onPin: (chat: ChatMeta, pinned: boolean) => void;
+}) {
+  return (
+    <div className={active ? "chat-line active" : "chat-line"}>
+      <button
+        className={active ? "chat-row active" : "chat-row"}
+        type="button"
+        onClick={() => onOpen(chat)}
+      >
+        <span className={chatDotClass(chat)} data-mode={modeTone(chat.mode) || undefined} />
+        <span className="chat-title">{chat.title}</span>
+        {project ? <span className="chat-project" title={project}>{project}</span> : null}
+        <span className="chat-time">{relativeTime(chat.updatedAt)}</span>
+      </button>
+      <button
+        className="chat-pin"
+        type="button"
+        aria-pressed={pinned}
+        aria-label={pinned ? `Unpin ${chat.title}` : `Pin ${chat.title}`}
+        title={pinned ? "Unpin" : "Pin"}
+        onClick={() => onPin(chat, !pinned)}
+      >
+        <IconPin filled={pinned} />
+      </button>
     </div>
   );
 }

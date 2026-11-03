@@ -31,6 +31,21 @@ export function IconPlus() {
   );
 }
 
+export function IconPin({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M8 10.2v3.3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path
+        d="M5.2 2.6h5.6l-.7 3.1 2.2 1.5v1.3H3.7V7.2l2.2-1.5-.7-3.1Z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function IconGear() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">

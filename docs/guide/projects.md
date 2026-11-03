@@ -18,6 +18,8 @@ Search chats filters the project and chat list. Each project row opens that proj
 
 A colored dot marks a chat, and a live dot marks one that is still running. The time on the right is when it last changed. Older chats stay collapsed. Show older expands them, and Hide older folds them again. Chats shown per project, in Customize, sets how many stay visible. Use 0 there to show every chat. While a search is active, the list is uncapped.
 
+Pin on a chat row moves that chat under Conversations, above the projects. Pinned chats stay in the order they were created, newest first, and they stay listed even when their project is archived. They are not folded into the older-chats limit. Unpin puts the chat back under its project. The project name sits on the pinned row.
+
 Archived projects stay in the sidebar under Archived.
 
 ## Start page

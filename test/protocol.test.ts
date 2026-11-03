@@ -113,6 +113,18 @@ test("runner requests reject a chat id that is not a uuid", () => {
   assert.throws(() => parseRunnerRequest({ id: "7", type: "pty_open", chatId: "11111111-1111-1111-1111-111111111111", cols: 0, rows: 24 }));
   const command = parseClientCommand({ type: "prompt", chatId: "11111111-1111-1111-1111-111111111111", prompt: "hi" });
   assert.equal(command.type, "prompt");
+  const pinned = parseClientCommand({
+    type: "set_chat_pinned",
+    chatId: "11111111-1111-1111-1111-111111111111",
+    pinned: true,
+  });
+  assert.equal(pinned.type, "set_chat_pinned");
+  if (pinned.type === "set_chat_pinned") assert.equal(pinned.pinned, true);
+  assert.throws(() => parseClientCommand({
+    type: "set_chat_pinned",
+    chatId: "11111111-1111-1111-1111-111111111111",
+    pinned: "yes",
+  }));
 });
 
 test("catalog urls and names stay on a remote", async () => {

@@ -116,6 +116,7 @@ export interface ChatMeta {
   running?: boolean;
   mode?: string;
   needsResync?: boolean;
+  pinned?: boolean;
 }
 
 export interface ToolContentText {
@@ -462,6 +463,7 @@ export type RunnerRequest =
   | { id: string; type: "permission_response"; chatId: string; requestId: string; optionId: string }
   | { id: string; type: "set_mode"; chatId: string; modeId: string }
   | { id: string; type: "set_model"; chatId: string; modelId: string }
+  | { id: string; type: "set_chat_pinned"; chatId: string; pinned: boolean }
   | { id: string; type: "dequeue"; chatId: string; index: number }
   | { id: string; type: "git_status"; workspace: string }
   | { id: string; type: "git_init"; workspace: string }
@@ -919,6 +921,9 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "read_extension_doc", name: body.name, docId: body.docId };
     case "set_model":
       return { id: body.id, type: "set_model", chatId: assertChatId(body.chatId), modelId: cleanModel(body.modelId) };
+    case "set_chat_pinned":
+      if (typeof body.pinned !== "boolean") throw new Error("invalid pin");
+      return { id: body.id, type: "set_chat_pinned", chatId: assertChatId(body.chatId), pinned: body.pinned };
     case "dequeue":
       return { id: body.id, type: "dequeue", chatId: assertChatId(body.chatId), index: parseQueueIndex(body.index) };
     case "git_status":

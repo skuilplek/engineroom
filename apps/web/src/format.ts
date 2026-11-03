@@ -10,6 +10,38 @@ export interface RepoGroup {
   marked: boolean;
 }
 
+function matchingChats(
+  chats: ChatMeta[],
+  repos: RepositoryEntry[],
+  home: string,
+  query: string,
+  archived: boolean | "any",
+): ChatMeta[] {
+  const needle = query.trim().toLowerCase();
+  const homeKey = strip(home);
+  const selected = archived === "any" ? repos : repos.filter((repo) => Boolean(repo.archived) === archived);
+  const enabled = new Set(selected.map((repo) => strip(repo.path)));
+  const homeIsRepo = enabled.has(homeKey);
+  const allowed = chats.filter((chat) => {
+    const key = strip(chat.workspace);
+    return enabled.has(key) || key === homeKey;
+  });
+  const listed = homeIsRepo ? allowed : allowed.filter((chat) => strip(chat.workspace) !== homeKey);
+  if (!needle) return listed;
+  return listed.filter((chat) => chat.title.toLowerCase().includes(needle) || chat.workspace.toLowerCase().includes(needle));
+}
+
+export function pinnedChats(
+  chats: ChatMeta[],
+  repos: RepositoryEntry[],
+  home: string,
+  query = "",
+): ChatMeta[] {
+  return matchingChats(chats, repos, home, query, "any")
+    .filter((chat) => chat.pinned === true)
+    .sort(byCreated);
+}
+
 export function buildGroups(
   chats: ChatMeta[],
   repos: RepositoryEntry[],
@@ -18,18 +50,8 @@ export function buildGroups(
   archived = false,
 ): RepoGroup[] {
   const needle = query.trim().toLowerCase();
-  const homeKey = strip(home);
   const selected = repos.filter((repo) => Boolean(repo.archived) === archived);
-  const enabled = new Set(selected.map((repo) => strip(repo.path)));
-  const homeIsRepo = enabled.has(homeKey);
-  const allowed = chats.filter((chat) => {
-    const key = strip(chat.workspace);
-    return enabled.has(key) || key === homeKey;
-  });
-  const listed = homeIsRepo ? allowed : allowed.filter((chat) => strip(chat.workspace) !== homeKey);
-  const visible = needle
-    ? listed.filter((chat) => chat.title.toLowerCase().includes(needle) || chat.workspace.toLowerCase().includes(needle))
-    : listed;
+  const visible = matchingChats(chats, repos, home, query, archived).filter((chat) => chat.pinned !== true);
   const buckets = new Map<string, ChatMeta[]>();
   for (const chat of visible) {
     const key = strip(chat.workspace);
