@@ -1774,7 +1774,35 @@ html[data-wrap="1"] .diff-rows { width: auto; }
 .server-identity h2 { font-size: 22px; }
 .server-identity p { margin: 2px 0 0; }
 .server-strip > .alert { grid-column: 1 / -1; }
+.server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-self: end;
+}
 .server-refresh { justify-self: end; }
+.update-output {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.update-shell {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.update-waiting { margin: 0; }
 .metric-row {
   grid-column: 1 / -1;
   display: grid;

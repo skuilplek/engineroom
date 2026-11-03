@@ -59,7 +59,7 @@ It creates:
 - System user and group `engineroom`, home `/var/lib/engineroom`
 - Group `engineroom-users` (membership is required to sign in)
 - PAM stack `/etc/pam.d/engineroom` and helpers under `/usr/local/bin` and `/usr/local/libexec`
-- `engineroom-ctl`, `engineroom-admin`, `engineroom-network`, `engineroom-hub`, `engineroom-runner`
+- `engineroom-ctl`, `engineroom-admin`, `engineroom-network`, `engineroom-update`, `engineroom-hub`, `engineroom-runner`
 - sudoers drop-in `/etc/sudoers.d/engineroom`
 - systemd units for the hub and the per-user runner socket
 - Application tree at `/usr/local/lib/engineroom`
@@ -75,7 +75,7 @@ From the same git checkout, as root:
 sudo ./update.sh
 ```
 
-The checkout must not be owned by root. The script pulls with `--ff-only` as the directory owner, runs `npm ci`, runs `deploy/install.sh`, restarts `engineroom-hub.service`, and restarts any active `engineroom-runner@*` services. It leaves `/etc/engineroom/hub.env` and the Caddy site config alone. It writes `/etc/engineroom/checks.json` only when that file is missing, and adds `python3` to an existing command list when that name is absent.
+The checkout must not be owned by root. The script pulls with `--ff-only` as the directory owner, runs `npm ci`, runs `deploy/install.sh`, restarts `engineroom-hub.service`, and restarts any active `engineroom-runner@*` services. It leaves `/etc/engineroom/hub.env` and the Caddy site config alone. It writes `/etc/engineroom/checks.json` only when that file is missing, and adds `python3` to an existing command list when that name is absent. `deploy/install.sh` records this checkout in `/etc/engineroom/checkout`. The Admin page can start the same script from that path after asking for the administrator's password.
 
 Success is a health check against `http://127.0.0.1:8787/api/health`.
 

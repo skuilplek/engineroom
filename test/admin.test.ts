@@ -9,6 +9,7 @@ import test from "node:test";
 import WebSocket from "ws";
 import type { LinuxUser } from "../apps/hub/src/auth.ts";
 import { createHub } from "../apps/hub/src/server.ts";
+import { readUpdateState } from "../apps/hub/src/update.ts";
 import { AcpManager } from "../apps/runner/src/acp/manager.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { archivePath } from "../apps/runner/src/archive.ts";
@@ -2519,5 +2520,165 @@ test("harness defaults apply only within each person's agents and models", async
     await bobRunner.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("update state reads the status file and the tail of the log", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-update-state-"));
+  const status = path.join(root, "update.status");
+  const log = path.join(root, "update.log");
+  try {
+    assert.deepEqual(await readUpdateState(status, log), { status: "idle", log: "" });
+    await writeFile(status, "running\n");
+    await writeFile(log, "hello\n");
+    assert.deepEqual(await readUpdateState(status, log), { status: "running", log: "hello\n" });
+    await writeFile(status, "ok\n0\n");
+    assert.equal((await readUpdateState(status, log)).status, "ok");
+    await writeFile(status, "failed\n1\n");
+    assert.equal((await readUpdateState(status, log)).status, "failed");
+    await writeFile(status, "nope\n");
+    assert.equal((await readUpdateState(status, log)).status, "idle");
+    await writeFile(log, "x".repeat(500_000));
+    const tail = await readUpdateState(status, log);
+    assert.ok(tail.log.startsWith("…\n"));
+    assert.ok(tail.log.length < 500_000);
+    assert.ok(tail.log.endsWith("x"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the administrator password starts an update once", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-update-admin-"));
+  const home = path.join(root, "home");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  await mkdir(home);
+  await mkdir(carolHome);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const user: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({
+    home,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+  });
+  const state: { status: "idle" | "running" | "ok" | "failed"; log: string; starts: number } = {
+    status: "idle",
+    log: "",
+    starts: 0,
+  };
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("admin-update-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    lookup: (username) => {
+      if (username === "alice") return user;
+      if (username === "carol") return { ...user, username: "carol", home: carolHome };
+      return null;
+    },
+    authenticate: async (_username, password) => password === "secret",
+    readUpdate: async () => ({ status: state.status, log: state.log }),
+    startUpdate: async () => {
+      state.starts += 1;
+      state.status = "running";
+      state.log = "Pulling the latest commit\n";
+    },
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+
+    const idle = await fetch(`${base}/api/admin/update`, { headers });
+    assert.equal(idle.status, 200);
+    assert.deepEqual(await idle.json(), { status: "idle", log: "" });
+
+    const empty = await fetch(`${base}/api/admin/update`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "" }),
+    });
+    assert.equal(empty.status, 400);
+    assert.equal(state.starts, 0);
+
+    const wrong = await fetch(`${base}/api/admin/update`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "nope" }),
+    });
+    assert.equal(wrong.status, 401);
+    assert.equal(state.starts, 0);
+
+    const started = await fetch(`${base}/api/admin/update`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "secret" }),
+    });
+    assert.equal(started.status, 200);
+    assert.deepEqual(await started.json(), { status: "running", log: "Pulling the latest commit\n" });
+    assert.equal(state.starts, 1);
+
+    const again = await fetch(`${base}/api/admin/update`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: "secret" }),
+    });
+    assert.equal(again.status, 409);
+    assert.equal(state.starts, 1);
+
+    const carol = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carol.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const denied = await fetch(`${base}/api/admin/update`, {
+      method: "POST",
+      headers: { Cookie: carolCookie!, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "secret" }),
+    });
+    assert.equal(denied.status, 403);
+    const deniedRead = await fetch(`${base}/api/admin/update`, { headers: { Cookie: carolCookie! } });
+    assert.equal(deniedRead.status, 403);
+    assert.equal(state.starts, 1);
+  } finally {
+    hub.close();
+    await runner.close();
+    await carolRunner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("engineroom-update refuses to run without root", () => {
+  if (process.getuid?.() === 0) return;
+  const script = path.join(import.meta.dirname, "../deploy/bin/engineroom-update");
+  const result = spawnSync("bash", [script], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must run as root/);
 });
 

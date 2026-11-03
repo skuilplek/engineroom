@@ -14,6 +14,7 @@ import { addSiteDoc, assertMarkdownName, listSiteDocs, readSiteDoc, removeSiteDo
 import { loadFileVisibility, loadProjectCreate, loadProjectDownloads, loadRepoDirectory, saveRepoDirectory } from "./repo-folder.ts";
 import { cleanInterface, cleanSsid, cleanWifiPassword, normalizeHostname, runNetworkCtl } from "./network.ts";
 import { serverOverview } from "./overview.ts";
+import { readUpdateState, runUpdateCtl, type UpdateState } from "./update.ts";
 import { invalidateUserCache, lookupUser, pamAuthenticate, userMayLogin, type LinuxUser } from "./auth.ts";
 import { RunnerChannel, type PushMessage } from "./channel.ts";
 import { readUpload } from "./multipart.ts";
@@ -35,6 +36,11 @@ export interface HubOptions {
   commandDirs?: string[];
   adminCtl?: string;
   networkCtl?: string;
+  updateCtl?: string;
+  updateStatusFile?: string;
+  updateLogFile?: string;
+  startUpdate?: () => Promise<void>;
+  readUpdate?: () => Promise<UpdateState>;
   lookup?: (username: string) => LinuxUser | null;
   authenticate?: (username: string, password: string) => Promise<boolean>;
   listAccounts?: () => Account[];
@@ -118,6 +124,11 @@ export function createHub(options: HubOptions) {
     else await runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password);
     invalidateUserCache(username);
   };
+  const readUpdate = options.readUpdate ?? (() => readUpdateState(
+    options.updateStatusFile || process.env.ENGINEROOM_UPDATE_STATUS || "/var/lib/engineroom/update.status",
+    options.updateLogFile || process.env.ENGINEROOM_UPDATE_LOG || "/var/lib/engineroom/update.log",
+  ));
+  const startUpdate = options.startUpdate ?? (() => runUpdateCtl(options.updateCtl || "/usr/local/bin/engineroom-update"));
 
   const liveSockets = new Map<string, Set<WebSocket>>();
   const endedSockets = new WeakSet<WebSocket>();
@@ -496,6 +507,23 @@ export function createHub(options: HubOptions) {
     }
     if (parts[2] === "server") {
       await adminServer(req, res, parts);
+      return;
+    }
+    if (parts[2] === "update" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, await readUpdate());
+      return;
+    }
+    if (parts[2] === "update" && parts.length === 3 && req.method === "POST") {
+      const body = (await readJson(req)) as { password?: unknown };
+      const password = cleanPassword(body.password);
+      if (!await authenticate(user.username, password)) {
+        sendJson(res, 401, { error: "invalid password" });
+        return;
+      }
+      const current = await readUpdate();
+      if (current.status === "running") throw new Error("update is already running");
+      await startUpdate();
+      sendJson(res, 200, await readUpdate());
       return;
     }
     if (parts[2] === "branding" && parts.length === 3 && req.method === "PUT") {
@@ -1912,7 +1940,9 @@ function statusFor(message: string): number {
     message.includes("no unstaged") ||
     message.includes("not staged") ||
     message.includes("not a git repository") ||
-    message.includes("not a wireless interface")
+    message.includes("not a wireless interface") ||
+    message.includes("not recorded") ||
+    message.includes("not in the checkout")
   ) return 400;
   if (message.includes("not found") || message.includes("does not exist") || message.includes("ENOENT") || message.includes("not configured")) return 404;
   if (message.includes("not ready")) return 409;

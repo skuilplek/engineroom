@@ -18,6 +18,7 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 | `ENGINEROOM_PAM_HELPER` | `/usr/local/bin/engineroom-pam-auth` | Password check against `/etc/pam.d/engineroom`. |
 | `ENGINEROOM_ADMIN_CTL` | `/usr/local/bin/engineroom-admin` | Add, revoke, passwd, and remove accounts. |
 | `ENGINEROOM_NETWORK_CTL` | `/usr/local/bin/engineroom-network` | Set the hostname advertised as `name.local`, and read or change Wi-Fi. Invoked as `sudo -n`. |
+| `ENGINEROOM_UPDATE_CTL` | `/usr/local/bin/engineroom-update` | Start `update.sh` from the checkout recorded in `/etc/engineroom/checkout`. Invoked as `sudo -n` after the administrator's password is checked. |
 | `ENGINEROOM_PEERCRED` | `/usr/local/bin/engineroom-peercred` | Used by the hub and the runner. Not read in `index.ts`; the peercred package defaults to this path. |
 
 ## Data files

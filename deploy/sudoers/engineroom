@@ -1,4 +1,5 @@
 Defaults!/usr/local/libexec/engineroom-pam-auth !use_pty
 Defaults!/usr/local/bin/engineroom-admin !use_pty
 Defaults!/usr/local/bin/engineroom-network !use_pty
-engineroom ALL=(root) NOPASSWD: /usr/local/bin/engineroom-ctl, /usr/local/libexec/engineroom-pam-auth, /usr/local/bin/engineroom-admin, /usr/local/bin/engineroom-network
+Defaults!/usr/local/bin/engineroom-update !use_pty
+engineroom ALL=(root) NOPASSWD: /usr/local/bin/engineroom-ctl, /usr/local/libexec/engineroom-pam-auth, /usr/local/bin/engineroom-admin, /usr/local/bin/engineroom-network, /usr/local/bin/engineroom-update

@@ -562,6 +562,22 @@ export function serverOverview() {
   return api<ServerOverview>("/api/admin/overview");
 }
 
+export interface UpdateRun {
+  status: "idle" | "running" | "ok" | "failed";
+  log: string;
+}
+
+export function updateStatus() {
+  return api<UpdateRun>("/api/admin/update");
+}
+
+export function startUpdate(password: string) {
+  return api<UpdateRun>("/api/admin/update", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
 export interface ServerWifiInterface {
   name: string;
   ssid: string | null;

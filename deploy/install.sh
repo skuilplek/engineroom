@@ -40,6 +40,7 @@ install -m 0755 deploy/pam/engineroom-peercred /usr/local/bin/engineroom-peercre
 install -m 0755 deploy/engineroom-ctl /usr/local/bin/engineroom-ctl
 install -m 0755 deploy/bin/engineroom-admin /usr/local/bin/engineroom-admin
 install -m 0755 deploy/bin/engineroom-network /usr/local/bin/engineroom-network
+install -m 0755 deploy/bin/engineroom-update /usr/local/bin/engineroom-update
 install -m 0755 deploy/bin/engineroom-runner /usr/local/bin/engineroom-runner
 install -m 0755 deploy/bin/engineroom-hub /usr/local/bin/engineroom-hub
 install -m 0440 deploy/sudoers/engineroom /etc/sudoers.d/engineroom
@@ -104,6 +105,10 @@ chmod -R a+rX /usr/local/lib/engineroom
 rm -rf /usr/local/share/engineroom/web
 cp -a apps/web/dist /usr/local/share/engineroom/web
 chown -R engineroom:engineroom /var/lib/engineroom
+
+install -d -m 0755 /etc/engineroom
+printf '%s\n' "$root" > /etc/engineroom/checkout
+chmod 0644 /etc/engineroom/checkout
 
 systemctl daemon-reload
 systemctl enable --now engineroom-hub.service
