@@ -10,11 +10,11 @@ Application name is the name in the sidebar. Save stores it.
 
 Server shows this machine: hostname, system, Node version, uptime, free memory, and free disk. Refresh reloads those figures.
 
-Update asks for the sudo password, then runs `update.sh` from this checkout. The password is the password for the administrator account. The page shows the script output and waits while the server restarts. Update is refused while one is already running.
-
 The cards jump to Agents, Packages, Docs, Repositories, and Users, and summarize what is offered.
 
 ## Server
+
+Update asks for the sudo password, then runs `update.sh` from this checkout. The password is the password for the administrator account. The page shows the script output and waits while the server restarts. Update is refused while one is already running.
 
 Network name is the hostname other computers on this network can open, shown as an address above the field. Save stores it and starts Avahi when that service is stopped. Discard restores the saved name. When the site is served over HTTPS, sign in on that HTTPS address. The session cookie is only sent over HTTPS.
 

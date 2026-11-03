@@ -56,11 +56,7 @@ import {
   saveUserSettings,
   saveRepoDirectory,
   serverOverview,
-  startUpdate,
-  updateStatus,
-  ApiError,
   type Account,
-  type UpdateRun,
   type AgentOptionsState,
   type HarnessApplyResult,
   type ServerOverview,
@@ -2415,13 +2411,6 @@ function workspaceName(workspace: string): string {
 function ServerPanel() {
   const [overview, setOverview] = useState<ServerOverview | null>(null);
   const [busy, setBusy] = useState(false);
-  const [ask, setAsk] = useState(false);
-  const [password, setPassword] = useState("");
-  const [starting, setStarting] = useState(false);
-  const [run, setRun] = useState<UpdateRun | null>(null);
-  const [waiting, setWaiting] = useState(false);
-  const watching = useRef(false);
-  const shellRef = useRef<HTMLPreElement>(null);
   const report = useReportError();
 
   const load = useCallback(async () => {
@@ -2435,76 +2424,12 @@ function ServerPanel() {
     }
   }, [report]);
 
-  const poll = useCallback(async () => {
-    try {
-      const next = await updateStatus();
-      watching.current = next.status === "running";
-      setWaiting(false);
-      setRun(next.status === "idle" && next.log.length === 0 ? null : next);
-    } catch (err) {
-      if (err instanceof ApiError) return;
-      if (watching.current) setWaiting(true);
-    }
-  }, []);
-
   useEffect(() => {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    void poll();
-  }, [poll]);
-
-  useEffect(() => {
-    if (run?.status !== "running" && !waiting) return undefined;
-    const timer = window.setInterval(() => {
-      void poll();
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [poll, run?.status, waiting]);
-
-  useEffect(() => {
-    const node = shellRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [run?.log, waiting]);
-
-  function closeAsk() {
-    setPassword("");
-    setAsk(false);
-  }
-
-  async function submitUpdate(event: FormEvent) {
-    event.preventDefault();
-    setStarting(true);
-    try {
-      const next = await startUpdate(password);
-      setPassword("");
-      setAsk(false);
-      watching.current = true;
-      setWaiting(false);
-      setRun(next);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        report("Update", err);
-      } else {
-        setPassword("");
-        setAsk(false);
-        watching.current = true;
-        setWaiting(true);
-        setRun((current) => current?.status === "running" ? current : { status: "running", log: current?.log ?? "" });
-      }
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  const updating = starting || waiting || run?.status === "running";
-  const shellText = run?.log ? run.log : (run?.status === "running" && !waiting ? "Starting the update…" : "");
-  const showShell = run !== null || waiting;
-
   return (
-    <>
-      <section className="server-strip" aria-label="This machine">
+    <section className="server-strip" aria-label="This machine">
         <div className="server-identity">
           <h2>Server</h2>
           <p className="muted">{overview ? overview.host.hostname : "Checking this machine."}</p>
@@ -2551,42 +2476,8 @@ function ServerPanel() {
             <div className="admin-skeleton short" />
           </div>
         )}
-        <div className="server-actions">
-          <button className="ghost" type="button" disabled={updating} onClick={() => setAsk(true)}>{updating ? "Updating…" : "Update"}</button>
-          <button className="ghost server-refresh" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
-        </div>
-        {showShell && (
-          <div className="update-output">
-            <pre className="update-shell" ref={shellRef} aria-label="Update output">{shellText}</pre>
-            {waiting && <p className="update-waiting muted" role="status">Waiting for the server…</p>}
-          </div>
-        )}
+        <button className="ghost server-refresh" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh"}</button>
       </section>
-      {ask && (
-        <div className="modal-backdrop">
-          <form className="confirm-dialog" role="dialog" aria-labelledby="update-title" aria-modal="true" onSubmit={(event) => void submitUpdate(event)}>
-            <h2 id="update-title">Update Engineroom</h2>
-            <p className="muted">Enter the sudo password for this account. Engineroom pulls this checkout, installs it, and restarts. This page shows the script output and waits while the server comes back.</p>
-            <label>
-              Sudo password
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                autoFocus
-                required
-                disabled={starting}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <div className="confirm-actions">
-              <button type="button" onClick={closeAsk} disabled={starting}>Cancel</button>
-              <button className="primary" type="submit" disabled={starting}>{starting ? "Updating…" : "Update"}</button>
-            </div>
-          </form>
-        </div>
-      )}
-    </>
   );
 }
 

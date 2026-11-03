@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  ApiError,
   connectServerWifi,
   disconnectServerWifi,
   getServerNetwork,
   saveServerHostname,
   scanServerWifi,
+  startUpdate,
+  updateStatus,
   type ServerNetwork,
   type ServerWifiInterface,
+  type UpdateRun,
   type WifiNetwork,
 } from "../api.ts";
 import { useReportError } from "../errors.tsx";
@@ -121,6 +125,7 @@ export function ServerConfig() {
 
   return (
     <div className="agents-stack">
+      <UpdateCard />
       <form className="agents-card" onSubmit={(event) => void saveName(event)}>
         <div className="agents-card-head">
           <h2>Network name</h2>
@@ -193,6 +198,122 @@ export function ServerConfig() {
         {wifiNote && <p className="admin-note" role="status">{wifiNote}</p>}
       </section>
     </div>
+  );
+}
+
+function UpdateCard() {
+  const report = useReportError();
+  const [ask, setAsk] = useState(false);
+  const [password, setPassword] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [run, setRun] = useState<UpdateRun | null>(null);
+  const [waiting, setWaiting] = useState(false);
+  const watching = useRef(false);
+  const shellRef = useRef<HTMLPreElement>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const next = await updateStatus();
+      watching.current = next.status === "running";
+      setWaiting(false);
+      setRun(next.status === "idle" && next.log.length === 0 ? null : next);
+    } catch (err) {
+      if (err instanceof ApiError) return;
+      if (watching.current) setWaiting(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void poll();
+  }, [poll]);
+
+  useEffect(() => {
+    if (run?.status !== "running" && !waiting) return undefined;
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [poll, run?.status, waiting]);
+
+  useEffect(() => {
+    const node = shellRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [run?.log, waiting]);
+
+  function closeAsk() {
+    setPassword("");
+    setAsk(false);
+  }
+
+  async function submitUpdate(event: FormEvent) {
+    event.preventDefault();
+    setStarting(true);
+    try {
+      const next = await startUpdate(password);
+      setPassword("");
+      setAsk(false);
+      watching.current = true;
+      setWaiting(false);
+      setRun(next);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        report("Update", err);
+      } else {
+        setPassword("");
+        setAsk(false);
+        watching.current = true;
+        setWaiting(true);
+        setRun((current) => current?.status === "running" ? current : { status: "running", log: current?.log ?? "" });
+      }
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const updating = starting || waiting || run?.status === "running";
+  const shellText = run?.log ? run.log : (run?.status === "running" && !waiting ? "Starting the update…" : "");
+  const showShell = run !== null || waiting;
+
+  return (
+    <section className="agents-card" aria-label="Update">
+      <div className="agents-card-head">
+        <h2>Update</h2>
+        <p className="muted">Pull this checkout, install it, and restart. This asks for the sudo password of the administrator account.</p>
+      </div>
+      <div className="row-actions">
+        <button className="primary" type="button" disabled={updating} onClick={() => setAsk(true)}>{updating ? "Updating…" : "Update"}</button>
+      </div>
+      {showShell && (
+        <div className="update-output">
+          <pre className="update-shell" ref={shellRef} aria-label="Update output">{shellText}</pre>
+          {waiting && <p className="update-waiting muted" role="status">Waiting for the server…</p>}
+        </div>
+      )}
+      {ask && (
+        <div className="modal-backdrop">
+          <form className="confirm-dialog" role="dialog" aria-labelledby="update-title" aria-modal="true" onSubmit={(event) => void submitUpdate(event)}>
+            <h2 id="update-title">Update Engineroom</h2>
+            <p className="muted">Enter the sudo password for this account. The page shows the script output and waits while the server comes back.</p>
+            <label>
+              Sudo password
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                autoFocus
+                required
+                disabled={starting}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+            <div className="confirm-actions">
+              <button type="button" onClick={closeAsk} disabled={starting}>Cancel</button>
+              <button className="primary" type="submit" disabled={starting}>{starting ? "Updating…" : "Update"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </section>
   );
 }
 
