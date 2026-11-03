@@ -11,15 +11,15 @@ class FakeSocket implements AgentTransport {
   sent: Array<string | Uint8Array> = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code?: number }) => void) | null = null;
 
   send(data: string | Uint8Array) {
     this.sent.push(data);
   }
 
-  close() {
+  close(code?: number) {
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.(code == null ? undefined : { code });
   }
 
   open() {
@@ -84,4 +84,18 @@ test("a dropped connection reconnects, and sign-out cancels that reconnect", () 
   link.stop();
   later[1]?.();
   assert.equal(sockets.length, 2);
+});
+
+test("a sign-in close does not reconnect", () => {
+  const { link, sockets, later } = harness();
+  link.start();
+  sockets[0]?.open();
+  link.watchChat(alice, 0);
+  sockets[0]?.close(4401);
+  assert.equal(later.length, 0);
+
+  link.start();
+  assert.equal(sockets.length, 2);
+  sockets[1]?.open();
+  assert.equal(sockets[1]?.sent.some((item) => String(item).includes(alice)), true);
 });

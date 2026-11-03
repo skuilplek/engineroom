@@ -48,6 +48,7 @@ import {
   saveAgentOptions,
   saveAgents,
   saveBranding,
+  saveSessionHours,
   saveUserCursorCommands,
   saveUserEnv,
   saveUserGitIdentity,
@@ -109,6 +110,7 @@ export function AdminView({
   session,
   onAgents,
   onBranding,
+  onSessionHours,
   onAccess,
   onIdentity,
 }: {
@@ -124,6 +126,7 @@ export function AdminView({
     fileUploadOffered?: boolean,
   ) => void;
   onBranding: (appName: string) => void;
+  onSessionHours: (sessionHours: number) => void;
   onAccess: () => void;
   onIdentity: () => void;
 }) {
@@ -145,6 +148,7 @@ export function AdminView({
   const [cursorFast, setCursorFast] = useState(false);
   const [applyUser, setApplyUser] = useState("");
   const [appName, setAppName] = useState(session.appName || "AgentWrapper");
+  const [sessionHours, setSessionHours] = useState(session.sessionHours || 12);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [siteDocCount, setSiteDocCount] = useState(0);
@@ -313,6 +317,23 @@ export function AdminView({
       setAppName(savedName.appName);
       onBranding(savedName.appName);
       setSaved("Application name saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSessionLength(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const savedSession = await saveSessionHours(sessionHours);
+      setSessionHours(savedSession.sessionHours);
+      onSessionHours(savedSession.sessionHours);
+      setSaved("Signed-in time saved");
     } catch (err) {
       setError(message(err));
     } finally {
@@ -643,6 +664,22 @@ export function AdminView({
                 />
               </label>
               <button className="primary" type="submit" disabled={busy}>Save</button>
+            </form>
+            <form className="branding-form" onSubmit={(event) => void saveSessionLength(event)}>
+              <label>
+                Signed-in time
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  step={1}
+                  value={sessionHours}
+                  onChange={(event) => setSessionHours(event.target.value === "" ? 0 : Number(event.target.value))}
+                  required
+                />
+              </label>
+              <button className="primary" type="submit" disabled={busy}>Save</button>
+              <p className="muted session-note">Hours before a sign-in ends, from 1 to 24. This applies the next time someone signs in.</p>
             </form>
             <ServerPanel />
             <div className="overview-links">

@@ -1,3 +1,4 @@
+import { notifySessionExpired, sessionExpiryArmed } from "./sessionExpired.ts";
 import type {
   AgentId,
   AgentOptionChoice,
@@ -51,6 +52,7 @@ export interface Session {
   visibleChats?: number;
   cliImport: boolean;
   appName: string;
+  sessionHours: number;
   theme: ThemePreference;
   themes?: ExtensionTheme[];
   commandBlockStyle?: CommandBlockStyle;
@@ -113,25 +115,56 @@ export class ApiError extends Error {
   }
 }
 
+export class SessionExpiredError extends ApiError {
+  constructor() {
+    super(401, "sign in required");
+    this.name = "SessionExpiredError";
+  }
+}
+
+const SIGN_IN_REQUIRED = "sign in required";
+
+async function fetchChecked(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, { cache: "no-store", ...init });
+  } catch (error) {
+    if (path !== "/api/me" && path !== "/api/login" && (await sessionIsExpired())) {
+      notifySessionExpired();
+      throw new SessionExpiredError();
+    }
+    throw error;
+  }
+}
+
+async function sessionIsExpired(): Promise<boolean> {
+  if (!sessionExpiryArmed()) return false;
+  try {
+    const response = await fetch("/api/me", { cache: "no-store" });
+    if (response.status !== 401) return false;
+    return (await errorMessage(response)) === SIGN_IN_REQUIRED;
+  } catch {
+    return false;
+  }
+}
+
+async function responseError(response: Response): Promise<Error> {
+  const text = await errorMessage(response);
+  if (response.status === 401 && text === SIGN_IN_REQUIRED) {
+    notifySessionExpired();
+    return new SessionExpiredError();
+  }
+  return new ApiError(response.status, text);
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    cache: "no-store",
+  const response = await fetchChecked(path, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
     },
   });
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      /* keep the status text */
-    }
-    throw new ApiError(response.status, message);
-  }
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as T;
 }
 
@@ -371,11 +404,10 @@ export function projectArchiveDownloadUrl(id: string) {
 }
 
 export async function downloadRepoFile(workspace: string, filePath: string): Promise<{ blob: Blob; name: string }> {
-  const response = await fetch(
+  const response = await fetchChecked(
     `/api/repositories/file/download?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(filePath)}`,
-    { cache: "no-store" },
   );
-  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  if (!response.ok) throw await responseError(response);
   const blob = await response.blob();
   const fallback = filePath.split("/").pop() || "download";
   return { blob, name: filenameFromDisposition(response.headers.get("Content-Disposition"), fallback) };
@@ -392,8 +424,8 @@ export async function uploadRepoFiles(
   body.set("directory", directory);
   body.set("overwrite", overwrite ? "true" : "false");
   for (const file of files) body.append("file", file, file.name);
-  const response = await fetch("/api/repositories/file/upload", { method: "POST", body });
-  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  const response = await fetchChecked("/api/repositories/file/upload", { method: "POST", body });
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as { files: { path: string; size: number }[] };
 }
 
@@ -401,8 +433,8 @@ export async function uploadPromptAttachment(workspace: string, file: File): Pro
   const body = new FormData();
   body.set("workspace", workspace);
   body.append("file", file, file.name);
-  const response = await fetch("/api/chats/attachments", { method: "POST", body });
-  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  const response = await fetchChecked("/api/chats/attachments", { method: "POST", body });
+  if (!response.ok) throw await responseError(response);
   const payload = (await response.json()) as { files?: PromptAttachment[] };
   const saved = payload.files?.[0];
   if (!saved?.path) throw new ApiError(response.status, "invalid upload");
@@ -656,6 +688,13 @@ export function saveBranding(appName: string) {
   });
 }
 
+export function saveSessionHours(hours: number) {
+  return api<{ sessionHours: number }>("/api/admin/session", {
+    method: "PUT",
+    body: JSON.stringify({ hours }),
+  });
+}
+
 export function listAdminAgents() {
   return api<AgentInventory>("/api/admin/agents");
 }
@@ -806,8 +845,8 @@ export async function addSiteDoc(title: string, file: File): Promise<SiteDocLink
   const body = new FormData();
   body.set("title", title);
   body.set("file", file, file.name);
-  const response = await fetch("/api/admin/site-docs", { method: "POST", body });
-  if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+  const response = await fetchChecked("/api/admin/site-docs", { method: "POST", body });
+  if (!response.ok) throw await responseError(response);
   return (await response.json()) as SiteDocLink;
 }
 
@@ -816,8 +855,8 @@ export async function updateSiteDoc(id: string, title: string, markdown: string,
     const body = new FormData();
     body.set("title", title);
     body.set("file", file, file.name);
-    const response = await fetch(`/api/admin/site-docs/${encodeURIComponent(id)}`, { method: "POST", body });
-    if (!response.ok) throw new ApiError(response.status, await errorMessage(response));
+    const response = await fetchChecked(`/api/admin/site-docs/${encodeURIComponent(id)}`, { method: "POST", body });
+    if (!response.ok) throw await responseError(response);
     return (await response.json()) as SiteDocLink;
   }
   return api<SiteDocLink>(`/api/admin/site-docs/${encodeURIComponent(id)}`, {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { isThemeId, type ChatMeta, type PromptAttachment, type RepositoryEntry } from "@engineroom/protocol";
 import { createRepository, deleteRepository, listChats, listRepositories, login, logout, me, setRepositoryArchived, type Session } from "./api.ts";
+import { armSessionExpiry, onSessionExpired } from "./sessionExpired.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
 import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
@@ -41,10 +42,17 @@ type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const [reauth, setReauth] = useState(false);
+
+  useEffect(() => onSessionExpired(() => setReauth(true)), []);
 
   useEffect(() => {
     me().then(setSession).catch(() => setSession(null)).finally(() => setReady(true));
   }, []);
+
+  useEffect(() => {
+    if (!session) setReauth(false);
+  }, [session]);
 
   useEffect(() => {
     if (session && isThemeId(session.theme)) rememberTheme(session.theme);
@@ -72,7 +80,21 @@ export function App() {
   if (!session) return <Login onSuccess={setSession} />;
   return (
     <ErrorProvider>
-      <Shell session={session} onLogout={() => setSession(null)} onSession={setSession} />
+      <Shell key={session.username} session={session} onLogout={() => setSession(null)} onSession={setSession} />
+      {reauth && (
+        <SessionDialog
+          username={session.username}
+          onSuccess={(next) => {
+            setReauth(false);
+            setSession(next);
+            startAgentSocket();
+          }}
+          onLogout={() => {
+            setReauth(false);
+            setSession(null);
+          }}
+        />
+      )}
     </ErrorProvider>
   );
 }
@@ -120,6 +142,73 @@ function Login({ onSuccess }: { onSuccess: (session: Session) => void }) {
         <button className="primary" type="submit" disabled={busy}>{busy ? "Checking…" : "Continue"}</button>
       </form>
     </main>
+  );
+}
+
+function SessionDialog({
+  username,
+  onSuccess,
+  onLogout,
+}: {
+  username: string;
+  onSuccess: (session: Session) => void;
+  onLogout: () => void;
+}) {
+  const [name, setName] = useState(username);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      onSuccess(await login(name.trim(), password));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "sign in failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signOut() {
+    try {
+      await logout();
+    } catch {
+      /* leave the signed-in shell either way */
+    }
+    onLogout();
+  }
+
+  return (
+    <div className="modal-backdrop session-backdrop">
+      <form className="login-card" role="dialog" aria-modal="true" aria-labelledby="session-dialog-title" onSubmit={submit}>
+        <p className="eyebrow">Engineroom</p>
+        <h1 id="session-dialog-title">Sign in again</h1>
+        <p className="lede">Your session ended. Sign in to continue.</p>
+        <label>
+          Username
+          <input autoComplete="username" value={name} onChange={(event) => setName(event.target.value)} required />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            autoFocus
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            required
+          />
+        </label>
+        <p className="alert" role="alert">{error}</p>
+        <div className="confirm-actions">
+          <button className="ghost" type="button" onClick={() => void signOut()} disabled={busy}>Sign out</button>
+          <button className="primary" type="submit" disabled={busy}>{busy ? "Checking…" : "Continue"}</button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -277,8 +366,12 @@ function Shell({
   }, [showChat]);
 
   useEffect(() => {
+    armSessionExpiry(true);
     startAgentSocket();
-    return () => stopAgentSocket();
+    return () => {
+      armSessionExpiry(false);
+      stopAgentSocket();
+    };
   }, [session.username]);
 
   useEffect(() => {
@@ -547,6 +640,7 @@ function Shell({
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}
+            onSessionHours={(sessionHours) => onSession({ ...session, sessionHours })}
             onAccess={() => {
               me().then(onSession).catch(() => undefined);
               refresh().catch(() => undefined);

@@ -17,6 +17,7 @@ import {
   type AgentName,
 } from "@engineroom/protocol";
 import { findCommand, SYSTEM_COMMAND_DIRS } from "./overview.ts";
+import { DEFAULT_SESSION_HOURS, MAX_SESSION_HOURS, MIN_SESSION_HOURS } from "./session.ts";
 
 export type AgentFlags = Record<string, boolean>;
 
@@ -198,6 +199,31 @@ export function saveAppName(file: string, name: string): string {
   const current = readAgentFile(file);
   writeAgentFile(file, { ...current, appName });
   return appName;
+}
+
+export function parseSessionHours(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < MIN_SESSION_HOURS || value > MAX_SESSION_HOURS) {
+    throw new Error("invalid session hours");
+  }
+  return value;
+}
+
+export function loadSessionHours(file: string): number {
+  if (!file) return DEFAULT_SESSION_HOURS;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { sessionHours?: unknown };
+    if (parsed.sessionHours == null) return DEFAULT_SESSION_HOURS;
+    return parseSessionHours(parsed.sessionHours);
+  } catch {
+    return DEFAULT_SESSION_HOURS;
+  }
+}
+
+export function saveSessionHours(file: string, hours: unknown): number {
+  const sessionHours = parseSessionHours(hours);
+  const current = readAgentFile(file);
+  writeAgentFile(file, { ...current, sessionHours });
+  return sessionHours;
 }
 
 export function saveAgentFlags(

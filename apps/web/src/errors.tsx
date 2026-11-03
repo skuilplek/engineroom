@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MAX_ACTION_ERROR_CHARS, type ActionError } from "@engineroom/protocol";
-import { clearActionErrors, deleteActionError, listActionErrors, saveActionError } from "./api.ts";
+import { SessionExpiredError, clearActionErrors, deleteActionError, listActionErrors, saveActionError } from "./api.ts";
 import { errorSummary, message } from "./format.ts";
 
 interface Notice {
@@ -32,6 +32,7 @@ export function ErrorProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const report = useCallback((action: string, error: unknown) => {
+    if (error instanceof SessionExpiredError || error === "sign in required") return;
     const text = (typeof error === "string" ? error : message(error)).replace(/\0/g, "").trim() || "request failed";
     const id = globalThis.crypto?.randomUUID
       ? globalThis.crypto.randomUUID()

@@ -8,6 +8,8 @@ Offer a tool or an agent here, then allow it on a person's page. They can use it
 
 Application name is the name in the sidebar. Save stores it.
 
+Signed-in time is how many hours a sign-in lasts, from 1 to 24. The default is 12. Save applies the next time someone signs in. A sign-in that is already open keeps the time it was given. When that time ends, the page asks the person to sign in again.
+
 Server shows this machine: hostname, system, Node version, uptime, free memory, and free disk. Refresh reloads those figures.
 
 The cards jump to Agents, Packages, Docs, Repositories, and Users, and summarize what is offered.

@@ -4,7 +4,10 @@ import path from "node:path";
 import { assertUsername } from "@engineroom/protocol";
 
 export const COOKIE_NAME = "engineroom_session";
-export const SESSION_TTL_SEC = 12 * 60 * 60;
+export const DEFAULT_SESSION_HOURS = 12;
+export const MIN_SESSION_HOURS = 1;
+export const MAX_SESSION_HOURS = 24;
+export const SESSION_TTL_SEC = DEFAULT_SESSION_HOURS * 60 * 60;
 
 export function loadSecret(file: string): Buffer {
   try {
@@ -19,9 +22,10 @@ export function loadSecret(file: string): Buffer {
   return secret;
 }
 
-export function signSession(username: string, secret: Buffer, now = Date.now()): string {
+export function signSession(username: string, secret: Buffer, now = Date.now(), ttlSec = SESSION_TTL_SEC): string {
+  const ttl = Number.isFinite(ttlSec) && ttlSec > 0 ? Math.floor(ttlSec) : SESSION_TTL_SEC;
   const body = Buffer.from(
-    JSON.stringify({ u: username, exp: Math.floor(now / 1000) + SESSION_TTL_SEC }),
+    JSON.stringify({ u: username, exp: Math.floor(now / 1000) + ttl }),
   ).toString("base64url");
   const mac = createHmac("sha256", secret).update(body).digest("base64url");
   return `${body}.${mac}`;

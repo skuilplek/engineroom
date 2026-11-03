@@ -7,7 +7,7 @@ import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, a
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, loadSessionHours, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, saveSessionHours, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { addSiteDoc, assertMarkdownName, listSiteDocs, readSiteDoc, removeSiteDoc, updateSiteDoc } from "./site-docs.ts";
@@ -248,7 +248,8 @@ export function createHub(options: HubOptions) {
     failures.delete(key);
     await call(user, { type: "detect_repositories", directory: loadRepoDirectory(reposFile) }).catch(() => undefined);
     await syncAgentCatalog(user).catch(() => undefined);
-    res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret), options.cookieSecure));
+    const ttl = loadSessionHours(agentsFile) * 60 * 60;
+    res.setHeader("Set-Cookie", sessionCookie(signSession(user.username, options.sessionSecret, Date.now(), ttl), options.cookieSecure, ttl));
     sendJson(res, 200, await profile(user));
   }
 
@@ -281,6 +282,7 @@ export function createHub(options: HubOptions) {
       commandBlockStyle: isCommandBlockStyle(settings.commandBlockStyle) ? settings.commandBlockStyle : "prompt",
       cliImport: loadCliImport(agentsFile),
       appName: loadAppName(agentsFile),
+      sessionHours: loadSessionHours(agentsFile),
       piSetup: access.piSetup,
       piLoginHint: access.piLoginHint,
       fileVisibility: loadFileVisibility(reposFile),
@@ -530,6 +532,12 @@ export function createHub(options: HubOptions) {
       const body = await readJson(req);
       const appName = saveAppName(agentsFile, appNameFrom(body));
       sendJson(res, 200, { appName });
+      return;
+    }
+    if (parts[2] === "session" && parts.length === 3 && req.method === "PUT") {
+      const body = await readJson(req);
+      const sessionHours = saveSessionHours(agentsFile, sessionHoursFrom(body));
+      sendJson(res, 200, { sessionHours });
       return;
     }
     if (parts[2] === "agents" && parts.length === 3 && req.method === "GET") {
@@ -1845,6 +1853,11 @@ function filterModels(
   const availableModels = raw.availableModels.filter((model) => ids.has(model.modelId));
   const currentModelId = availableModels.some((model) => model.modelId === selected) ? selected : availableModels[0]?.modelId || "";
   return { currentModelId, availableModels };
+}
+
+function sessionHoursFrom(body: unknown): unknown {
+  if (!body || typeof body !== "object") return undefined;
+  return (body as { hours?: unknown }).hours;
 }
 
 function appNameFrom(body: unknown): string {

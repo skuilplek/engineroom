@@ -23,7 +23,7 @@ flowchart LR
 - WebSocket upgrades on `/api/ws` for chat events and terminal frames
 - Static files when `webDist` is set; otherwise non-API paths return 404
 
-Login looks the account up with `getent` and checks the password with the PAM helper. A session is an HMAC cookie, `engineroom_session`, valid for 12 hours ([`apps/hub/src/session.ts`](../apps/hub/src/session.ts)). The signing key is created on first start and stored in `ENGINEROOM_SESSION_SECRET_FILE`.
+Login looks the account up with `getent` and checks the password with the PAM helper. A session is an HMAC cookie, `engineroom_session`. It lasts for the signed-in time chosen by the administrator: 12 hours unless changed, and at most 24 ([`apps/hub/src/session.ts`](../apps/hub/src/session.ts)). The clock starts at sign-in. The signing key is created on first start and stored in `ENGINEROOM_SESSION_SECRET_FILE`.
 
 Requests that need the user's agents, chats, files, or terminal are turned into one JSON line and written to that user's runner socket. [`apps/hub/src/runner-client.ts`](../apps/hub/src/runner-client.ts) connects to `$ENGINEROOM_SOCKET_DIR/<username>.sock`. If the socket is not there, the hub runs `sudo -n engineroom-ctl start <username>`, which starts `engineroom-runner@<username>.socket`.
 

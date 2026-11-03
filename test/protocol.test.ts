@@ -452,7 +452,11 @@ test("session cookies are signed and expire", () => {
   const token = signSession("alice", secret, 1_700_000_000_000);
   assert.equal(readSession(token, secret, 1_700_000_000_000), "alice");
   assert.equal(readSession(`${token}x`, secret, 1_700_000_000_000), null);
+  assert.equal(readSession(token, secret, 1_700_000_000_000 + 12 * 60 * 60 * 1000), null);
   assert.equal(readSession(token, secret, 1_700_000_000_000 + 13 * 60 * 60 * 1000), null);
+  const day = signSession("alice", secret, 1_700_000_000_000, 24 * 60 * 60);
+  assert.equal(readSession(day, secret, 1_700_000_000_000 + 23 * 60 * 60 * 1000), "alice");
+  assert.equal(readSession(day, secret, 1_700_000_000_000 + 24 * 60 * 60 * 1000), null);
 });
 
 test("cli arguments match the headless auto-run contract", () => {

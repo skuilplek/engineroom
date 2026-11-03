@@ -90,11 +90,13 @@ test("the administrator sets agents and accounts", async () => {
       agents: string[];
       cliImport: boolean;
       appName: string;
+      sessionHours: number;
     };
     assert.equal(me.admin, true);
     assert.deepEqual(me.agents, ["cursor"]);
     assert.equal(me.cliImport, false);
     assert.equal(me.appName, "AgentWrapper");
+    assert.equal(me.sessionHours, 12);
 
     const blockedImport = await new Promise<string>((resolve, reject) => {
       const socket = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
@@ -228,12 +230,51 @@ test("the administrator sets agents and accounts", async () => {
     assert.equal(keptFile.appName, "Shop Floor");
     assert.equal(keptFile.cliImport, true);
 
+    const zeroHours = await fetch(`${base}/api/admin/session`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ hours: 0 }),
+    });
+    assert.equal(zeroHours.status, 400);
+    const longHours = await fetch(`${base}/api/admin/session`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ hours: 25 }),
+    });
+    assert.equal(longHours.status, 400);
+    const day = await fetch(`${base}/api/admin/session`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ hours: 24 }),
+    });
+    assert.equal(day.status, 200);
+    assert.equal(((await day.json()) as { sessionHours: number }).sessionHours, 24);
+    const timed = (await (await fetch(`${base}/api/me`, { headers })).json()) as { sessionHours: number };
+    assert.equal(timed.sessionHours, 24);
+    const keptHours = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: false, pi: true, cliImport: true }),
+    });
+    assert.equal(keptHours.status, 200);
+    const hoursFile = JSON.parse(await readFile(agentsFile, "utf8")) as { sessionHours: number; appName: string };
+    assert.equal(hoursFile.sessionHours, 24);
+    assert.equal(hoursFile.appName, "Shop Floor");
+
     const carol = await fetch(`${base}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "carol", password: "secret" }),
     });
-    const carolCookie = (carol.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolSet = (carol.headers.getSetCookie?.() ?? [])[0] ?? "";
+    assert.match(carolSet, /Max-Age=86400/);
+    const carolCookie = carolSet.split(";")[0];
+    const deniedSession = await fetch(`${base}/api/admin/session`, {
+      method: "PUT",
+      headers: { Cookie: carolCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ hours: 1 }),
+    });
+    assert.equal(deniedSession.status, 403);
     const denied = await fetch(`${base}/api/admin/users`, { headers: { Cookie: carolCookie! } });
     assert.equal(denied.status, 403);
 

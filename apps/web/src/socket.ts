@@ -1,4 +1,5 @@
 import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { notifySessionExpired } from "./sessionExpired.ts";
 
 export type { AgentMode, AgentModel };
 
@@ -37,7 +38,7 @@ export interface AgentTransport {
   close(): void;
   onopen: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
-  onclose: (() => void) | null;
+  onclose: ((event?: { code?: number }) => void) | null;
 }
 
 export class AgentSocket {
@@ -84,10 +85,16 @@ export class AgentSocket {
         /* ignore a malformed frame */
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (generation !== this.generation) return;
       if (this.transport === ws) this.transport = null;
       if (!this.live) return;
+      if (event?.code === 4401) {
+        this.live = false;
+        this.retry = 500;
+        notifySessionExpired();
+        return;
+      }
       const wait = this.retry;
       this.retry = Math.min(this.retry * 2, 8000);
       this.later(() => {
