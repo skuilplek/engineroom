@@ -33,8 +33,8 @@ Save agents stores the offer. Discard drops unsaved changes. Nothing is offered 
 
 Each built-in agent has a tab.
 
-- **Cursor defaults** sets Fast mode. The default model is Grok 4.7. Apply to all users writes that choice, and replaces the Shell command list, for everyone who has Cursor and is allowed that model. Apply to this user does the same for the account you pick.
-- **Pi setup** stores a provider and a model. Apply writes those into the Pi settings of people who are allowed that model. Setup writes the same values when it installs Pi.
+- **Cursor** shows `curl https://cursor.com/install -fsS | bash` as the install command. **Cursor defaults** sets Fast mode. The default model is Grok 4.7. Apply to all users writes that choice, and replaces the Shell command list, for everyone who has Cursor and is allowed that model. Apply to this user does the same for the account you pick.
+- **Pi** shows `curl -fsSL https://pi.dev/install.sh | sh` as the install command. **Pi setup** stores a provider and a model. Apply writes those into the Pi settings of people who are allowed that model. Setup writes the same values when it installs Pi.
 
 The + tab adds an agent. Give it a display name and the command to launch, such as `codex`, or an absolute path. Add agent registers it. Built-in agents already have their own tabs. Remove, on a custom agent's tab, deletes that entry.
 
