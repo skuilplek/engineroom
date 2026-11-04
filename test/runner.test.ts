@@ -56,6 +56,50 @@ test("overlapping chat saves keep both fields", async () => {
   }
 });
 
+test("applying cursor defaults updates saved fast model variants", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-cursor-fast-"));
+  const sock = path.join(home, "runner.sock");
+  const variant = "grok-4.7[context=256k,reasoning_effort=high,fast=true]";
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  await mkdir(path.join(home, ".cursor"), { recursive: true });
+  await writeFile(path.join(home, ".cursor", "cli-config.json"), `${JSON.stringify({
+    selectedModel: { modelId: "grok-4.7", parameters: [{ id: "fast", value: "true" }] },
+    modelParameters: {
+      "grok-4.7": [{ id: "fast", value: "true" }],
+      "gemini-4-argon": [{ id: "reasoning_effort", value: "medium" }, { id: "fast", value: "true" }],
+    },
+  })}\n`);
+  await writeFile(path.join(home, ".cursor", "acp-config.json"), `${JSON.stringify({ selectedModelVariantId: variant })}\n`);
+  await mkdir(path.join(home, ".engineroom"), { recursive: true });
+  await writeFile(path.join(home, ".engineroom", "settings.json"), `${JSON.stringify({ defaultAgent: "cursor", defaultModel: variant })}\n`);
+  const chat = await createChat(home, { agent: "cursor", model: variant, title: "fast" });
+  const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
+  try {
+    await rpc(sock, { id: "a", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["ls"], fast: false });
+    const settings = JSON.parse(await readFile(path.join(home, ".engineroom", "settings.json"), "utf8")) as { defaultModel: string };
+    assert.equal(settings.defaultModel, "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+    const meta = JSON.parse(await readFile(path.join(home, ".engineroom", "chats", chat.id, "meta.json"), "utf8")) as { model: string };
+    assert.equal(meta.model, "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+    const acp = JSON.parse(await readFile(path.join(home, ".cursor", "acp-config.json"), "utf8")) as { selectedModelVariantId: string };
+    assert.equal(acp.selectedModelVariantId, "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+    const cli = JSON.parse(await readFile(path.join(home, ".cursor", "cli-config.json"), "utf8")) as {
+      selectedModel: { parameters: { id: string; value: string }[] };
+      modelParameters: Record<string, { id: string; value: string }[]>;
+      permissions: { allow: string[] };
+    };
+    assert.equal(cli.selectedModel.parameters.find((item) => item.id === "fast")?.value, "false");
+    assert.equal(cli.modelParameters["grok-4.7"]?.find((item) => item.id === "fast")?.value, "false");
+    assert.equal(cli.modelParameters["gemini-4-argon"]?.find((item) => item.id === "fast")?.value, "false");
+    assert.deepEqual(cli.permissions.allow, ["Shell(ls)"]);
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("pinning a chat keeps its updated time", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-pin-"));
   try {

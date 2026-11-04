@@ -1667,6 +1667,21 @@ export function mergeCursorConfig(
     next.modelParameters = modelParameters;
     next.hasChangedDefaultModel = true;
   }
+  if (patch.fast !== undefined) {
+    const fast = patch.fast === true;
+    const selected = plainRecord(next.selectedModel);
+    if (selected && Array.isArray(selected.parameters)) {
+      next.selectedModel = { ...selected, parameters: setFastInParameters(selected.parameters, fast) };
+    }
+    const modelParameters = plainRecord(next.modelParameters);
+    if (modelParameters) {
+      const updated: Record<string, unknown> = {};
+      for (const [id, value] of Object.entries(modelParameters)) {
+        updated[id] = Array.isArray(value) ? setFastInParameters(value, fast) : value;
+      }
+      next.modelParameters = updated;
+    }
+  }
   if (patch.commands != null) {
     const permissions = { ...(plainRecord(next.permissions) ?? {}) };
     const allow = Array.isArray(permissions.allow) ? permissions.allow : [];
@@ -1675,6 +1690,49 @@ export function mergeCursorConfig(
     next.permissions = permissions;
   }
   return next;
+}
+
+/** Cursor's ACP mode keeps its own selected model variant, separate from cli-config.json. */
+export function mergeCursorAcpConfig(
+  current: unknown,
+  patch: { writeModel?: boolean; fast?: boolean },
+): Record<string, unknown> {
+  const next = { ...(plainRecord(current) ?? {}) };
+  if (patch.fast === undefined) return next;
+  if (patch.writeModel) {
+    next.selectedModelVariantId = cursorVariantId(CURSOR_DEFAULT_MODEL_ID, cursorParameters(patch.fast === true));
+    return next;
+  }
+  const selected = typeof next.selectedModelVariantId === "string" ? next.selectedModelVariantId : "";
+  if (selected) next.selectedModelVariantId = setCursorVariantFast(selected, patch.fast === true);
+  return next;
+}
+
+/** Change the fast parameter in a Cursor model variant id, leaving other parameters alone. */
+export function setCursorVariantFast(variant: string, fast: boolean): string {
+  const match = /^([^[]+)\[([^\]]*)\]$/.exec(variant);
+  if (!match) return variant;
+  const parameters = match[2].split(",").map((item) => item.trim()).filter(Boolean);
+  let found = false;
+  const updated = parameters.map((item) => {
+    const id = item.split("=", 1)[0]?.trim();
+    if (id !== "fast") return item;
+    found = true;
+    return `fast=${fast ? "true" : "false"}`;
+  });
+  return found ? `${match[1]}[${updated.join(",")}]` : variant;
+}
+
+function cursorVariantId(modelId: string, parameters: { id: string; value: string }[]): string {
+  return `${modelId}[${parameters.map((item) => `${item.id}=${item.value}`).join(",")}]`;
+}
+
+function setFastInParameters(value: unknown[], fast: boolean): unknown[] {
+  return value.map((item) => {
+    const record = plainRecord(item);
+    if (record?.id !== "fast") return item;
+    return { ...record, value: fast ? "true" : "false" };
+  });
 }
 
 function cursorParameters(fast: boolean): { id: string; value: string }[] {

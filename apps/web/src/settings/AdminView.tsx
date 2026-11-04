@@ -827,7 +827,7 @@ export function AdminView({
                   {selectedAgent.id === "cursor" && (
                     <section className="agents-card">
                       <h3>Cursor defaults</h3>
-                      <p className="muted">The default model is Grok 4.7 with a 256k context and high reasoning. Fast mode stays off unless an administrator enables it here. Apply writes that choice with the model only for a person who is allowed to use grok-4.7, and replaces that person's Shell entries. Apply to all users covers everyone who has Cursor. Apply to this user covers the account you pick.</p>
+                      <p className="muted">The default model is Grok 4.7 with a 256k context and high reasoning. Fast mode stays off unless an administrator enables it here. Apply writes that choice with the model only for a person who is allowed to use grok-4.7, updates Fast on their saved Cursor model variants, and replaces that person's Shell entries. Apply to all users covers everyone who has Cursor. Apply to this user covers the account you pick.</p>
                       <label className={cursorFast ? "privilege on" : "privilege"}>
                         <input type="checkbox" checked={cursorFast} aria-label="Fast mode" onChange={() => setCursorFast((value) => !value)} />
                         Fast mode

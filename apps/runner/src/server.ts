@@ -69,6 +69,7 @@ import {
   listRepositories,
   dataRoot,
   loadSettings,
+  rewriteCursorModelFast,
   saveSettings,
   setEnabledRepositories,
   setRepositoryArchived,
@@ -408,7 +409,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         return runPiSetup(request.provider, request.model);
       case "apply_harness_defaults":
         if (request.agent === "pi") await applyPiDefaults(home, request.provider, request.model);
-        else await applyCursorDefaults(home, { writeModel: request.writeModel, commands: request.commands, fast: request.fast });
+        else {
+          await applyCursorDefaults(home, { writeModel: request.writeModel, commands: request.commands, fast: request.fast });
+          await rewriteCursorModelFast(home, request.fast);
+          // Open ACP sessions keep the model they started with. Reopen them so the new choice applies.
+          await acp?.stopAll();
+        }
         return { ok: true };
       case "get_cursor_commands":
         return { commands: await loadCursorCommands(home) };

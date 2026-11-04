@@ -19,6 +19,7 @@ import {
   parseCatalogEntries,
   parseEnvEntries,
   effectiveAgentOptions,
+  mergeCursorAcpConfig,
   mergeCursorConfig,
   mergePiDefaults,
   parseClientCommand,
@@ -28,6 +29,7 @@ import {
   parseAgentCommand,
   parseRunnerRequest,
   parseSettingsPatch,
+  setCursorVariantFast,
   parseTransferBase64,
   repoUploadPath,
   defaultPolicy,
@@ -391,6 +393,35 @@ test("harness defaults keep personal cursor config and force fast off", () => {
   const keptFastSelected = keptFast.selectedModel as { parameters: { id: string; value: string }[] };
   assert.equal(keptFastSelected.parameters.find((item) => item.id === "fast")?.value, "true");
   assert.deepEqual(readShellCommands(keptFast), ["pwd"]);
+
+  const fastOff = mergeCursorConfig({
+    selectedModel: { modelId: "gemini-4-argon", parameters: [{ id: "reasoning_effort", value: "medium" }, { id: "fast", value: "true" }] },
+    modelParameters: {
+      "gemini-4-argon": [{ id: "reasoning_effort", value: "medium" }, { id: "fast", value: "true" }],
+      "grok-4.7": [{ id: "fast", value: "true" }],
+    },
+  }, { writeModel: false, fast: false });
+  const fastOffSelected = fastOff.selectedModel as { parameters: { id: string; value: string }[] };
+  const fastOffParameters = fastOff.modelParameters as Record<string, { id: string; value: string }[]>;
+  assert.equal(fastOffSelected.parameters.find((item) => item.id === "fast")?.value, "false");
+  assert.equal(fastOffParameters["gemini-4-argon"]?.find((item) => item.id === "fast")?.value, "false");
+  assert.equal(fastOffParameters["grok-4.7"]?.find((item) => item.id === "fast")?.value, "false");
+});
+
+test("cursor ACP config follows the fast setting", () => {
+  const variant = "grok-4.7[context=256k,reasoning_effort=high,fast=true]";
+  assert.equal(setCursorVariantFast(variant, false), "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+  assert.equal(setCursorVariantFast("gemini-4-argon[reasoning_effort=medium]", false), "gemini-4-argon[reasoning_effort=medium]");
+  assert.equal(setCursorVariantFast("default", false), "default");
+
+  const off = mergeCursorAcpConfig({ selectedModelVariantId: variant }, { writeModel: false, fast: false });
+  assert.equal(off.selectedModelVariantId, "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+  const on = mergeCursorAcpConfig(off, { writeModel: false, fast: true });
+  assert.equal(on.selectedModelVariantId, "grok-4.7[context=256k,reasoning_effort=high,fast=true]");
+  const written = mergeCursorAcpConfig({}, { writeModel: true, fast: false });
+  assert.equal(written.selectedModelVariantId, "grok-4.7[context=256k,reasoning_effort=high,fast=false]");
+  const untouched = mergeCursorAcpConfig({ selectedModelVariantId: variant }, {});
+  assert.equal(untouched.selectedModelVariantId, variant);
 });
 
 test("settings patch keeps the chosen agent and clears a blank binary", () => {

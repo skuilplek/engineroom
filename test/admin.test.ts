@@ -2413,7 +2413,7 @@ test("harness defaults apply only within each person's agents and models", async
     };
     assert.equal(bobCursor.authInfo.email, "bob@example.com");
     assert.equal(bobCursor.model.modelId, "other-model");
-    assert.equal(bobCursor.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "true");
+    assert.equal(bobCursor.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "false");
     assert.deepEqual(bobCursor.modelParameters["gemini-4-argon"], [{ id: "reasoning_effort", value: "medium" }]);
     assert.deepEqual(bobCursor.permissions.allow, ["Shell(ls)", "Shell(npm install)", "Write(/tmp/x)"]);
     assert.deepEqual(bobCursor.permissions.deny, ["Shell(rm)"]);
@@ -2516,7 +2516,7 @@ test("harness defaults apply only within each person's agents and models", async
       modelParameters: { "grok-4.7": { id: string; value: string }[] };
     };
     assert.equal(bobStill.model.modelId, "other-model");
-    assert.equal(bobStill.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "true");
+    assert.equal(bobStill.modelParameters["grok-4.7"].find((item) => item.id === "fast")?.value, "false");
 
     const pi = await fetch(`${base}/api/admin/agent-defaults`, {
       method: "POST",

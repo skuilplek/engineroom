@@ -11,6 +11,7 @@ import {
   isCommandBlockStyle,
   isThemeId,
   parseVisibleChats,
+  setCursorVariantFast,
   type AgentId,
   type ChatDetail,
   type ChatMeta,
@@ -75,6 +76,37 @@ export async function saveSettings(home: string, patch: SettingsPatch): Promise<
   const next = applySettings(await loadSettings(home), patch);
   await writeAtomic(path.join(dataRoot(home), "settings.json"), `${JSON.stringify(next, null, 2)}\n`);
   return withLocks(next, policy, home);
+}
+
+/** Keep saved Cursor model variants in step with the site Fast mode choice. */
+export async function rewriteCursorModelFast(home: string, fast: boolean): Promise<void> {
+  const settings = await loadSettings(home);
+  const defaultModel = setCursorVariantFast(settings.defaultModel, fast);
+  if (defaultModel !== settings.defaultModel) {
+    await writeAtomic(
+      path.join(dataRoot(home), "settings.json"),
+      `${JSON.stringify({ ...settings, defaultModel }, null, 2)}\n`,
+    );
+  }
+  const dir = path.join(dataRoot(home), "chats");
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  for (const name of names) {
+    if (!CHAT_ID_RE.test(name)) continue;
+    try {
+      const chat = await readMeta(home, name);
+      if (chat.agent !== "cursor") continue;
+      const model = setCursorVariantFast(chat.model, fast);
+      if (model !== chat.model) await updateChat(home, chat.id, { model }, { touch: false });
+    } catch {
+      continue;
+    }
+  }
 }
 
 export async function listRepositories(home: string): Promise<RepositoryEntry[]> {
