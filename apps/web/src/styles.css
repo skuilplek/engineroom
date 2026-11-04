@@ -510,10 +510,19 @@ textarea { resize: vertical; }
 }
 .repo-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: 20px minmax(0, 1fr) 28px;
   align-items: center;
   border-radius: 8px;
 }
+.repo-chevron {
+  width: 20px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border-radius: 6px;
+}
+.repo-chevron:hover { color: var(--ink); background: var(--line-strong); }
 .repo-select, .chat-row {
   display: flex;
   align-items: center;
@@ -1671,9 +1680,11 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   .permission .row button { min-height: 44px; }
   .shell input, .shell select, .shell textarea,
   .shell .code-editor-input, .shell .code-editor-highlight, .shell .file-code { font-size: 16px; }
-  .nav-item, .chat-row, .repo-select, .account-button, .sidebar-toggle, .plus, .chat-pin { min-height: 44px; }
+  .nav-item, .chat-row, .repo-select, .account-button, .sidebar-toggle, .plus, .chat-pin, .repo-chevron { min-height: 44px; }
   .plus, .chat-pin { width: 44px; height: 44px; }
-  .repo-line, .chat-line { grid-template-columns: minmax(0, 1fr) 44px; }
+  .repo-chevron { width: 28px; }
+  .repo-line { grid-template-columns: 28px minmax(0, 1fr) 44px; }
+  .chat-line { grid-template-columns: minmax(0, 1fr) 44px; }
   .file-preview-meta { flex-wrap: wrap; }
   .file-preview-meta strong { overflow-wrap: anywhere; }
   .repo-manage-row > button, .repo-manage-actions { flex: 1 1 100%; }

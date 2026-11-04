@@ -5,6 +5,7 @@ import { useReportError } from "../errors.tsx";
 import { buildGroups, message, modeTone, pinnedChats, relativeTime, strip, visibleProjectChats, workspaceLabel, type RepoGroup } from "../format.ts";
 import { IconAlert, IconBook, IconChevron, IconFolder, IconFullscreen, IconGear, IconPanelLeft, IconPin, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
+import { readCollapsedProjects, writeCollapsedProjects } from "./collapsedProjects.ts";
 
 type View = "chat" | "settings" | "start" | "admin" | "docs" | "errors";
 
@@ -62,6 +63,7 @@ export function Sidebar({
   const [agent, setAgent] = useState<AgentId>("cursor");
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => readCollapsedProjects(session.username));
   const groups = buildGroups(chats, repos, home, query);
   const archivedGroups = buildGroups(chats, repos, home, query, true);
   const pinned = pinnedChats(chats, repos, home, query);
@@ -77,6 +79,20 @@ export function Sidebar({
       return next;
     });
   }
+
+  function toggleProject(key: string) {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      writeCollapsedProjects(session.username, next);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    setCollapsedProjects(readCollapsedProjects(session.username));
+  }, [session.username]);
 
   useEffect(() => onAgent((message) => {
     if (message.type === "sessions") setSessions(message.sessions);
@@ -171,8 +187,10 @@ export function Sidebar({
                 target={target}
                 limit={visibleChats}
                 expanded={expandedProjects.has(group.key)}
+                collapsed={!searching && collapsedProjects.has(group.key)}
                 searching={searching}
                 onToggleOlder={() => toggleOlder(group.key)}
+                onToggleCollapsed={() => toggleProject(group.key)}
                 onNew={onNew}
                 onOpen={onOpen}
                 onPin={onPin}
@@ -198,8 +216,10 @@ export function Sidebar({
                 target={target}
                 limit={visibleChats}
                 expanded={expandedProjects.has(group.key)}
+                collapsed={!searching && collapsedProjects.has(group.key)}
                 searching={searching}
                 onToggleOlder={() => toggleOlder(group.key)}
+                onToggleCollapsed={() => toggleProject(group.key)}
                 onNew={onNew}
                 onOpen={onOpen}
                 onPin={onPin}
@@ -565,8 +585,10 @@ function Group({
   target,
   limit,
   expanded,
+  collapsed,
   searching,
   onToggleOlder,
+  onToggleCollapsed,
   onNew,
   onOpen,
   onPin,
@@ -577,8 +599,10 @@ function Group({
   target: string;
   limit: number;
   expanded: boolean;
+  collapsed: boolean;
   searching: boolean;
   onToggleOlder: () => void;
+  onToggleCollapsed: () => void;
   onNew: (path: string) => void;
   onOpen: (chat: ChatMeta) => void;
   onPin: (chat: ChatMeta, pinned: boolean) => void;
@@ -588,14 +612,24 @@ function Group({
   return (
     <div>
       <div className={selected ? "repo-line active" : "repo-line"}>
+        <button
+          className="repo-chevron"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `Expand ${group.label} chats` : `Collapse ${group.label} chats`}
+          title={collapsed ? "Expand chats" : "Collapse chats"}
+          onClick={onToggleCollapsed}
+        >
+          <IconChevron open={!collapsed} />
+        </button>
         {group.canStart ? (
           <button className="repo-select" type="button" onClick={() => onNew(group.path)}>
-            <span className="repo-icon" aria-hidden="true"><IconFolder /></span>
+            <span className="repo-icon" aria-hidden="true"><IconFolder open={!collapsed} /></span>
             <span className="repo-name" title={group.label}>{group.label}</span>
           </button>
         ) : (
           <div className="repo-select">
-            <span className="repo-icon" aria-hidden="true"><IconFolder /></span>
+            <span className="repo-icon" aria-hidden="true"><IconFolder open={!collapsed} /></span>
             <span className="repo-name" title={group.label}>{group.label}</span>
           </div>
         )}
@@ -605,7 +639,7 @@ function Group({
           </button>
         )}
       </div>
-      {shown.map((chat) => (
+      {!collapsed && shown.map((chat) => (
         <ChatLine
           key={chat.id}
           chat={chat}
@@ -615,7 +649,7 @@ function Group({
           onPin={onPin}
         />
       ))}
-      {older > 0 && (
+      {!collapsed && older > 0 && (
         <button className="section-toggle older-chats" type="button" aria-expanded={expanded} onClick={onToggleOlder}>
           <IconChevron open={expanded} />
           {expanded ? "Hide older" : `Show ${older} older`}
