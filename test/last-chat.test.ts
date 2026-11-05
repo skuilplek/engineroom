@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMeta } from "@engineroom/protocol";
-import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "../apps/web/src/chat/lastChat.ts";
+import { forgetChat, forgetLastChat, pickLastChat, readLastChat, readLastChatFor, writeLastChat, writeLastChatFor } from "../apps/web/src/chat/lastChat.ts";
 import { isMissingChat } from "../apps/web/src/chat/missingChat.ts";
 
 const alice = "11111111-1111-1111-1111-111111111111";
@@ -71,6 +71,43 @@ test("only a missing chat sends the user home", () => {
   assert.equal(isMissingChat("send failed"), false);
   assert.equal(isMissingChat("invalid agent"), false);
   assert.equal(isMissingChat("sign in required"), false);
+});
+
+test("the last chat is kept per project as well as globally", () => {
+  const store = new MemoryStorage();
+  writeLastChatFor("alice", "/home/alice/Sites/one", alice, store);
+  writeLastChatFor("alice", "/home/alice/Sites/two/", bob, store);
+
+  assert.equal(readLastChat("alice", store), bob);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/one", store), alice);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/two", store), bob);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/missing", store), null);
+  assert.equal(readLastChatFor("bob", "/home/alice/Sites/one", store), null);
+
+  forgetChat("alice", alice, store);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/one", store), null);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/two", store), bob);
+  assert.equal(readLastChat("alice", store), bob);
+
+  forgetChat("alice", bob, store);
+  assert.equal(readLastChat("alice", store), null);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/two", store), null);
+});
+
+test("per-project last chats ignore malformed storage", () => {
+  const store = new MemoryStorage();
+  store.setItem("engineroom.lastChats.alice", JSON.stringify({
+    "/home/alice/Sites/one": alice,
+    "/home/alice/Sites/bad": "../secret",
+    "/home/alice/Sites/empty": "",
+    nope: 3,
+  }));
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/one", store), alice);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/bad", store), null);
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/empty", store), null);
+
+  store.setItem("engineroom.lastChats.alice", "not json");
+  assert.equal(readLastChatFor("alice", "/home/alice/Sites/one", store), null);
 });
 
 test("last chat storage failures are ignored", () => {

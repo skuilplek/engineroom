@@ -15,6 +15,7 @@ import { Composer } from "./Composer.tsx";
 import { attachmentPreview, composerFilesFromSaved, promptText, restorePromptText, uploadPendingAttachments, type ComposerAttachment } from "./attachments.ts";
 import { clearDraft, readDraft, useComposerDraft } from "./drafts.ts";
 import { useChatMast } from "./mastPull.ts";
+import { readCachedLive, writeCachedLive } from "./liveCache.ts";
 import { applyEvent, applySnapshot, emptyLive, latestPlan, type ChatLive } from "./state.ts";
 
 export function ChatView({
@@ -54,7 +55,7 @@ export function ChatView({
   onReposChanged?: () => void;
   onOpenFile?: (path: string) => void;
 }) {
-  const [live, setLive] = useState<ChatLive>(() => emptyLive());
+  const [live, setLive] = useState<ChatLive>(() => readCachedLive(username, chatId) ?? emptyLive());
   const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`chat:${chatId}`);
   const [sending, setSending] = useState(false);
   const [raw, setRaw] = useState(false);
@@ -67,7 +68,7 @@ export function ChatView({
   const stick = useRef(true);
   const opened = useRef(false);
   const sawSnapshot = useRef(false);
-  const queued = useRef<Array<{ event: StreamEvent; seq: number }>>([]);
+  const queued = useRef<Array<{ event: StreamEvent; seq: number; turn?: number }>>([]);
   const titleRef = useRef(onTitle);
   titleRef.current = onTitle;
   const workspaceRef = useRef(onWorkspace);
@@ -85,7 +86,6 @@ export function ChatView({
   }, []);
 
   useEffect(() => {
-    setLive(emptyLive());
     setRaw(false);
     opened.current = false;
     sawSnapshot.current = false;
@@ -93,7 +93,9 @@ export function ChatView({
     watchChat(chatId, 0);
     const stop = onAgent((message) => {
       if (message.type === "error") {
-        if (!sawSnapshot.current && isMissingChat(message.error)) {
+        if (message.chatId && message.chatId !== chatId) return;
+        const ownWatch = message.chatId === chatId || message.command === "watch";
+        if (!sawSnapshot.current && ownWatch && isMissingChat(message.error)) {
           unavailableRef.current();
           return;
         }
@@ -101,7 +103,7 @@ export function ChatView({
         return;
       }
       if (message.type === "event" && message.chatId === chatId && !sawSnapshot.current) {
-        queued.current.push({ event: message.event, seq: message.seq });
+        queued.current.push({ event: message.event, seq: message.seq, turn: message.turn });
         return;
       }
       if (message.type === "snapshot" && message.chatId === chatId) {
@@ -109,7 +111,7 @@ export function ChatView({
         const pending = queued.current.splice(0);
         setLive((current) => {
           let next = applySnapshot(current, message);
-          for (const item of pending) next = applyEvent(next, item.event, item.seq);
+          for (const item of pending) next = applyEvent(next, item.event, item.seq, item.turn);
           return next;
         });
         noteSeq(chatId, message.seq);
@@ -134,7 +136,7 @@ export function ChatView({
         return;
       }
       if (message.type === "event" && message.chatId === chatId) {
-        setLive((current) => applyEvent(current, message.event, message.seq));
+        setLive((current) => applyEvent(current, message.event, message.seq, message.turn));
         noteSeq(chatId, message.seq);
         if (message.event.type === "title") titleRef.current(message.event.text);
         if (
@@ -151,6 +153,10 @@ export function ChatView({
       unwatchChat(chatId);
     };
   }, [chatId, claimOpening, report]);
+
+  useEffect(() => {
+    writeCachedLive(username, chatId, live);
+  }, [username, chatId, live]);
 
   const blocks = useMemo(() => groupTranscript(live.entries), [live.entries]);
   const plan = useMemo(() => latestPlan(live.entries), [live.entries]);

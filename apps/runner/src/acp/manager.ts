@@ -7,6 +7,7 @@ import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, 
 
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_SESSIONS = 4;
+const CANCEL_GRACE_MS = 1500;
 
 export interface AcpLaunch {
   binary: string;
@@ -39,6 +40,7 @@ export class AcpManager {
   private starting = new Map<string, Promise<AcpSession>>();
   private opening = new Map<string, AcpSession>();
   private idle = new Map<string, NodeJS.Timeout>();
+  private generations = new Map<string, number>();
   private order: string[] = [];
   private commands = new Map<string, string>();
 
@@ -64,6 +66,10 @@ export class AcpManager {
     return { modes: session.modes, models: session.models };
   }
 
+  permission(chatId: string): AcpSession["pendingPermission"] {
+    return this.sessions.get(chatId)?.pendingPermission ?? null;
+  }
+
   async prompt(
     chatId: string,
     ctx: AcpContext,
@@ -75,21 +81,33 @@ export class AcpManager {
     const session = await this.ensure(chatId, ctx);
     if (session.sessionId) await ctx.onSession?.(session.sessionId);
     if (signal.aborted) {
-      ctx.onEvent({ type: "status", text: "Stopped" });
-      ctx.onEvent({ type: "done", agentSessionId: session.sessionId });
+      await this.stop(chatId);
       return { agentSessionId: session.sessionId };
     }
+    let grace: NodeJS.Timeout | undefined;
+    const onAbort = () => {
+      session.cancel();
+      grace = setTimeout(() => {
+        void this.stop(chatId);
+      }, CANCEL_GRACE_MS);
+      grace.unref?.();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
     try {
-      await session.prompt(agentContentBlocks(shown, files, session.acceptsImages), signal);
+      await session.prompt(agentContentBlocks(shown, files, session.acceptsImages), signal, ctx.onEvent);
     } catch (error) {
-      if (signal.aborted) {
-        ctx.onEvent({ type: "status", text: "Stopped" });
-        ctx.onEvent({ type: "done", agentSessionId: session.sessionId });
-        return { agentSessionId: session.sessionId };
-      }
-      throw error;
+      if (!signal.aborted) throw error;
     } finally {
-      this.scheduleIdle(chatId);
+      signal.removeEventListener("abort", onAbort);
+      if (grace) clearTimeout(grace);
+      this.clearIdle(chatId);
+      if (signal.aborted) {
+        // Stop must be deterministic. If the agent has not settled yet, kill
+        // the process so no late updates can reach the next turn.
+        if (this.sessions.get(chatId) === session) await this.stop(chatId);
+      } else {
+        this.scheduleIdle(chatId);
+      }
     }
     return { agentSessionId: session.sessionId };
   }
@@ -121,16 +139,21 @@ export class AcpManager {
   }
 
   async stopAll() {
-    for (const session of this.opening.values()) await session.stop();
-    for (const chatId of [...this.sessions.keys()]) await this.stop(chatId);
+    const chatIds = new Set([...this.opening.keys(), ...this.sessions.keys(), ...this.starting.keys()]);
+    for (const chatId of chatIds) await this.stop(chatId);
   }
 
   async stop(chatId: string) {
     this.clearIdle(chatId);
+    this.generations.set(chatId, this.generation(chatId) + 1);
+    const opening = this.opening.get(chatId);
+    this.opening.delete(chatId);
     const session = this.sessions.get(chatId);
     this.sessions.delete(chatId);
+    this.starting.delete(chatId);
     this.order = this.order.filter((id) => id !== chatId);
-    await session?.stop();
+    if (opening) await opening.stop();
+    if (session && session !== opening) await session.stop();
   }
 
   async probe(agent: AgentId, cwd: string, env: NodeJS.ProcessEnv, home: string): Promise<{ modes: AgentOptionChoice[]; models: AgentOptionChoice[] }> {
@@ -227,6 +250,7 @@ export class AcpManager {
 
   private async open(chatId: string, ctx: AcpContext): Promise<AcpSession> {
     await this.reap();
+    const generation = this.generation(chatId);
     const launch = await this.launch(ctx.agent, ctx);
     const session = new AcpSession({
       binary: launch.binary,
@@ -245,16 +269,25 @@ export class AcpManager {
     try {
       sessionId = await session.open();
     } catch (error) {
-      this.opening.delete(chatId);
+      if (this.opening.get(chatId) === session) this.opening.delete(chatId);
       await session.stop();
       throw error;
     }
+    if (generation !== this.generation(chatId)) {
+      if (this.opening.get(chatId) === session) this.opening.delete(chatId);
+      await session.stop();
+      throw new Error("agent session was stopped");
+    }
     session.sessionId = sessionId;
     this.sessions.set(chatId, session);
-    this.opening.delete(chatId);
+    if (this.opening.get(chatId) === session) this.opening.delete(chatId);
     this.order.push(chatId);
     ctx.needsResync = false;
     return session;
+  }
+
+  private generation(chatId: string): number {
+    return this.generations.get(chatId) ?? 0;
   }
 
   private async launch(agent: AgentId, ctx: AcpContext): Promise<AcpLaunch> {

@@ -29,10 +29,16 @@ export class ChatBus {
     return this.seq.get(chatId) ?? 0;
   }
 
-  publish(chatId: string, event: StreamEvent, at = new Date().toISOString()): ChatEvent {
+  publish(chatId: string, event: StreamEvent, turn?: number): ChatEvent {
     const seq = this.current(chatId) + 1;
     this.seq.set(chatId, seq);
-    const item: ChatEvent = { chatId, seq, at, event };
+    const item: ChatEvent = {
+      chatId,
+      seq,
+      at: new Date().toISOString(),
+      event,
+      ...(turn != null ? { turn } : {}),
+    };
     const ring = this.ring.get(chatId) ?? [];
     ring.push(item);
     if (ring.length > this.cap) ring.splice(0, ring.length - this.cap);

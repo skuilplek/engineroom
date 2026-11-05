@@ -114,6 +114,7 @@ export interface ChatMeta {
   createdAt: string;
   updatedAt: string;
   running?: boolean;
+  waiting?: boolean;
   mode?: string;
   needsResync?: boolean;
   pinned?: boolean;
@@ -169,7 +170,7 @@ export type TranscriptEntry = (
   | { kind: "status"; text: string; at: string }
   | { kind: "thinking"; text: string; at: string }
   | { kind: "plan"; entries: PlanEntry[]; at: string }
-) & { seq?: number };
+) & { seq?: number; turn?: number };
 
 export interface ChatDetail {
   chat: ChatMeta;
@@ -407,6 +408,7 @@ export interface ChatEvent {
   seq: number;
   at: string;
   event: StreamEvent;
+  turn?: number;
 }
 
 export interface AgentMode {

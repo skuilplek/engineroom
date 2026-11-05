@@ -1,8 +1,8 @@
 import type { PromptAttachment, ToolContent, TranscriptEntry } from "@engineroom/protocol";
 
 export type Block =
-  | { kind: "text"; role: "user" | "assistant"; text: string; attachments?: PromptAttachment[] }
-  | { kind: "thinking"; text: string }
+  | { kind: "text"; role: "user" | "assistant"; text: string; attachments?: PromptAttachment[]; turn?: number }
+  | { kind: "thinking"; text: string; turn?: number }
   | { kind: "tool"; id: string; name: string; phase: string; input?: string; output?: string; toolKind?: string; content?: ToolContent[] }
   | { kind: "error"; text: string }
   | { kind: "status"; text: string };
@@ -15,20 +15,21 @@ export function groupTranscript(entries: TranscriptEntry[]): Block[] {
         kind: "text",
         role: "user",
         text: entry.text,
+        ...(entry.turn != null ? { turn: entry.turn } : {}),
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
       });
       continue;
     }
     if (entry.kind === "text") {
       const last = blocks.at(-1);
-      if (last?.kind === "text" && last.role === "assistant") last.text += entry.text;
-      else blocks.push({ kind: "text", role: "assistant", text: entry.text });
+      if (last?.kind === "text" && last.role === "assistant" && last.turn === entry.turn) last.text += entry.text;
+      else blocks.push({ kind: "text", role: "assistant", text: entry.text, ...(entry.turn != null ? { turn: entry.turn } : {}) });
       continue;
     }
     if (entry.kind === "thinking") {
       const last = blocks.at(-1);
-      if (last?.kind === "thinking") last.text += entry.text;
-      else blocks.push({ kind: "thinking", text: entry.text });
+      if (last?.kind === "thinking" && last.turn === entry.turn) last.text += entry.text;
+      else blocks.push({ kind: "thinking", text: entry.text, ...(entry.turn != null ? { turn: entry.turn } : {}) });
       continue;
     }
     if (entry.kind === "tool") {

@@ -4,7 +4,7 @@ import type { RunnerRequest, StreamEvent } from "@engineroom/protocol";
 import { openRunnerSocket, type RunnerLink } from "./runner-client.ts";
 
 export type PushMessage =
-  | { id: "push"; type: "chat_event"; chatId: string; seq: number; at: string; event: StreamEvent }
+  | { id: "push"; type: "chat_event"; chatId: string; seq: number; at: string; event: StreamEvent; turn?: number }
   | { id: "push"; type: "chats_changed" }
   | { id: "push"; type: "pty"; chatId: string; data: string };
 
@@ -17,6 +17,7 @@ interface RunnerLine {
   chatId?: string;
   seq?: number;
   at?: string;
+  turn?: number;
   data?: string;
 }
 
@@ -82,6 +83,7 @@ export class RunnerChannel {
             seq: message.seq,
             at: message.at || new Date().toISOString(),
             event: message.event,
+            ...(typeof message.turn === "number" ? { turn: message.turn } : {}),
           });
         } else if (message.type === "chats_changed") {
           this.onPush({ id: "push", type: "chats_changed" });

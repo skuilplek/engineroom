@@ -373,11 +373,148 @@ test("a follow-up prompt waits until the running turn finishes", async () => {
   }
 });
 
+
+test("a pending permission survives switching away and back", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-permission-rewatch-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({ launch: async () => ({ binary: process.execPath, args: [fake] }) });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w1", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w1");
+    live.send({ id: "p", type: "prompt", chatId, prompt: "permit this" });
+    const permission = await live.next((message) => message.event?.type === "permission_request");
+    const requestId = permission.event?.requestId || "";
+    assert.ok(requestId);
+    const listed = await once(sock, { id: "list", type: "list_chats" });
+    assert.equal((listed.result as Array<{ id: string; waiting?: boolean }>).find((chat) => chat.id === chatId)?.waiting, true);
+
+    live.send({ id: "u", type: "unwatch", chatId });
+    await live.next((message) => message.id === "u");
+    live.send({ id: "w2", type: "watch", chatId, lastSeq: 0 });
+    const snapshot = await live.next((message) => message.id === "w2");
+    const result = snapshot.result as { running?: boolean; seq?: number; permission?: { requestId?: string } | null };
+    assert.equal(result.running, true);
+    assert.equal(result.permission?.requestId, requestId);
+    assert.equal((result.seq ?? 0) >= (permission.seq ?? 0), true);
+
+    live.send({ id: "a", type: "permission_response", chatId, requestId, optionId: "allow-once" });
+    await live.next((message) => message.event?.type === "done");
+    const after = await once(sock, { id: "list2", type: "list_chats" });
+    assert.notEqual((after.result as Array<{ id: string; waiting?: boolean }>).find((chat) => chat.id === chatId)?.waiting, true);
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Stop clears a turn the agent ignores, and keeps the realignment prompt", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-stop-realign-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({ launch: async () => ({ binary: process.execPath, args: [fake] }) });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "hold" });
+    await live.next((message) => message.event?.type === "text_delta" && message.event.text === "held");
+    live.send({ id: "x", type: "cancel", chatId });
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "second" });
+
+    let sawSecond = false;
+    let running = true;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const current = await once(sock, { id: `g${attempt}`, type: "get_chat", chatId });
+      const detail = current.result as { chat: { running?: boolean }; transcript: Array<{ kind: string; text?: string }> };
+      running = detail.chat.running === true;
+      sawSecond = detail.transcript.some((entry) => entry.kind === "user" && entry.text === "second");
+      if (sawSecond && !running) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(running, false);
+    assert.equal(sawSecond, true);
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("late output from a finished turn is not written into the next turn", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-turn-late-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({ launch: async () => ({ binary: process.execPath, args: [fake] }) });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "late" });
+    await live.next((message) => message.event?.type === "done");
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "second" });
+    await live.next((message) => message.event?.type === "done");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const current = await once(sock, { id: "g", type: "get_chat", chatId });
+    const transcript = (current.result as { transcript: Array<{ kind: string; text?: string }> }).transcript;
+    assert.equal(transcript.some((entry) => entry.kind === "user" && entry.text === "second"), true);
+    assert.equal(transcript.some((entry) => entry.text === "late-old-text"), false);
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("late output from a cancelled turn is not written into the next turn", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-cancel-late-"));
+  const sock = path.join(home, "runner.sock");
+  const acp = new AcpManager({ launch: async () => ({ binary: process.execPath, args: [fake] }) });
+  const runner = await startRunner({ home, socketPath: sock, acp, peerCheck: () => undefined });
+  const live = await subscribe(sock);
+  try {
+    const created = await once(sock, { id: "c", type: "create_chat", agent: "cursor", workspace: home });
+    const chatId = (created.result as { id: string }).id;
+    live.send({ id: "w", type: "watch", chatId, lastSeq: 0 });
+    await live.next((message) => message.id === "w");
+    live.send({ id: "p1", type: "prompt", chatId, prompt: "cancel-late" });
+    await live.next((message) => message.event?.type === "text_delta" && message.event.text === "held");
+    live.send({ id: "x", type: "cancel", chatId });
+    live.send({ id: "p2", type: "prompt", chatId, prompt: "second" });
+
+    let sawSecond = false;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const current = await once(sock, { id: `g${attempt}`, type: "get_chat", chatId });
+      const transcript = (current.result as { transcript: Array<{ kind: string; text?: string }> }).transcript;
+      sawSecond = transcript.some((entry) => entry.kind === "user" && entry.text === "second");
+      if (sawSecond) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(sawSecond, true);
+    const current = await once(sock, { id: "final", type: "get_chat", chatId });
+    const transcript = (current.result as { transcript: Array<{ kind: string; text?: string }> }).transcript;
+    assert.equal(transcript.some((entry) => entry.text === "late-old-text"), false);
+  } finally {
+    live.close();
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 interface Line {
   id?: string;
   type?: string;
   result?: unknown;
   error?: string;
+  seq?: number;
   event?: { type?: string; text?: string; requestId?: string; modeId?: string };
 }
 

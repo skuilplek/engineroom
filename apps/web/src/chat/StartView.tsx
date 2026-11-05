@@ -32,6 +32,8 @@ export function StartView({
   onDelete,
   onReposChanged,
   onBranchChanged,
+  lastChat,
+  onResume,
 }: {
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
@@ -51,6 +53,8 @@ export function StartView({
   onDelete: (name: string) => Promise<void>;
   onReposChanged?: () => void;
   onBranchChanged?: () => void;
+  lastChat?: ChatMeta | null;
+  onResume?: (chat: ChatMeta) => void;
 }) {
   const alive = useRef(true);
   const [agent, setAgent] = useState<AgentId | "">(agents[0] || "");
@@ -196,6 +200,11 @@ export function StartView({
         <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
       </div>
       <h1>Let's Start Building!</h1>
+      {lastChat && onResume && (
+        <button className="ghost resume-chat" type="button" onClick={() => onResume(lastChat)}>
+          Resume last chat · {lastChat.title}
+        </button>
+      )}
       <Composer
         frame="launch"
         prompt={prompt}

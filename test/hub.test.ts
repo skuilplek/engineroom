@@ -343,6 +343,11 @@ test("logout closes the live socket and a missing chat is not a filesystem error
       if (Date.now() > ready) throw new Error(`watch never failed cleanly: ${messages.join("\n").slice(0, 300)}`);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    const watchError = messages
+      .map((line) => JSON.parse(line) as { type?: string; chatId?: string; command?: string; error?: string })
+      .find((message) => message.type === "error" && message.error?.includes("chat not found"));
+    assert.equal(watchError?.chatId, "22222222-2222-4222-8222-222222222222");
+    assert.equal(watchError?.command, "watch");
     const closed = new Promise<void>((resolve) => ws?.once("close", () => resolve()));
     const loggedOut = await fetch(`${base}/api/logout`, { method: "POST", headers });
     assert.equal(loggedOut.status, 200);

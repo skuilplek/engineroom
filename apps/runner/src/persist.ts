@@ -2,7 +2,7 @@ import type { PlanEntry, StreamEvent, ToolContent, TranscriptEntry } from "@engi
 import { appendTranscript } from "./store.ts";
 
 export class TranscriptWriter {
-  private pending = new Map<string, { kind: "text" | "thinking"; text: string; seq: number; at: string; timer: NodeJS.Timeout }>();
+  private pending = new Map<string, { kind: "text" | "thinking"; text: string; seq: number; at: string; turn?: number; timer: NodeJS.Timeout }>();
   private queue: Promise<void> = Promise.resolve();
 
   constructor(privateHome: string) {
@@ -11,8 +11,8 @@ export class TranscriptWriter {
 
   private readonly home: string;
 
-  record(chatId: string, event: StreamEvent, seq: number): Promise<void> {
-    return this.enqueue(() => this.recordNow(chatId, event, seq));
+  record(chatId: string, event: StreamEvent, seq: number, turn?: number): Promise<void> {
+    return this.enqueue(() => this.recordNow(chatId, event, seq, turn));
   }
 
   flush(chatId: string): Promise<void> {
@@ -35,29 +35,31 @@ export class TranscriptWriter {
     return next;
   }
 
-  private async recordNow(chatId: string, event: StreamEvent, seq: number): Promise<void> {
+  private async recordNow(chatId: string, event: StreamEvent, seq: number, turn?: number): Promise<void> {
     if (event.type === "text_delta" || event.type === "thinking") {
       const kind = event.type === "text_delta" ? "text" : "thinking";
       await this.flushKind(chatId, kind === "text" ? "thinking" : "text");
       const key = `${chatId}:${kind}`;
       const current = this.pending.get(key);
+      if (current && current.turn !== turn) await this.flushKey(key);
       const at = new Date().toISOString();
-      if (current) {
-        current.text += event.text;
-        current.seq = seq;
-        current.at = at;
-        clearTimeout(current.timer);
-        current.timer = this.timer(key);
+      const pending = this.pending.get(key);
+      if (pending) {
+        pending.text += event.text;
+        pending.seq = seq;
+        pending.at = at;
+        clearTimeout(pending.timer);
+        pending.timer = this.timer(key);
         return;
       }
-      this.pending.set(key, { kind, text: event.text, seq, at, timer: this.timer(key) });
+      this.pending.set(key, { kind, text: event.text, seq, at, turn, timer: this.timer(key) });
       return;
     }
-    if (event.type === "tool" || event.type === "plan" || event.type === "error" || event.type === "user_message" || event.type === "turn_end" || event.type === "done") {
+    if (event.type === "tool" || event.type === "plan" || event.type === "error" || event.type === "status" || event.type === "user_message" || event.type === "turn_end" || event.type === "done") {
       await this.flushKind(chatId, "text");
       await this.flushKind(chatId, "thinking");
     }
-    const entry = toEntry(event, seq);
+    const entry = toEntry(event, seq, turn);
     if (entry) await appendTranscript(this.home, chatId, entry);
   }
 
@@ -73,8 +75,8 @@ export class TranscriptWriter {
     const chatId = key.slice(0, key.lastIndexOf(":"));
     const entry: TranscriptEntry =
       current.kind === "text"
-        ? { kind: "text", text: current.text, at: current.at, seq: current.seq }
-        : { kind: "thinking", text: current.text, at: current.at, seq: current.seq };
+        ? { kind: "text", text: current.text, at: current.at, seq: current.seq, ...(current.turn != null ? { turn: current.turn } : {}) }
+        : { kind: "thinking", text: current.text, at: current.at, seq: current.seq, ...(current.turn != null ? { turn: current.turn } : {}) };
     await appendTranscript(this.home, chatId, entry);
   }
 
@@ -87,14 +89,14 @@ export class TranscriptWriter {
   }
 }
 
-function toEntry(event: StreamEvent, seq: number): TranscriptEntry | null {
+function toEntry(event: StreamEvent, seq: number, turn?: number): TranscriptEntry | null {
   const at = new Date().toISOString();
+  const base = { at, seq, ...(turn != null ? { turn } : {}) };
   if (event.type === "user_message") {
     return {
       kind: "user",
       text: event.text,
-      at,
-      seq,
+      ...base,
       ...(event.attachments?.length ? { attachments: event.attachments } : {}),
     };
   }
@@ -109,13 +111,12 @@ function toEntry(event: StreamEvent, seq: number): TranscriptEntry | null {
       toolKind: event.toolKind,
       title: event.title,
       content: event.content,
-      at,
-      seq,
+      ...base,
     };
   }
-  if (event.type === "error") return { kind: "error", text: event.text, at, seq };
-  if (event.type === "status") return { kind: "status", text: event.text, at, seq };
-  if (event.type === "plan") return { kind: "plan", entries: event.entries satisfies PlanEntry[], at, seq };
+  if (event.type === "error") return { kind: "error", text: event.text, ...base };
+  if (event.type === "status") return { kind: "status", text: event.text, ...base };
+  if (event.type === "plan") return { kind: "plan", entries: event.entries satisfies PlanEntry[], ...base };
   return null;
 }
 

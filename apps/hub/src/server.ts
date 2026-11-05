@@ -1273,9 +1273,27 @@ export function createHub(options: HubOptions) {
         queued.push({ data, isBinary });
         return;
       }
+      let chatId: string | undefined;
+      let command: string | undefined;
+      if (!isBinary) {
+        try {
+          const raw = JSON.parse(Buffer.from(rawBytes(data)).toString("utf8")) as { chatId?: unknown; type?: unknown };
+          if (typeof raw.chatId === "string") chatId = raw.chatId;
+          if (typeof raw.type === "string") command = raw.type;
+        } catch {
+          /* the parser below reports malformed commands */
+        }
+      }
       void onClientMessage(user, channel, ws, data, isBinary, held).catch((error) => {
         const message = error instanceof Error ? error.message : "request failed";
-        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: "error", error: message }));
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({
+            type: "error",
+            error: message,
+            ...(chatId ? { chatId } : {}),
+            ...(command ? { command } : {}),
+          }));
+        }
       });
     };
     let closed = false;
@@ -1773,7 +1791,14 @@ function forward(ws: WebSocket, message: PushMessage) {
     ws.send(JSON.stringify({ type: "chats_changed" }));
     return;
   }
-  ws.send(JSON.stringify({ type: "event", chatId: message.chatId, seq: message.seq, at: message.at, event: message.event }));
+  ws.send(JSON.stringify({
+    type: "event",
+    chatId: message.chatId,
+    seq: message.seq,
+    at: message.at,
+    event: message.event,
+    ...(message.turn != null ? { turn: message.turn } : {}),
+  }));
 }
 
 function originAllowed(req: IncomingMessage): boolean {

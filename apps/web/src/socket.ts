@@ -1,4 +1,4 @@
-import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type PermissionOption, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
 import { notifySessionExpired } from "./sessionExpired.ts";
 
 export type { AgentMode, AgentModel };
@@ -13,18 +13,19 @@ export type ServerMessage =
       chat: ChatMeta;
       modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
       models?: { currentModelId: string; availableModels: AgentModel[] } | null;
+      permission?: { requestId: string; title?: string; options: PermissionOption[] } | null;
       queue?: QueuedPrompt[];
       queueSeq?: number;
       scrollback?: string;
     }
-  | { type: "event"; chatId: string; seq: number; at: string; event: StreamEvent }
+  | { type: "event"; chatId: string; seq: number; at: string; event: StreamEvent; turn?: number }
   | { type: "chats_changed" }
   | { type: "pty"; chatId: string; data: Uint8Array }
   | { type: "sessions"; sessions: ListedSession[] }
   | { type: "imported"; chat: ChatMeta }
   | { type: "accepted"; chatId: string; queued: boolean }
   | { type: "pty_open"; chatId: string; attached?: boolean; scrollback?: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; chatId?: string; command?: string };
 
 type Listener = (message: ServerMessage) => void;
 

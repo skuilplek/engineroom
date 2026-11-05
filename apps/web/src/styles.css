@@ -589,6 +589,9 @@ textarea { resize: vertical; }
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
 .dot.dot-idle { background: var(--muted); }
+.dot.dot-waiting { background: var(--mode-plan); box-shadow: 0 0 8px var(--mode-plan); animation: mode-dot-pulse 1.4s ease-in-out infinite; }
+.repo-dot { margin-left: auto; }
+.resume-chat { margin: 0 auto 12px; display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plus {
   width: 28px;
   height: 28px;

@@ -42,6 +42,18 @@ export function pinnedChats(
     .sort(byCreated);
 }
 
+/** Chats that are running or waiting for approval, across every project. */
+export function activeChats(
+  chats: ChatMeta[],
+  repos: RepositoryEntry[],
+  home: string,
+  query = "",
+): ChatMeta[] {
+  return matchingChats(chats, repos, home, query, "any")
+    .filter((chat) => chat.pinned !== true && (chat.running === true || chat.waiting === true))
+    .sort(byUpdated);
+}
+
 export function buildGroups(
   chats: ChatMeta[],
   repos: RepositoryEntry[],
@@ -70,13 +82,21 @@ export function buildGroups(
       chats: items,
       canStart,
       time: items[0] ? relativeTime(items[0].updatedAt) : undefined,
-      marked: items.some((chat) => chat.running) || (newestKey !== "" && newestKey === key),
+      marked: items.some((chat) => chat.running || chat.waiting) || (newestKey !== "" && newestKey === key),
     };
   }
   const groups: RepoGroup[] = [];
   for (const repo of [...selected].sort((a, b) => a.name.localeCompare(b.name))) {
     groups.push(take(strip(repo.path), repo.name, true));
   }
+  groups.sort((a, b) => {
+    const aActive = a.chats.some((chat) => chat.running || chat.waiting) ? 1 : 0;
+    const bActive = b.chats.some((chat) => chat.running || chat.waiting) ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    const aUpdated = a.chats[0]?.updatedAt ?? "";
+    const bUpdated = b.chats[0]?.updatedAt ?? "";
+    return bUpdated.localeCompare(aUpdated) || a.label.localeCompare(b.label);
+  });
   return groups.filter((group) => !needle || group.chats.length > 0 || group.label.toLowerCase().includes(needle));
 }
 
@@ -109,7 +129,7 @@ export function visibleProjectChats(
   const active = new Set(
     [...chats]
       .sort(byUpdated)
-      .filter((chat, index) => index < limit || chat.id === activeId)
+      .filter((chat, index) => index < limit || chat.id === activeId || chat.running === true || chat.waiting === true)
       .map((chat) => chat.id),
   );
   const older = ordered.length - active.size;

@@ -21,6 +21,12 @@ The composer is the box at the bottom of a chat, and the large box on the start 
 
 An unsent prompt stays in the box for that project start page, or for that chat, until you send it.
 
+## Stop and realign
+
+Stop ends the current reply. The agent process for that chat is stopped, so late output from the stopped turn cannot leak into the next one. Any prompt you send right after Stop is kept and starts once the old turn has settled.
+
+If the agent asks for tool approval and you switch to another chat, the approval stays attached to the first chat. Returning to it shows the same prompt. Stop clears it.
+
 ## While a reply is running
 
 The reply streams into the transcript. You can send a follow-up before it finishes. Those messages wait in a queue above the composer. Edit puts one back in the box. Remove drops it.

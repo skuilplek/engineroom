@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 
 const pending = new Map();
 let holding = false;
+let cancelLate = null;
 const rl = createInterface({ input: process.stdin });
 
 rl.on("line", (line) => {
@@ -62,6 +63,19 @@ async function handle(msg) {
     const links = blocks.filter((block) => block?.type === "resource_link").length;
     const images = blocks.filter((block) => block?.type === "image").length;
     const sessionId = msg.params.sessionId;
+    if (text === "late") {
+      notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "old-text" } } });
+      reply(msg.id, { stopReason: "end_turn" });
+      setTimeout(() => {
+        notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late-old-text" } } });
+      }, 120);
+      return;
+    }
+    if (text === "cancel-late") {
+      cancelLate = msg.id;
+      notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "held" } } });
+      return;
+    }
     if (text === "hold") {
       holding = true;
       notify("session/update", { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "held" } } });
@@ -139,7 +153,17 @@ async function handle(msg) {
     }
     return reply(msg.id, { stopReason: "end_turn" });
   }
-  if (msg.method === "session/cancel") return;
+  if (msg.method === "session/cancel") {
+    if (cancelLate != null) {
+      const id = cancelLate;
+      cancelLate = null;
+      setTimeout(() => {
+        notify("session/update", { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late-old-text" } } });
+        reply(id, { stopReason: "cancelled" });
+      }, 200);
+    }
+    return;
+  }
   if (msg.id != null) reply(msg.id, {});
 }
 

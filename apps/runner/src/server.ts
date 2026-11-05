@@ -104,10 +104,14 @@ export interface RunningRunner {
 
 interface RunState {
   busy: boolean;
-  stopped: boolean;
+  cancelled: boolean;
+  turn: number;
+  activeTurn: number | null;
   queue: QueuedPrompt[];
   controller: AbortController;
 }
+
+const TURN_SETTLE_MS = 150;
 
 export async function startRunner(options: RunnerOptions): Promise<RunningRunner> {
   const home = options.home;
@@ -277,15 +281,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         const seq = Math.max(maxSeq(detail.transcript), bus.current(request.chatId));
         bus.init(request.chatId, seq);
         const info = acp?.info(request.chatId);
+        const permission = acp?.permission?.(request.chatId) ?? null;
         const queue = [...(runs.get(request.chatId)?.queue ?? [])];
         const queueSeq = bus.current(request.chatId);
         return {
-          chat: detail.chat,
+          chat: { ...detail.chat, ...(permission ? { waiting: true } : {}) },
           transcript: detail.transcript,
-          seq: maxSeq(detail.transcript),
+          seq,
           running: runs.has(request.chatId),
           modes: info?.modes,
           models: info?.models,
+          permission,
           queue,
           queueSeq,
           scrollback: Buffer.from(pty.scrollback(request.chatId), "utf8").toString("base64"),
@@ -335,11 +341,19 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
 
   async function dispatch(request: RunnerRequest): Promise<unknown> {
     switch (request.type) {
-      case "list_chats":
-        return listChats(home, new Set(runs.keys()));
-      case "get_chat":
+      case "list_chats": {
+        const chats = await listChats(home, new Set(runs.keys()));
+        for (const chat of chats) {
+          if (acp?.permission?.(chat.id)) chat.waiting = true;
+        }
+        return chats;
+      }
+      case "get_chat": {
         await writer.flush(request.chatId);
-        return getChat(home, request.chatId, runs.has(request.chatId));
+        const detail = await getChat(home, request.chatId, runs.has(request.chatId));
+        if (acp?.permission?.(request.chatId)) detail.chat.waiting = true;
+        return detail;
+      }
       case "get_settings":
         return withLocks(await loadSettings(home), await loadPolicy(home), home);
       case "put_settings":
@@ -567,7 +581,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     await assertPersonalOption(chatId, "model", modelId);
     await updateChat(home, chatId, { model: modelId });
     if (modelId && !runs.get(chatId)?.busy) await acp?.setModel(chatId, modelId).catch(() => undefined);
-    publish(chatId, { type: "model", modelId });
+    publish(chatId, { type: "model", modelId }, runs.get(chatId)?.activeTurn ?? undefined);
     return { ok: true };
   }
 
@@ -674,7 +688,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     if (!shown) throw new Error("prompt is empty");
     let state = runs.get(chatId);
     if (!state) {
-      state = { busy: false, stopped: false, queue: [], controller: new AbortController() };
+      state = { busy: false, cancelled: false, turn: 0, activeTurn: null, queue: [], controller: new AbortController() };
       runs.set(chatId, state);
     }
     if (state.busy) {
@@ -684,25 +698,35 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         type: "queued",
         text: shown,
         ...(attachments.length > 0 ? { attachments } : {}),
-      });
+      }, state.activeTurn ?? state.turn);
       return { accepted: true, queued: true };
     }
+    startTurn(chatId, state, prompt, attachments);
+    return { accepted: true, queued: false };
+  }
+
+  function startTurn(chatId: string, state: RunState, prompt: string, attachments: PromptAttachment[]) {
     state.busy = true;
-    state.stopped = false;
+    state.cancelled = false;
+    state.turn += 1;
+    state.activeTurn = state.turn;
     state.controller = new AbortController();
     bus.setRunning(chatId, true);
-    void executeTurn(chatId, state, prompt, attachments);
-    return { accepted: true, queued: false };
+    void executeTurn(chatId, state, state.turn, prompt, attachments);
   }
 
   function cancel(chatId: string) {
     const state = runs.get(chatId);
     if (!state) return;
+    // Drop prompts that were queued before the stop. Prompts submitted after
+    // this point are new work and must survive the cancelled turn unwinding.
     state.queue.length = 0;
-    state.stopped = true;
+    state.cancelled = true;
     state.controller.abort();
     acp?.cancel(chatId);
-    publish(chatId, { type: "queue", items: [] });
+    publish(chatId, { type: "queue", items: [] }, state.activeTurn ?? state.turn);
+    publish(chatId, { type: "status", text: "Stopped" }, state.activeTurn ?? state.turn);
+    publish(chatId, { type: "done" }, state.activeTurn ?? state.turn);
   }
 
   function dequeue(chatId: string, index: number) {
@@ -710,13 +734,22 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     if (!state?.busy) throw new Error("nothing queued");
     if (index < 0 || index >= state.queue.length) throw new Error("invalid queue index");
     state.queue.splice(index, 1);
-    publish(chatId, { type: "dequeued", index });
+    publish(chatId, { type: "dequeued", index }, state.activeTurn ?? state.turn);
   }
 
-  async function executeTurn(chatId: string, state: RunState, prompt: string, attachments: PromptAttachment[] = []) {
+  async function executeTurn(
+    chatId: string,
+    state: RunState,
+    turn: number,
+    prompt: string,
+    attachments: PromptAttachment[] = [],
+  ) {
     const signal = state.controller.signal;
     let sessionId: string | null = null;
-    const publishEvent = (event: StreamEvent) => publish(chatId, event);
+    const publishEvent = (event: StreamEvent) => {
+      if (state.turn !== turn || state.activeTurn !== turn || state.cancelled) return;
+      publish(chatId, event, turn);
+    };
     try {
       if (signal.aborted) return;
       const detail = await getChat(home, chatId, true);
@@ -759,6 +792,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
           if (event.type === "mode") {
             void updateChat(home, chatId, { mode: event.modeId }).then(() => bus.changed(), () => undefined);
           }
+          if (event.type === "permission_request" || event.type === "permission_resolved") bus.changed();
           publishEvent(event);
         },
       };
@@ -803,18 +837,16 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       publishEvent({ type: "error", text: message });
     } finally {
       await writer.flush(chatId);
+      if (state.turn !== turn) return;
+      state.activeTurn = null;
+      // Keep the run busy while late agent notifications drain. Prompts sent in
+      // this window queue behind the settled turn instead of starting early.
+      await new Promise((resolve) => setTimeout(resolve, TURN_SETTLE_MS));
+      if (state.turn !== turn) return;
       state.busy = false;
-      if (state.stopped || signal.aborted) {
-        state.queue.length = 0;
-        runs.delete(chatId);
-        bus.setRunning(chatId, false);
-        return;
-      }
       const next = state.queue.shift();
       if (next) {
-        state.busy = true;
-        state.controller = new AbortController();
-        void executeTurn(chatId, state, next.text, next.attachments);
+        startTurn(chatId, state, next.text, next.attachments);
         return;
       }
       runs.delete(chatId);
@@ -822,9 +854,9 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     }
   }
 
-  function publish(chatId: string, event: StreamEvent) {
-    const item = bus.publish(chatId, event);
-    void writer.record(chatId, event, item.seq).catch(() => undefined);
+  function publish(chatId: string, event: StreamEvent, turn?: number) {
+    const item = bus.publish(chatId, event, turn);
+    void writer.record(chatId, event, item.seq, turn).catch(() => undefined);
   }
 
   async function openPty(chatId: string, cols: number, rows: number, held: Set<string>) {
@@ -872,7 +904,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
         needsResync: true,
         permission: settings.permission,
         env: process.env,
-        onEvent: (event) => publish(chatId, event),
+        onEvent: (event) => publish(chatId, event, runs.get(chatId)?.activeTurn ?? undefined),
       });
       await updateChat(home, chatId, {
         needsResync: false,
@@ -901,7 +933,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     server,
     close: async () => {
       for (const state of runs.values()) {
-        state.stopped = true;
+        state.cancelled = true;
         state.controller.abort();
       }
       await writer.flushAll();

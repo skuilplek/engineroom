@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { agentLabel, type AgentId, type ChatMeta, type GitIdentity, type ListedSession, type RepositoryEntry } from "@engineroom/protocol";
 import { getGitIdentity, saveGitIdentity } from "../api.ts";
 import { useReportError } from "../errors.tsx";
-import { buildGroups, message, modeTone, pinnedChats, relativeTime, strip, visibleProjectChats, workspaceLabel, type RepoGroup } from "../format.ts";
+import { activeChats, buildGroups, message, modeTone, pinnedChats, relativeTime, strip, visibleProjectChats, workspaceLabel, type RepoGroup } from "../format.ts";
 import { IconAlert, IconBook, IconChevron, IconFolder, IconFullscreen, IconGear, IconPanelLeft, IconPin, IconPlus, IconSignOut, IconSliders } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 import { readCollapsedProjects, writeCollapsedProjects } from "./collapsedProjects.ts";
@@ -67,6 +67,7 @@ export function Sidebar({
   const groups = buildGroups(chats, repos, home, query);
   const archivedGroups = buildGroups(chats, repos, home, query, true);
   const pinned = pinnedChats(chats, repos, home, query);
+  const active = activeChats(chats, repos, home, query);
   const appName = session.appName.trim() || "AgentWrapper";
   const visibleChats = session.visibleChats ?? 5;
   const searching = query.trim() !== "";
@@ -163,6 +164,22 @@ export function Sidebar({
           {session.projectCreate && <NewProject onCreate={onCreateProject} />}
           <p className="section-label">Conversations</p>
           <div className="tree">
+            {active.length > 0 && (
+              <div className="active-chats">
+                <p className="section-label">Active</p>
+                {active.map((chat) => (
+                  <ChatLine
+                    key={chat.id}
+                    chat={chat}
+                    active={view === "chat" && chat.id === activeId}
+                    project={workspaceLabel(chat.workspace, home, repos)}
+                    pinned={false}
+                    onOpen={onOpen}
+                    onPin={onPin}
+                  />
+                ))}
+              </div>
+            )}
             {pinned.length > 0 && (
               <div className="pinned-chats">
                 {pinned.map((chat) => (
@@ -609,6 +626,10 @@ function Group({
 }) {
   const selected = view === "start" && strip(target) === strip(group.path);
   const { shown, older } = visibleProjectChats(group.chats, limit, view === "chat" ? activeId : null, { expanded, uncapped: searching });
+  const rows = collapsed
+    ? shown.filter((chat) => chat.running === true || chat.waiting === true || (view === "chat" && chat.id === activeId))
+    : shown;
+  const marked = group.chats.some((chat) => chat.running === true || chat.waiting === true);
   return (
     <div>
       <div className={selected ? "repo-line active" : "repo-line"}>
@@ -626,6 +647,7 @@ function Group({
           <button className="repo-select" type="button" onClick={() => onNew(group.path)}>
             <span className="repo-icon" aria-hidden="true"><IconFolder open={!collapsed} /></span>
             <span className="repo-name" title={group.label}>{group.label}</span>
+            {marked && <span className="dot repo-dot" aria-label="Active chats" />}
           </button>
         ) : (
           <div className="repo-select">
@@ -639,7 +661,7 @@ function Group({
           </button>
         )}
       </div>
-      {!collapsed && shown.map((chat) => (
+      {rows.map((chat) => (
         <ChatLine
           key={chat.id}
           chat={chat}
@@ -701,6 +723,7 @@ function ChatLine({
 }
 
 function chatDotClass(chat: ChatMeta): string {
+  if (chat.waiting) return "dot dot-waiting";
   const tone = modeTone(chat.mode);
   if (tone) return chat.running ? "dot dot-live" : "dot";
   return chat.running ? "dot" : "dot dot-idle";

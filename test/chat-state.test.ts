@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ChatMeta } from "@engineroom/protocol";
 import { mapUpdate } from "../apps/runner/src/acp/map.ts";
 import { applyEvent, applySnapshot, emptyLive } from "../apps/web/src/chat/state.ts";
+import { groupTranscript } from "../apps/web/src/chat/group.ts";
 
 const chat: ChatMeta = {
   id: "chat",
@@ -44,6 +45,46 @@ test("a late snapshot keeps agent text that already arrived", () => {
   });
   assert.equal(live.running, false);
   assert.equal(live.entries.some((entry) => entry.kind === "text" && entry.text === "answer"), true);
+});
+
+test("a snapshot restores a pending permission, and a live event keeps a newer one", () => {
+  const permission = {
+    requestId: "req-1",
+    title: "Run command",
+    options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+  };
+  const restored = applySnapshot(emptyLive(chat), {
+    transcript: [],
+    seq: 1,
+    running: true,
+    chat,
+    permission,
+  });
+  assert.deepEqual(restored.permission, permission);
+
+  const live = applyEvent(emptyLive(chat), { type: "permission_request", ...permission }, 2);
+  const late = applySnapshot(live, {
+    transcript: [],
+    seq: 1,
+    running: true,
+    chat,
+    permission: { ...permission, requestId: "old" },
+  });
+  assert.equal(late.permission?.requestId, "req-1");
+});
+
+test("transcript turn ids keep cancelled and realignment text apart", () => {
+  const blocks = groupTranscript([
+    { kind: "text", text: "old", at: "", seq: 1, turn: 1 },
+    { kind: "text", text: "late", at: "", seq: 2, turn: 1 },
+    { kind: "user", text: "again", at: "", seq: 3, turn: 2 },
+    { kind: "text", text: "new", at: "", seq: 4, turn: 2 },
+  ]);
+  assert.deepEqual(blocks, [
+    { kind: "text", role: "assistant", text: "oldlate", turn: 1 },
+    { kind: "text", role: "user", text: "again", turn: 2 },
+    { kind: "text", role: "assistant", text: "new", turn: 2 },
+  ]);
 });
 
 test("tool updates keep nested result text and file locations", () => {

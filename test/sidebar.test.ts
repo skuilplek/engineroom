@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMeta, RepositoryEntry } from "@engineroom/protocol";
-import { buildGroups, modeTone, pinnedChats, visibleProjectChats } from "../apps/web/src/format.ts";
+import { activeChats, buildGroups, modeTone, pinnedChats, visibleProjectChats } from "../apps/web/src/format.ts";
 
 function chat(workspace: string, title: string): ChatMeta {
   return {
@@ -112,6 +112,33 @@ test("visibleProjectChats shows the last active chats in created order", () => {
   const searching = visibleProjectChats(chats, 2, null, { expanded: false, uncapped: true });
   assert.deepEqual(searching.shown.map((item) => item.id), ["open", "fourth", "third", "second", "first"]);
   assert.equal(searching.older, 0);
+});
+
+test("activeChats keeps running and waiting chats across projects", () => {
+  const home = "/home/serveradmin";
+  const repos: RepositoryEntry[] = [
+    { path: "/home/serveradmin/Sites/internet", name: "internet", enabled: true, archived: false },
+    { path: "/home/serveradmin/Sites/old", name: "old", enabled: true, archived: true },
+  ];
+  const chats: ChatMeta[] = [
+    { ...dated("running", "2026-10-01T00:00:00.000Z", "2026-10-18T05:00:00.000Z"), running: true },
+    { ...dated("waiting", "2026-10-02T00:00:00.000Z", "2026-10-18T04:00:00.000Z"), waiting: true, workspace: "/home/serveradmin/Sites/old" },
+    { ...dated("pinned", "2026-10-03T00:00:00.000Z", "2026-10-18T06:00:00.000Z"), running: true, pinned: true },
+    dated("idle", "2026-10-04T00:00:00.000Z", "2026-10-18T03:00:00.000Z"),
+  ];
+  assert.deepEqual(activeChats(chats, repos, home).map((chat) => chat.id), ["running", "waiting"]);
+  assert.deepEqual(activeChats(chats, repos, home, "waiting").map((chat) => chat.id), ["waiting"]);
+});
+
+test("visibleProjectChats keeps running chats even outside the limit", () => {
+  const chats = [
+    { ...dated("first", "2026-10-01T00:00:00.000Z", "2026-10-18T05:00:00.000Z"), running: true },
+    dated("second", "2026-10-02T00:00:00.000Z", "2026-10-18T04:00:00.000Z"),
+    dated("third", "2026-10-03T00:00:00.000Z", "2026-10-18T03:00:00.000Z"),
+    dated("fourth", "2026-10-04T00:00:00.000Z", "2026-10-18T02:00:00.000Z"),
+  ];
+  const collapsed = visibleProjectChats(chats, 1, null, { expanded: false, uncapped: false });
+  assert.equal(collapsed.shown.some((chat) => chat.id === "first"), true);
 });
 
 test("modeTone recognizes plan and ask", () => {

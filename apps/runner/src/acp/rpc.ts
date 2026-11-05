@@ -45,11 +45,19 @@ export class JsonRpc {
   }
 
   respond(id: number, result: unknown) {
-    this.send({ jsonrpc: "2.0", id, result });
+    try {
+      this.send({ jsonrpc: "2.0", id, result });
+    } catch {
+      /* the process closed before the reply could be written */
+    }
   }
 
   fail(id: number, message: string) {
-    this.send({ jsonrpc: "2.0", id, error: { code: -32000, message } });
+    try {
+      this.send({ jsonrpc: "2.0", id, error: { code: -32000, message } });
+    } catch {
+      /* the process closed before the error could be written */
+    }
   }
 
   private send(message: unknown) {

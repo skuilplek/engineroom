@@ -34,6 +34,18 @@ interface LiveTerminal {
   exit: Promise<{ exitCode: number }>;
 }
 
+export interface PendingPermission {
+  requestId: string;
+  title?: string;
+  options: PermissionOption[];
+}
+
+interface PermissionWaiter {
+  resolve: (optionId: string) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 export class AcpSession {
   readonly id: string;
   sessionId: string | null = null;
@@ -41,11 +53,15 @@ export class AcpSession {
   models: { currentModelId: string; availableModels: { modelId: string; name: string }[] } | null = null;
   acceptsImages = false;
   alive = true;
+  pendingPermission: PendingPermission | null = null;
   private rpc!: JsonRpc;
   private child!: ChildProcess;
   private suppress = false;
   private ignoreUser = false;
-  private permissions = new Map<string, (optionId: string) => void>();
+  private accepting = false;
+  private cancelled = false;
+  private onEvent: (event: StreamEvent) => void;
+  private permissions = new Map<string, PermissionWaiter>();
   private terminals = new Map<string, LiveTerminal>();
   private workspace = "";
 
@@ -53,6 +69,7 @@ export class AcpSession {
 
   constructor(start: AcpStart) {
     this.start = start;
+    this.onEvent = start.onEvent;
     this.id = randomUUID();
   }
 
@@ -122,9 +139,16 @@ export class AcpSession {
     return this.sessionId;
   }
 
-  async prompt(blocks: AgentContentBlock[], signal: AbortSignal): Promise<{ stopReason?: string }> {
+  async prompt(
+    blocks: AgentContentBlock[],
+    signal: AbortSignal,
+    onEvent: (event: StreamEvent) => void,
+  ): Promise<{ stopReason?: string }> {
     if (!this.sessionId) throw new Error("session is not open");
+    this.onEvent = onEvent;
     const onAbort = () => this.cancel();
+    this.accepting = true;
+    this.cancelled = false;
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
     this.ignoreUser = true;
@@ -133,16 +157,19 @@ export class AcpSession {
         sessionId: this.sessionId,
         prompt: blocks,
       })) as { stopReason?: string };
-      this.start.onEvent({ type: "turn_end", stopReason: result.stopReason });
-      this.start.onEvent({ type: "done", agentSessionId: this.sessionId });
+      this.onEvent({ type: "turn_end", stopReason: result.stopReason });
+      this.onEvent({ type: "done", agentSessionId: this.sessionId });
       return result;
     } finally {
+      this.accepting = false;
       this.ignoreUser = false;
       signal.removeEventListener("abort", onAbort);
     }
   }
 
   cancel() {
+    this.accepting = false;
+    this.cancelled = true;
     if (!this.sessionId || !this.alive) return;
     try {
       this.rpc.notify("session/cancel", { sessionId: this.sessionId });
@@ -152,11 +179,13 @@ export class AcpSession {
   }
 
   respond(requestId: string, optionId: string): boolean {
-    const resolve = this.permissions.get(requestId);
-    if (!resolve) return false;
+    const waiter = this.permissions.get(requestId);
+    if (!waiter) return false;
     this.permissions.delete(requestId);
-    resolve(optionId);
-    this.start.onEvent({ type: "permission_resolved", requestId, optionId });
+    clearTimeout(waiter.timer);
+    if (this.pendingPermission?.requestId === requestId) this.pendingPermission = null;
+    waiter.resolve(optionId);
+    this.onEvent({ type: "permission_resolved", requestId, optionId });
     return true;
   }
 
@@ -164,7 +193,7 @@ export class AcpSession {
     if (!this.sessionId) return;
     await rpcTimeout(this.rpc.request("session/set_mode", { sessionId: this.sessionId, modeId }));
     if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
-    this.start.onEvent({ type: "mode", modeId });
+    this.onEvent({ type: "mode", modeId });
   }
 
   async setModel(modelId: string) {
@@ -175,6 +204,9 @@ export class AcpSession {
 
   async stop() {
     this.alive = false;
+    this.accepting = false;
+    this.cancelled = true;
+    this.rejectPermissions(new Error("session stopped"));
     await Promise.all([...this.terminals.values()].map((terminal) => stopChild(terminal.child)));
     this.terminals.clear();
     await stopChild(this.child);
@@ -182,6 +214,7 @@ export class AcpSession {
 
   private note(method: string, params: unknown) {
     if (method !== "session/update" || !params || typeof params !== "object") return;
+    if (!this.alive || !this.accepting || this.cancelled) return;
     const update = (params as { update?: unknown }).update;
     if (this.suppress) return;
     for (const event of mapUpdate(update)) {
@@ -190,7 +223,7 @@ export class AcpSession {
         if (this.modes?.currentModeId === event.modeId) continue;
         if (this.modes) this.modes = { ...this.modes, currentModeId: event.modeId };
       }
-      this.start.onEvent(event);
+      this.onEvent(event);
     }
   }
 
@@ -206,6 +239,7 @@ export class AcpSession {
   }
 
   private async permission(params: unknown): Promise<unknown> {
+    if (!this.accepting || this.cancelled) return { outcome: { outcome: "cancelled" } };
     const body = (params ?? {}) as { toolCall?: { toolCallId?: string; title?: string; kind?: string }; options?: PermissionOption[] };
     const options = Array.isArray(body.options) ? body.options.filter((item) => item && item.optionId) : [];
     const allow = options.find((item) => item.kind === "allow_once" || item.kind === "allow_always") ?? options[0];
@@ -216,25 +250,43 @@ export class AcpSession {
       return { outcome: { outcome: "selected", optionId: allow.optionId } };
     }
     const requestId = randomUUID();
-    this.start.onEvent({
+    const pending: PendingPermission = {
+      requestId,
+      title: body.toolCall?.title,
+      options: options.map((item) => ({ optionId: item.optionId, name: item.name || item.optionId, kind: item.kind || "allow_once" })),
+    };
+    this.pendingPermission = pending;
+    this.onEvent({
       type: "permission_request",
       requestId,
       toolCallId: body.toolCall?.toolCallId,
-      title: body.toolCall?.title,
-      options: options.map((item) => ({ optionId: item.optionId, name: item.name || item.optionId, kind: item.kind || "allow_once" })),
+      title: pending.title,
+      options: pending.options,
     });
     const optionId = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.permissions.delete(requestId);
+        if (this.pendingPermission?.requestId === requestId) this.pendingPermission = null;
         reject(new Error("permission timed out"));
       }, 120_000);
       timer.unref?.();
-      this.permissions.set(requestId, (selected) => {
-        clearTimeout(timer);
-        resolve(selected);
+      this.permissions.set(requestId, {
+        resolve: (selected) => resolve(selected),
+        reject,
+        timer,
       });
     });
+    if (this.pendingPermission?.requestId === requestId) this.pendingPermission = null;
     return { outcome: { outcome: "selected", optionId } };
+  }
+
+  private rejectPermissions(error: Error) {
+    for (const waiter of this.permissions.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    this.permissions.clear();
+    this.pendingPermission = null;
   }
 
   private async readFile(params: unknown): Promise<unknown> {
@@ -267,7 +319,7 @@ export class AcpSession {
     const push = (chunk: Buffer) => {
       const data = chunk.toString("utf8");
       record.output = (record.output + data).slice(-64_000);
-      this.start.onEvent({ type: "terminal_output", terminalId: id, data });
+      this.onEvent({ type: "terminal_output", terminalId: id, data });
     };
     child.stdout?.on("data", push);
     child.stderr?.on("data", push);

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { isThemeId, type ChatMeta, type PromptAttachment, type RepositoryEntry } from "@engineroom/protocol";
+import { isThemeId, type ChatMeta, type RepositoryEntry } from "@engineroom/protocol";
 import { createRepository, deleteRepository, listChats, listRepositories, login, logout, me, setRepositoryArchived, type Session } from "./api.ts";
 import { armSessionExpiry, onSessionExpired } from "./sessionExpired.ts";
 import { ChatView } from "./chat/ChatView.tsx";
 import { HomeView } from "./chat/HomeView.tsx";
-import { forgetLastChat, pickLastChat, readLastChat, writeLastChat } from "./chat/lastChat.ts";
+import { forgetChat, pickLastChat, readLastChat, readLastChatFor, writeLastChatFor } from "./chat/lastChat.ts";
+import { clearCachedLive, forgetCachedLive } from "./chat/liveCache.ts";
+import { OpeningQueue } from "./chat/openings.ts";
 import { clearProjectDownload, saveProjectDownload, useProjectDownload } from "./chat/projectDownload.ts";
 import { StartView } from "./chat/StartView.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
@@ -265,8 +267,7 @@ function Shell({
   }, [navOpen]);
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [fileOpenRequest, setFileOpenRequest] = useState<{ id: number; path: string } | null>(null);
-  const openingRef = useRef<{ id: string; prompt: string; attachments: PromptAttachment[] } | null>(null);
-  const consumedRef = useRef<string | null>(null);
+  const openingsRef = useRef(new OpeningQueue());
   const restoredRef = useRef(false);
   const choseRef = useRef(false);
   const deliveredDownload = useRef<string | null>(null);
@@ -332,16 +333,10 @@ function Shell({
     listRepositories().then(setRepos).catch(() => undefined);
   }, []);
 
-  const claimOpening = useCallback((id: string): { prompt: string; attachments: PromptAttachment[] } | null => {
-    const pending = openingRef.current;
-    if (!pending || pending.id !== id || consumedRef.current === id) return null;
-    consumedRef.current = id;
-    return { prompt: pending.prompt, attachments: pending.attachments };
-  }, []);
+  const claimOpening = useCallback((id: string) => openingsRef.current.claim(id), []);
 
   const showChat = useCallback((chat: ChatMeta, knownRepos: RepositoryEntry[]) => {
-    openingRef.current = null;
-    writeLastChat(usernameRef.current, chat.id);
+    writeLastChatFor(usernameRef.current, chat.workspace, chat.id);
     setActiveId(chat.id);
     setView("chat");
     const key = strip(chat.workspace);
@@ -362,7 +357,7 @@ function Shell({
       showChat(chat, nextRepos);
       return;
     }
-    if (stored) forgetLastChat(usernameRef.current);
+    if (stored) forgetChat(usernameRef.current, stored);
   }, [showChat]);
 
   useEffect(() => {
@@ -397,6 +392,8 @@ function Shell({
   }, [repos, session.home, target]);
 
   const selectedRepo = repos.find((repo) => strip(repo.path) === strip(target));
+  const lastChatId = selectedRepo ? readLastChatFor(session.username, selectedRepo.path) : null;
+  const lastChat = lastChatId ? chats.find((chat) => chat.id === lastChatId) : undefined;
   const downloadJob = useProjectDownload();
   const onDownloadPage = Boolean(
     downloadJob && view === "start" && selectedRepo && strip(downloadJob.workspace) === strip(selectedRepo.path),
@@ -470,7 +467,11 @@ function Shell({
   }
 
   function leaveMissingChat() {
-    forgetLastChat(usernameRef.current);
+    if (activeId) {
+      openingsRef.current.forget(activeId);
+      forgetCachedLive(usernameRef.current, activeId);
+    }
+    forgetChat(usernameRef.current, activeId);
     setActiveId(null);
     setTarget(homeRef.current);
     setView("start");
@@ -489,7 +490,9 @@ function Shell({
     setChats(nextChats);
     setRepos(nextRepos);
     choseRef.current = true;
-    forgetLastChat(session.username);
+    openingsRef.current.forgetWorkspace(target);
+    clearCachedLive(session.username);
+    forgetChat(session.username, activeId);
     setActiveId(null);
     setTarget(session.home);
     setView("start");
@@ -567,6 +570,7 @@ function Shell({
         onLogout={() => {
           stopAgentSocket();
           clearProjectDownload();
+          clearCachedLive(session.username);
           logout().finally(onLogout);
         }}
         onCreateProject={createProject}
@@ -672,13 +676,14 @@ function Shell({
             onDelete={removeProject}
             onReposChanged={refreshRepos}
             onBranchChanged={bumpFilesRefresh}
+            lastChat={lastChat}
+            onResume={openChat}
             onStarted={(chat, prompt, attachments) => {
               choseRef.current = true;
               setNavOpen(false);
               remember(chat);
-              openingRef.current = { id: chat.id, prompt, attachments };
-              consumedRef.current = null;
-              writeLastChat(session.username, chat.id);
+              openingsRef.current.set(chat.id, { prompt, attachments, workspace: chat.workspace });
+              writeLastChatFor(session.username, chat.workspace, chat.id);
               setActiveId(chat.id);
               setView("chat");
             }}

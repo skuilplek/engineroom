@@ -51,6 +51,7 @@ export function applySnapshot(state: ChatLive, snapshot: {
   chat: ChatMeta;
   modes?: { currentModeId: string; availableModes: AgentMode[] } | null;
   models?: { currentModelId: string; availableModels: AgentModel[] } | null;
+  permission?: LivePermission | null;
   queue?: QueuedPrompt[];
   queueSeq?: number;
 }): ChatLive {
@@ -71,7 +72,7 @@ export function applySnapshot(state: ChatLive, snapshot: {
     model: snapshot.models?.currentModelId || snapshot.chat.model || state.model,
     modes: snapshot.modes?.availableModes || state.modes,
     models: snapshot.models?.availableModels || state.models,
-    permission: liveAhead ? state.permission : null,
+    permission: liveAhead ? state.permission : (snapshot.permission ?? null),
     queue: liveAhead ? state.queue : (snapshot.queue ?? []),
     queueSeq: liveAhead ? state.queueSeq : (snapshot.queueSeq ?? 0),
     shell: shellFrom(entries),
@@ -79,15 +80,17 @@ export function applySnapshot(state: ChatLive, snapshot: {
   };
 }
 
-export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): ChatLive {
+export function applyEvent(state: ChatLive, event: StreamEvent, seq: number, turn?: number): ChatLive {
   if (seq <= state.seq) return state;
   const next = { ...state, seq };
+  const turnTag = turn == null ? {} : { turn };
   if (event.type === "user_message") {
     next.entries = [...state.entries, {
       kind: "user",
       text: event.text,
       at: stamp(),
       seq,
+      ...turnTag,
       ...(event.attachments?.length ? { attachments: event.attachments } : {}),
     }];
     const queuedAt = state.queue.findIndex((item) => item.text === event.text);
@@ -95,11 +98,11 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
     return next;
   }
   if (event.type === "text_delta") {
-    next.entries = [...state.entries, { kind: "text", text: event.text, at: stamp(), seq }];
+    next.entries = [...state.entries, { kind: "text", text: event.text, at: stamp(), seq, ...turnTag }];
     return next;
   }
   if (event.type === "thinking") {
-    next.entries = [...state.entries, { kind: "thinking", text: event.text, at: stamp(), seq }];
+    next.entries = [...state.entries, { kind: "thinking", text: event.text, at: stamp(), seq, ...turnTag }];
     return next;
   }
   if (event.type === "tool") {
@@ -115,6 +118,7 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
       content: event.content,
       at: stamp(),
       seq,
+      ...turnTag,
     }];
     if (event.output && (event.toolKind === "execute" || event.toolKind === "shell")) next.shell = event.output;
     return next;
@@ -124,7 +128,7 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
     return next;
   }
   if (event.type === "plan") {
-    next.entries = [...state.entries, { kind: "plan", entries: event.entries, at: stamp(), seq }];
+    next.entries = [...state.entries, { kind: "plan", entries: event.entries, at: stamp(), seq, ...turnTag }];
     return next;
   }
   if (event.type === "permission_request") {
@@ -163,15 +167,17 @@ export function applyEvent(state: ChatLive, event: StreamEvent, seq: number): Ch
   }
   if (event.type === "turn_end" || event.type === "done") {
     next.running = false;
+    next.permission = null;
     return next;
   }
   if (event.type === "error") {
-    next.entries = [...state.entries, { kind: "error", text: event.text, at: stamp(), seq }];
+    next.entries = [...state.entries, { kind: "error", text: event.text, at: stamp(), seq, ...turnTag }];
     next.running = false;
+    next.permission = null;
     return next;
   }
   if (event.type === "status") {
-    next.entries = [...state.entries, { kind: "status", text: event.text, at: stamp(), seq }];
+    next.entries = [...state.entries, { kind: "status", text: event.text, at: stamp(), seq, ...turnTag }];
   }
   return next;
 }
