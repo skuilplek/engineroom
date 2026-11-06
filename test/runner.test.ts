@@ -678,9 +678,21 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
       /file not found/,
     );
 
-    await deleteRepositoryEntry(home, repo, "src/components");
+    // Renaming a folder carries everything inside it to the new path.
+    const movedFolder = await renameRepositoryEntry(home, repo, "src/components", "src/ui");
+    assert.deepEqual(movedFolder, { path: "src/components", newPath: "src/ui" });
+    const movedChild = await readRepositoryFile(home, repo, "src/ui/PrimaryButton.tsx");
+    assert.equal(movedChild.content, "export const Button = () => null;\n");
+    await assert.rejects(() => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"), /file not found/);
+
+    // A folder can also be moved under a folder that does not exist yet.
+    const nestedFolder = await renameRepositoryEntry(home, repo, "src/ui", "src/lib/ui");
+    assert.equal(nestedFolder.newPath, "src/lib/ui");
+    assert.equal((await readRepositoryFile(home, repo, "src/lib/ui/PrimaryButton.tsx")).content, "export const Button = () => null;\n");
+
+    await deleteRepositoryEntry(home, repo, "src/lib/ui");
     await assert.rejects(
-      () => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"),
+      () => readRepositoryFile(home, repo, "src/lib/ui/PrimaryButton.tsx"),
       /file not found/,
     );
   } finally {

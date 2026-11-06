@@ -19,6 +19,14 @@ When the file editor is on:
 
 Expand across chat window widens the file pane over the chat. Restore split view puts the chat back beside it.
 
+### Rename
+
+Rename a file or folder with the rename button beside the filter, with F2 on the selected row, or by double-clicking the row.
+
+The field holds the name only, with the extension left out of the selection and the folder shown beside it, so renaming is a single edit. Type a path such as `src/example.ts` instead to move the entry. Enter saves and Escape cancels.
+
+Renaming a folder carries everything inside it, including the file that is open. Unsaved edits in that file are kept. A rename never overwrites an existing name: it says the path is taken and nothing changes, and an entry cannot be moved inside itself.
+
 ## Editor
 
 Choose a file to open it. Save writes it. Ctrl+S is the same action. Discard throws away edits that are not saved yet. A dot beside the path means the file has unsaved edits.
