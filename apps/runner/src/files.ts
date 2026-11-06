@@ -542,9 +542,15 @@ export async function renameRepositoryEntry(
     throw new Error("invalid file path");
   }
 
+  // A move into the entry's own subtree cannot work, and would leave behind the
+  // folder created for the destination before the rename failed.
+  if (dst.relPath.startsWith(`${src.relPath}/`)) {
+    throw new Error("cannot move an entry into itself");
+  }
+
   try {
     await lstat(dst.candidate);
-    throw new Error("destination already exists");
+    throw new Error("a file or folder already exists at that path");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -556,7 +562,14 @@ export async function renameRepositoryEntry(
     throw new Error("invalid file path");
   }
 
-  await rename(src.candidate, dst.candidate);
+  try {
+    await rename(src.candidate, dst.candidate);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new Error("file not found");
+    if (code === "EACCES" || code === "EPERM") throw new Error("permission denied");
+    throw error;
+  }
   return { path: src.relPath, newPath: dst.relPath };
 }
 

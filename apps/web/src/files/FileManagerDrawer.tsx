@@ -577,6 +577,7 @@ export function FileManagerDrawer({
     setRenamingPath(targetPath);
     // The name is edited on its own so a rename is one edit, not a path edit.
     setRenameInput(baseName(targetPath));
+    setCreateKind(null);
     setConfirmDeletePath(null);
     setError("");
   }

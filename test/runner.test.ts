@@ -644,6 +644,40 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
     const renamedRead = await readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx");
     assert.equal(renamedRead.content, "export const Button = () => null;\n");
 
+    // A rename never overwrites an existing entry, and the original stays put.
+    await assert.rejects(
+      () => renameRepositoryEntry(home, repo, "src/components/PrimaryButton.tsx", "src/components"),
+      /already exists at that path/,
+    );
+    await assert.rejects(
+      () => renameRepositoryEntry(home, repo, "src/components/PrimaryButton.tsx", "src/index.ts"),
+      /already exists at that path/,
+    );
+
+    // Moving an entry into its own subtree is refused before anything is created.
+    await assert.rejects(
+      () => renameRepositoryEntry(home, repo, "src/components", "src/components/nested"),
+      /cannot move an entry into itself/,
+    );
+    await assert.rejects(
+      () => renameRepositoryEntry(home, repo, "src/components/PrimaryButton.tsx", "src/components/PrimaryButton.tsx/inside.tsx"),
+      /cannot move an entry into itself/,
+    );
+    const stillThere = await readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx");
+    assert.equal(stillThere.content, "export const Button = () => null;\n");
+    const listing = await listRepositoryFiles(home, repo, {
+      showHidden: true,
+      showGitignored: true,
+      showGitDir: true,
+    });
+    assert.equal(listing.files.some((entry) => entry.path === "src/components/nested"), false);
+
+    // A missing source is reported, not thrown as a raw filesystem error.
+    await assert.rejects(
+      () => renameRepositoryEntry(home, repo, "src/components/Missing.tsx", "src/components/Other.tsx"),
+      /file not found/,
+    );
+
     await deleteRepositoryEntry(home, repo, "src/components");
     await assert.rejects(
       () => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"),
