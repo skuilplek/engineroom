@@ -26,6 +26,7 @@ import {
   IconUpload,
 } from "../icons.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
+import { isInsideRenamed, remapPath, remapPathSet } from "./renamePaths.ts";
 
 type DrawerTab = "files" | "changes" | "search";
 
@@ -119,6 +120,8 @@ export function FileManagerDrawer({
   const autoModeFor = useRef<string | null>(null);
   const seenOpen = useRef(0);
   const searchSeq = useRef(0);
+  // Unsaved edits that should survive a rename of the open file.
+  const carriedDraft = useRef<{ path: string; draft: string } | null>(null);
 
   const isDirty = Boolean(preview && !preview.binary && draftContent !== preview.content);
   const isEditable = Boolean(canEdit && !externalPath && !viewOnlyOverride && preview && !preview.binary && !preview.truncated);
@@ -209,17 +212,27 @@ export function FileManagerDrawer({
   }, [open, workspace, tab, searchQuery, searchCase, searchRegex, searchWholeWord, refreshKey]);
 
   useEffect(() => {
-    if (!open || !workspace || !selectedPath) return;
+    if (!open || !workspace || !selectedPath) {
+      carriedDraft.current = null;
+      return;
+    }
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewFailed(false);
     readRepoFile(workspace, selectedPath)
       .then((content) => {
         if (cancelled) return;
+        const carry = carriedDraft.current;
+        carriedDraft.current = null;
+        const keptDraft = carry && carry.path === selectedPath ? carry.draft : null;
         setPreview(content);
-        setDraftContent(content.content);
+        setDraftContent(keptDraft ?? content.content);
         const modeKey = `${selectedPath}:${tab}`;
-        if (forceCodePath.current === selectedPath) {
+        if (keptDraft != null) {
+          // A rename kept the editor on the same file: hold the current view mode.
+          autoModeFor.current = modeKey;
+          forceCodePath.current = null;
+        } else if (forceCodePath.current === selectedPath) {
           forceCodePath.current = null;
           autoModeFor.current = modeKey;
           setPreviewMode("code");
@@ -230,6 +243,7 @@ export function FileManagerDrawer({
       })
       .catch((err) => {
         if (cancelled) return;
+        carriedDraft.current = null;
         setPreview(null);
         setDraftContent("");
         setPreviewFailed(true);
@@ -566,14 +580,41 @@ export function FileManagerDrawer({
     }
     setActionBusy(true);
     setError("");
+    const from = renamingPath;
     try {
-      const res = await renameRepoEntry(workspace, renamingPath, trimmed);
-      setRenamingPath(null);
-      expandAncestors(res.newPath);
-      await loadFiles(workspace);
-      if (selectedPath === renamingPath) {
-        setSelectedPath(res.newPath);
+      const res = await renameRepoEntry(workspace, from, trimmed);
+      const to = res.newPath;
+      const openFileMoves = !externalPath && selectedPath != null && isInsideRenamed(selectedPath, from);
+      if (openFileMoves && isDirty) {
+        carriedDraft.current = { path: remapPath(selectedPath, from, to), draft: draftContent };
       }
+      if (forceCodePath.current) forceCodePath.current = remapPath(forceCodePath.current, from, to);
+      setRenamingPath(null);
+      expandAncestors(to);
+      await loadFiles(workspace);
+      // A renamed folder moves everything below it, so follow it everywhere.
+      setSelectedPath((current) => (current ? remapPath(current, from, to) : current));
+      setSelectedDir((current) => (current ? remapPath(current, from, to) : current));
+      setExpandedDirs((current) => remapPathSet(current, from, to));
+      setRevealTarget((current) =>
+        current ? { ...current, path: remapPath(current.path, from, to) } : current,
+      );
+      setSearchResult((current) =>
+        current
+          ? {
+              ...current,
+              matches: current.matches.map((match) => ({
+                ...match,
+                path: remapPath(match.path, from, to),
+              })),
+            }
+          : current,
+      );
+      setPreview((current) => {
+        if (!current || externalPath) return current;
+        const nextPath = remapPath(current.path, from, to);
+        return nextPath === current.path ? current : { ...current, path: nextPath };
+      });
     } catch (err) {
       setError(message(err));
     } finally {
