@@ -25,3 +25,45 @@ export function isInsideRenamed(path: string, from: string): boolean {
   if (!path || !from) return false;
   return path === from || path.startsWith(`${from}/`);
 }
+
+/** Folder that holds `path`, or "" for an entry at the repository root. */
+export function parentPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/** Last segment of `path`. */
+export function baseName(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? path : path.slice(slash + 1);
+}
+
+/**
+ * Turns what was typed in the rename field into the new repository path.
+ * A bare name stays in the same folder, so the common case is one edit;
+ * anything with a slash is a move to that path.
+ */
+export function renameTargetPath(fromPath: string, typed: string): string {
+  const cleaned = typed.trim().replace(/^\/+|\/+$/g, "");
+  if (!cleaned) return "";
+  if (cleaned.includes("/")) return cleaned;
+  const parent = parentPath(fromPath);
+  return parent ? `${parent}/${cleaned}` : cleaned;
+}
+
+/** Where the selection ends so the extension stays out of it: `Button|.tsx`. */
+export function stemEnd(name: string): number {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? dot : name.length;
+}
+
+/** Message for a name that cannot be used, or null when it is fine. */
+export function renamePathError(typed: string): string | null {
+  const cleaned = typed.trim().replace(/^\/+|\/+$/g, "");
+  if (!cleaned) return "Enter a name.";
+  if (cleaned.includes("\0")) return "That name is not allowed.";
+  if (cleaned.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return "That name is not allowed.";
+  }
+  return null;
+}

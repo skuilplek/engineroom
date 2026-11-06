@@ -3357,6 +3357,17 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.file-inline-prefix {
+  color: var(--soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
 .file-inline-form input {
   padding: 5px 8px;
   font-size: 12px;
