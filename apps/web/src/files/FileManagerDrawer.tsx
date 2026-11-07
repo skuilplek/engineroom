@@ -120,6 +120,7 @@ export function FileManagerDrawer({
   const [renameInput, setRenameInput] = useState("");
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [menu, setMenu] = useState<{ path: string; kind: "file" | "dir"; x: number; y: number } | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
   const [stagedOpen, setStagedOpen] = useState(true);
   const [unstagedOpen, setUnstagedOpen] = useState(true);
@@ -235,6 +236,15 @@ export function FileManagerDrawer({
         const carry = carriedDraft.current;
         carriedDraft.current = null;
         const keptDraft = carry && carry.path === selectedPath ? carry.draft : null;
+        if (keptDraft == null && content.path !== selectedPath) {
+          // The runner followed a rename: show the file under its current path.
+          expandAncestors(content.path);
+          setSelectedDir(parentPath(content.path));
+          setSelectedPath(content.path);
+          setRevealTarget((current) =>
+            current && current.path === selectedPath ? { ...current, path: content.path } : current,
+          );
+        }
         setPreview(content);
         setDraftContent(keptDraft ?? content.content);
         const modeKey = `${selectedPath}:${tab}`;
@@ -539,9 +549,9 @@ export function FileManagerDrawer({
     }
   }
 
-  function startCreate(kind: "file" | "dir") {
+  function startCreate(kind: "file" | "dir", targetDir: string = selectedDir) {
     setCreateKind(kind);
-    const prefix = selectedDir ? `${selectedDir}/` : "";
+    const prefix = targetDir ? `${targetDir}/` : "";
     setCreatePathInput(prefix);
     setError("");
   }
@@ -579,11 +589,14 @@ export function FileManagerDrawer({
     setRenameInput(baseName(targetPath));
     setCreateKind(null);
     setConfirmDeletePath(null);
+    setMenu(null);
     setError("");
+    // The field lives on the row, so make sure the row is on screen.
+    expandAncestors(targetPath);
   }
 
-  async function submitRename(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitRename(event?: React.FormEvent) {
+    event?.preventDefault();
     if (!workspace || !renamingPath || actionBusy) return;
     const problem = renamePathError(renameInput);
     if (problem) {
@@ -639,12 +652,27 @@ export function FileManagerDrawer({
     }
   }
 
-  async function submitDownload() {
-    if (!workspace || !selectedPath || !canDownload || actionBusy) return;
+  function openMenu(targetPath: string, kind: "file" | "dir", x: number, y: number) {
+    if (!canEdit && !canDownload && !canUpload) return;
+    if (kind === "dir") {
+      setSelectedPath(null);
+      setSelectedDir(targetPath);
+    } else if (!isDirty) {
+      setSelectedDir(parentPath(targetPath));
+      setSelectedPath(targetPath);
+    }
+    // Keep the menu inside the window when it opens near an edge.
+    const maxX = Math.max(8, window.innerWidth - 200);
+    const maxY = Math.max(8, window.innerHeight - 240);
+    setMenu({ path: targetPath, kind, x: Math.min(x, maxX), y: Math.min(y, maxY) });
+  }
+
+  async function submitDownload(target: string | null = selectedPath) {
+    if (!workspace || !target || !canDownload || actionBusy) return;
     setActionBusy(true);
     setError("");
     try {
-      const { blob, name } = await downloadRepoFile(workspace, selectedPath);
+      const { blob, name } = await downloadRepoFile(workspace, target);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -729,7 +757,33 @@ export function FileManagerDrawer({
     input.focus();
     // Keep the extension out of the selection so typing replaces the stem only.
     input.setSelectionRange(0, stemEnd(input.value));
-  }, [renamingPath]);
+  }, [renamingPath, tab]);
+
+  useEffect(() => {
+    if (!menu) return;
+    function close(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".file-menu")) return;
+      setMenu(null);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenu(null);
+      }
+    }
+    const dismiss = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menu]);
 
   if (!open) return null;
 
@@ -737,6 +791,10 @@ export function FileManagerDrawer({
   const activeTarget = selectedPath || selectedDir || null;
   const renamingParent = renamingPath ? parentPath(renamingPath) : "";
   const canStartRename = Boolean(canEdit && activeTarget && !createKind && !renamingPath && !confirmDeletePath);
+  // The field sits on the row when the row is on screen; otherwise the bar above the tree is used.
+  const inlineRename = Boolean(
+    renamingPath && tab === "files" && filteredFiles.some((entry) => entry.path === renamingPath),
+  );
   const viewingFile = Boolean(selectedPath || externalPath);
   const listCollapsed = narrow && viewingFile && !listOpen;
   const drawerClass = [
@@ -1045,7 +1103,7 @@ export function FileManagerDrawer({
         </form>
       )}
 
-      {renamingPath && canEdit && (
+      {renamingPath && canEdit && !inlineRename && (
         <form
           className="file-inline-form"
           onSubmit={(e) => void submitRename(e)}
@@ -1113,9 +1171,19 @@ export function FileManagerDrawer({
           role={tab === "search" ? "list" : "tree"}
           aria-label={tab === "files" ? "Repository file tree" : tab === "changes" ? "Changed files" : "Search results"}
           onKeyDown={(event) => {
+            if (event.target instanceof HTMLInputElement) return;
             if (event.key === "F2" && canStartRename && activeTarget) {
               event.preventDefault();
               startRename(activeTarget);
+              return;
+            }
+            if ((event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) && activeTarget) {
+              const row = (event.target as HTMLElement | null)?.closest(".file-row");
+              if (!row) return;
+              event.preventDefault();
+              const rect = row.getBoundingClientRect();
+              const kind = files.find((entry) => entry.path === activeTarget)?.kind ?? "file";
+              openMenu(activeTarget, kind, rect.left + 24, rect.bottom);
             }
           }}
         >
@@ -1190,6 +1258,13 @@ export function FileManagerDrawer({
                 onToggleDir={toggleDir}
                 onSelectFile={selectFile}
                 onRename={canEdit ? startRename : undefined}
+                onOpenMenu={openMenu}
+                renamingPath={inlineRename ? renamingPath : null}
+                renameValue={renameInput}
+                renameInputRef={renameInputRef}
+                onRenameChange={setRenameInput}
+                onRenameSubmit={() => void submitRename()}
+                onRenameCancel={() => setRenamingPath(null)}
               />
             ))}
 
@@ -1300,6 +1375,18 @@ export function FileManagerDrawer({
                     )}
                   </div>
                   <div className="file-preview-actions">
+                    {canEdit && !externalPath && selectedPath && (
+                      <button
+                        className="icon-btn"
+                        type="button"
+                        title={`Rename ${selectedPath}`}
+                        aria-label={`Rename ${selectedPath}`}
+                        disabled={actionBusy}
+                        onClick={() => startRename(selectedPath)}
+                      >
+                        <IconEdit />
+                      </button>
+                    )}
                     {canEdit && !externalPath && preview && !preview.binary && !preview.truncated && previewMode === "code" && (
                       <>
                         {isDirty && (
@@ -1411,6 +1498,113 @@ export function FileManagerDrawer({
           </section>
         )}
       </div>
+
+      {menu && (
+        <div
+          className="file-menu"
+          role="menu"
+          aria-label={`Actions for ${menu.path}`}
+          style={{ left: `${menu.x}px`, top: `${menu.y}px` }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          {canEdit && (
+            <button
+              className="file-menu-item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = menu.path;
+                setMenu(null);
+                startRename(target);
+              }}
+            >
+              <IconEdit />
+              <span>Rename</span>
+            </button>
+          )}
+          {menu.kind === "dir" && canEdit && (
+            <>
+              <button
+                className="file-menu-item"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = menu.path;
+                  setMenu(null);
+                  setSelectedDir(target);
+                  setSelectedPath(null);
+                  startCreate("file", target);
+                }}
+              >
+                <IconNewFile />
+                <span>New file</span>
+              </button>
+              <button
+                className="file-menu-item"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = menu.path;
+                  setMenu(null);
+                  setSelectedDir(target);
+                  setSelectedPath(null);
+                  startCreate("dir", target);
+                }}
+              >
+                <IconNewFolder />
+                <span>New folder</span>
+              </button>
+            </>
+          )}
+          {menu.kind === "dir" && canUpload && (
+            <button
+              className="file-menu-item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenu(null);
+                uploadInput.current?.click();
+              }}
+            >
+              <IconUpload />
+              <span>Upload here</span>
+            </button>
+          )}
+          {menu.kind === "file" && canDownload && (
+            <button
+              className="file-menu-item"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = menu.path;
+                setMenu(null);
+                void submitDownload(target);
+              }}
+            >
+              <IconDownload />
+              <span>Download</span>
+            </button>
+          )}
+          {canEdit && (
+            <>
+              <div className="file-menu-sep" />
+              <button
+                className="file-menu-item danger"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = menu.path;
+                  setMenu(null);
+                  setConfirmDeletePath(target);
+                }}
+              >
+                <IconTrash />
+                <span>Delete</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </aside>
   );
 }
@@ -1550,6 +1744,13 @@ function TreeItem({
   onToggleDir,
   onSelectFile,
   onRename,
+  onOpenMenu,
+  renamingPath,
+  renameValue,
+  renameInputRef,
+  onRenameChange,
+  onRenameSubmit,
+  onRenameCancel,
 }: {
   node: TreeNode;
   depth: number;
@@ -1560,9 +1761,56 @@ function TreeItem({
   onToggleDir: (path: string) => void;
   onSelectFile: (path: string) => void;
   onRename?: (path: string) => void;
+  onOpenMenu: (path: string, kind: "file" | "dir", x: number, y: number) => void;
+  renamingPath: string | null;
+  renameValue: string;
+  renameInputRef: React.RefObject<HTMLInputElement | null>;
+  onRenameChange: (value: string) => void;
+  onRenameSubmit: () => void;
+  onRenameCancel: () => void;
 }) {
   const isOpen = forceOpen || expanded.has(node.path);
   const indent = 8 + depth * 14;
+  const renaming = renamingPath === node.path;
+
+  const menuHandler = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenMenu(node.path, node.kind, event.clientX, event.clientY);
+  };
+
+  if (renaming) {
+    return (
+      <div
+        className="file-row renaming"
+        role="treeitem"
+        aria-selected
+        style={{ paddingLeft: `${indent + (node.kind === "file" ? 16 : 0)}px` }}
+      >
+        {node.kind === "dir" ? <IconFolder open={isOpen} /> : <IconFile />}
+        <input
+          ref={renameInputRef}
+          className="file-rename-input"
+          value={renameValue}
+          aria-label={`New name for ${node.path}`}
+          title="Type a name, or a path such as src/example.ts to move it"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => onRenameChange(event.target.value)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onRenameSubmit();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              onRenameCancel();
+            }
+          }}
+        />
+      </div>
+    );
+  }
 
   if (node.kind === "dir") {
     const dirSelected = !selectedPath && selectedDir === node.path;
@@ -1578,6 +1826,7 @@ function TreeItem({
             onToggleDir(node.path);
           }}
           onDoubleClick={onRename ? () => onRename(node.path) : undefined}
+          onContextMenu={menuHandler}
           title={onRename ? `${node.path} — double-click to rename` : node.path}
         >
           <IconChevron open={isOpen} />
@@ -1600,6 +1849,13 @@ function TreeItem({
               onToggleDir={onToggleDir}
               onSelectFile={onSelectFile}
               onRename={onRename}
+              onOpenMenu={onOpenMenu}
+              renamingPath={renamingPath}
+              renameValue={renameValue}
+              renameInputRef={renameInputRef}
+              onRenameChange={onRenameChange}
+              onRenameSubmit={onRenameSubmit}
+              onRenameCancel={onRenameCancel}
             />
           ))}
       </div>
@@ -1620,6 +1876,7 @@ function TreeItem({
         onSelectFile(node.path);
       }}
       onDoubleClick={onRename ? () => onRename(node.path) : undefined}
+      onContextMenu={menuHandler}
       title={onRename ? `${node.path} — double-click to rename` : node.path}
     >
       <IconFile />

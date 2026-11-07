@@ -3471,6 +3471,48 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   flex: none;
   color: var(--muted);
 }
+.file-row.renaming {
+  background: var(--active);
+  color: var(--ink);
+  cursor: default;
+}
+.file-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--field);
+  border-radius: 4px;
+}
+.file-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.file-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  color: var(--soft);
+  font-size: 12px;
+  text-align: left;
+  border-radius: 6px;
+}
+.file-menu-item:hover,
+.file-menu-item:focus-visible { background: var(--hover); color: var(--ink); }
+.file-menu-item.danger:hover { color: var(--danger); }
+.file-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;

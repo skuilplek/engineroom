@@ -28,6 +28,7 @@ import {
   type RepoSearchResult,
 } from "@engineroom/protocol";
 import { isVisionMime, type LoadedPromptAttachment } from "./prompt-content.ts";
+import { followRenames, listRenames, recordRename } from "./renames.ts";
 import { resolveChatWorkspace, resolveRepoWorkspace } from "./store.ts";
 import { isGitRepository } from "./workspace.ts";
 
@@ -279,7 +280,7 @@ export async function readRepositoryFile(
   visibility: FileVisibility = DEFAULT_FILE_VISIBILITY,
 ): Promise<RepoFileContent> {
   const repoReal = await resolveRepoWorkspace(home, workspace);
-  const relPath = assertRepoRelativePath(rawPath);
+  const relPath = await resolveRenamedEntry(home, repoReal, assertRepoRelativePath(rawPath));
   if (!isPathAllowedByVisibility(relPath, visibility)) {
     throw new Error("file is hidden by policy");
   }
@@ -394,6 +395,29 @@ export async function readHomeFile(home: string, rawPath: string): Promise<RepoF
     truncated: size > MAX_PREVIEW_BYTES,
     size,
   };
+}
+
+/**
+ * Follows recorded renames for a path that is gone, so an old link in a chat
+ * still opens the file at its new name. A path that exists is never redirected.
+ */
+async function resolveRenamedEntry(home: string, repoReal: string, relPath: string): Promise<string> {
+  if (await pathExists(repoReal, relPath)) return relPath;
+  const records = await listRenames(home, repoReal).catch(() => []);
+  for (const candidate of followRenames(records, relPath)) {
+    if (await pathExists(repoReal, candidate)) return candidate;
+  }
+  return relPath;
+}
+
+async function pathExists(repoReal: string, relPath: string): Promise<boolean> {
+  try {
+    await lstat(path.resolve(repoReal, relPath));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function isGitInternalPath(relPath: string): boolean {
@@ -564,6 +588,8 @@ export async function renameRepositoryEntry(
 
   try {
     await rename(src.candidate, dst.candidate);
+    // Best effort: a path written before the rename still opens the file.
+    await recordRename(home, repoReal, src.relPath, dst.relPath).catch(() => undefined);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") throw new Error("file not found");

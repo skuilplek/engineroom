@@ -683,7 +683,10 @@ test("repository file listing and reading enforce visibility, gitignore, and sym
     assert.deepEqual(movedFolder, { path: "src/components", newPath: "src/ui" });
     const movedChild = await readRepositoryFile(home, repo, "src/ui/PrimaryButton.tsx");
     assert.equal(movedChild.content, "export const Button = () => null;\n");
-    await assert.rejects(() => readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx"), /file not found/);
+    // The old path follows the folder rename, so a link written earlier still opens.
+    const followedChild = await readRepositoryFile(home, repo, "src/components/PrimaryButton.tsx");
+    assert.equal(followedChild.path, "src/ui/PrimaryButton.tsx");
+    assert.equal(followedChild.content, "export const Button = () => null;\n");
 
     // A folder can also be moved under a folder that does not exist yet.
     const nestedFolder = await renameRepositoryEntry(home, repo, "src/ui", "src/lib/ui");

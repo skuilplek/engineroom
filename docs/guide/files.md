@@ -14,6 +14,7 @@ When the file editor is on:
 
 - **New file** and **New folder** ask for a path, such as `src/example.ts`.
 - Select a file or folder, then the rename or delete button beside the filter. Confirm a delete before it runs.
+- Right-click a row for the same actions on that row: rename, new file or folder, upload, download, and delete.
 
 **Upload** adds files from your computer into the selected folder, or into the project root when no folder is selected. It is available when upload is on and the read-only file viewer is off. **Download** saves the selected file to your computer when download is on.
 
@@ -21,11 +22,13 @@ Expand across chat window widens the file pane over the chat. Restore split view
 
 ### Rename
 
-Rename a file or folder with the rename button beside the filter, with F2 on the selected row, or by double-clicking the row.
+Rename a file or folder with the rename button beside the filter, with the rename button on the open file, with F2 on the selected row, by double-clicking the row, or from the row's right-click menu.
 
-The field holds the name only, with the extension left out of the selection and the folder shown beside it, so renaming is a single edit. Type a path such as `src/example.ts` instead to move the entry. Enter saves and Escape cancels.
+The field appears on the row itself and holds the name only, with the extension left out of the selection, so renaming is a single edit. Type a path such as `src/example.ts` instead to move the entry. Enter saves and Escape cancels.
 
 Renaming a folder carries everything inside it, including the file that is open. Unsaved edits in that file are kept. A rename never overwrites an existing name: it says the path is taken and nothing changes, and an entry cannot be moved inside itself.
+
+Links written before a rename still work: a path that is gone follows the rename to the file's current name, including when a folder was renamed or the file was renamed more than once.
 
 ## Editor
 
