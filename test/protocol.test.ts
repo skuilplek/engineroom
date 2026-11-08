@@ -27,8 +27,10 @@ import {
   readShellCommands,
   parseAgentCatalog,
   parseAgentCommand,
+  MAX_PI_SYSTEM_PROMPT_BYTES,
   parseRunnerRequest,
   parseSettingsPatch,
+  parseSystemPromptText,
   setCursorVariantFast,
   parseTransferBase64,
   repoUploadPath,
@@ -342,6 +344,25 @@ test("policy options stay optional and narrow the offered catalog", () => {
   assert.throws(() => parseRunnerRequest({ id: "10", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["rm -rf /"] }));
   assert.throws(() => parseRunnerRequest({ id: "11", type: "put_cursor_commands", commands: ["bad!"] }));
   assert.throws(() => parseRunnerRequest({ id: "11b", type: "apply_harness_defaults", agent: "cursor", writeModel: true, commands: ["ls"], fast: "yes" }));
+  assert.deepEqual(parseRunnerRequest({ id: "12", type: "get_pi_system_prompt" }), { id: "12", type: "get_pi_system_prompt" });
+  const prompt = parseRunnerRequest({
+    id: "13",
+    type: "put_pi_system_prompt",
+    systemPrompt: "line one\r\nline two",
+    appendSystemPrompt: "",
+  });
+  assert.deepEqual(prompt, {
+    id: "13",
+    type: "put_pi_system_prompt",
+    systemPrompt: "line one\nline two",
+    appendSystemPrompt: "",
+  });
+  assert.deepEqual(parseSystemPromptText(undefined, "system prompt"), "");
+  assert.deepEqual(parseSystemPromptText(null, "system prompt"), "");
+  assert.throws(() => parseSystemPromptText(5, "system prompt"), /invalid system prompt/);
+  assert.throws(() => parseSystemPromptText("a\u0000b", "system prompt"), /invalid system prompt/);
+  assert.throws(() => parseSystemPromptText("a".repeat(MAX_PI_SYSTEM_PROMPT_BYTES + 1), "system prompt"), /too large/);
+  assert.equal(parseSystemPromptText("a".repeat(MAX_PI_SYSTEM_PROMPT_BYTES), "system prompt").length, MAX_PI_SYSTEM_PROMPT_BYTES);
 });
 
 test("harness defaults keep personal cursor config and force fast off", () => {

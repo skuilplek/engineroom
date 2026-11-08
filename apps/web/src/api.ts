@@ -780,6 +780,33 @@ export function saveCursorCommands(commands: string[]) {
   });
 }
 
+export interface PiSystemPrompt {
+  systemPrompt: string;
+  appendSystemPrompt: string;
+}
+
+export function getPiSystemPrompt() {
+  return api<PiSystemPrompt>("/api/pi-system-prompt");
+}
+
+export function savePiSystemPrompt(prompt: PiSystemPrompt) {
+  return api<PiSystemPrompt>("/api/pi-system-prompt", {
+    method: "PUT",
+    body: JSON.stringify(prompt),
+  });
+}
+
+export function getUserPiSystemPrompt(username: string) {
+  return api<PiSystemPrompt>(`/api/admin/users/${encodeURIComponent(username)}/pi-system-prompt`);
+}
+
+export function saveUserPiSystemPrompt(username: string, prompt: PiSystemPrompt) {
+  return api<PiSystemPrompt>(`/api/admin/users/${encodeURIComponent(username)}/pi-system-prompt`, {
+    method: "PUT",
+    body: JSON.stringify(prompt),
+  });
+}
+
 export function getUserCursorCommands(username: string) {
   return api<{ commands: string[] }>(`/api/admin/users/${encodeURIComponent(username)}/cursor-commands`);
 }

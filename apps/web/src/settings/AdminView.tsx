@@ -24,6 +24,7 @@ import { PackagesSection } from "./PackagesSection.tsx";
 import { SiteDocsSection } from "./SiteDocsSection.tsx";
 import { ServerConfig } from "./ServerConfig.tsx";
 import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
+import { PiSystemPromptFields, type PiSystemPromptDraft } from "./PiSystemPrompt.tsx";
 import {
   addAccount,
   addCatalog,
@@ -37,6 +38,7 @@ import {
   getUserChat,
   getUserCursorCommands,
   getUserGitIdentity,
+  getUserPiSystemPrompt,
   listAccounts,
   listAdminAgents,
   listCatalog,
@@ -51,6 +53,7 @@ import {
   saveSessionHours,
   saveUserCursorCommands,
   saveUserEnv,
+  saveUserPiSystemPrompt,
   saveUserGitIdentity,
   saveUserGrants,
   saveUserPolicy,
@@ -758,7 +761,7 @@ export function AdminView({
               <section className="agents-card">
                 <div className="agents-card-head">
                   <h2>Available agents</h2>
-                  <p className="muted">Offer an agent here, then allow it for each person. They can use it only while that offer is on and the command is installed on their account. The browser stays a page the agent drives; Browser address bar adds the address field, page clicks, and keys for people.</p>
+                  <p className="muted">Offer an agent here, then allow it for each person. They can use it only while that offer is on and the command is installed on their account. Browser address bar adds the address field, Back, and Forward for people; without it the address shows as plain text and only Reload is offered. Clicks, keys, and scrolling reach the page either way.</p>
                 </div>
                 <div className="agents-privileges">
                   <span className="eyebrow">Global tooling</span>
@@ -1774,6 +1777,7 @@ function PersonPanel({
   const [confirm, setConfirm] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [commands, setCommands] = useState<string | null>(null);
+  const [piPrompt, setPiPrompt] = useState<PiSystemPromptDraft | null>(null);
   const [profile, setProfile] = useState<{ home: string; uid: number; shell: string } | null>(null);
   const [lastActive, setLastActive] = useState<string | null | undefined>(undefined);
   const [reloadToken, setReloadToken] = useState(0);
@@ -1824,6 +1828,21 @@ function PersonPanel({
         }
       } else if (!cancel && generation === loadGeneration.current) {
         setCommands(null);
+      }
+      if (chosen.includes("pi")) {
+        try {
+          const listedPrompt = await getUserPiSystemPrompt(username);
+          if (!cancel && generation === loadGeneration.current) {
+            setPiPrompt({ systemPrompt: listedPrompt.systemPrompt, appendSystemPrompt: listedPrompt.appendSystemPrompt });
+          }
+        } catch (err) {
+          if (!cancel && generation === loadGeneration.current) {
+            setPiPrompt({ systemPrompt: "", appendSystemPrompt: "" });
+            onErrorRef.current(message(err));
+          }
+        }
+      } else if (!cancel && generation === loadGeneration.current) {
+        setPiPrompt(null);
       }
       const git = await gitPromise;
       if (cancel || generation !== loadGeneration.current) return;
@@ -1947,6 +1966,23 @@ function PersonPanel({
       const saved = await saveUserCursorCommands(username, commandLines(commands));
       setCommands(saved.commands.join("\n"));
       onNote("Allowed commands saved");
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  async function savePiPrompt(event: FormEvent) {
+    event.preventDefault();
+    if (piPrompt == null) return;
+    onBusy(true);
+    onNote("");
+    onError("");
+    try {
+      const saved = await saveUserPiSystemPrompt(username, piPrompt);
+      setPiPrompt({ systemPrompt: saved.systemPrompt, appendSystemPrompt: saved.appendSystemPrompt });
+      onNote("Pi instructions saved");
     } catch (err) {
       onError(message(err));
     } finally {
@@ -2232,6 +2268,19 @@ function PersonPanel({
                 />
                 <p className="person-terminal-foot">One command per line, such as ls or npm install. These are stored as Shell entries. Write paths already in the Cursor config stay.</p>
               </div>
+            </form>
+          )}
+
+          {piPrompt != null && allowed.includes("pi") && (
+            <form className="person-card" onSubmit={(event) => void savePiPrompt(event)}>
+              <header className="person-card-head person-card-head-row">
+                <div>
+                  <PersonHeading>Pi instructions</PersonHeading>
+                  <p className="muted">The system prompt Pi starts with for {username}. System prompt replaces Pi's own instructions and appending adds to them. Files are ~/.pi/agent/SYSTEM.md and APPEND_SYSTEM.md. Saving changes this person only.</p>
+                </div>
+                <button className="primary" type="submit" disabled={busy}>[ Save instructions ]</button>
+              </header>
+              <PiSystemPromptFields value={piPrompt} onChange={setPiPrompt} />
             </form>
           )}
 

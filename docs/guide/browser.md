@@ -2,15 +2,16 @@
 
 Browser, on a chat, shows the page the agent is using. It is available when an administrator has the browser on, your account has it on, and Obscura is installed for that account. It is not tied to a project.
 
-The pane is the agent's page. When the agent browses, the pane opens on that chat, and the picture follows what the agent opens. This is how the browser is meant to be used: the agent drives the page, and you watch it. Typing an address and clicking the page are extra, and an administrator turns them on with **Browser address bar** on the Agents tab.
+The pane is the agent's page. When the agent browses, the pane opens on that chat, and the picture follows what the agent opens. This is how the browser is meant to be used: the agent drives the page, and you watch it.
 
-With Browser address bar on:
+You can still take over the page. Click the picture, type, or scroll, and the page receives that input, whether or not an administrator has turned on the address bar.
 
-- The address bar accepts an http or https address. Go loads it. Back, Forward, and Reload move through the pages opened in this chat.
-- Click the picture, type, or scroll, and the page receives that input.
+An administrator can also add the address bar with **Browser address bar** on the Agents tab. With it on:
+
+- The address bar accepts an http or https address. Go loads it. Back and Forward move through the pages opened in this chat.
 - Pages you open and pages the agent opens share one history.
 
-With Browser address bar off, the defaults, the bar is hidden and the pane takes no input. The page still arrives, so you can follow the agent without taking over.
+With Browser address bar off, the defaults, there is no address field. The address is shown as plain text, not a field, so there is nothing to type into. Clicks, keys, and scrolling still reach the page. Reload stays in both cases, in case a page needs to be read again.
 
 Collapse browser closes it. It stays closed until you open it again or the agent uses the browser.
 

@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodeBrowserFrame, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodeBrowserFrame, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseSystemPromptText, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
@@ -87,6 +87,8 @@ interface RunnerCall {
   provider?: string;
   writeModel?: boolean;
   commands?: string[];
+  systemPrompt?: string;
+  appendSystemPrompt?: string;
   fast?: boolean;
   name?: string;
   email?: string;
@@ -716,6 +718,17 @@ export function createHub(options: HubOptions) {
         sendJson(res, 200, await call(target, { type: "put_cursor_commands", commands }));
         return;
       }
+      if (action === "pi-system-prompt" && req.method === "GET") {
+        await assertPiAllowed(target);
+        sendJson(res, 200, await call(target, { type: "get_pi_system_prompt" }));
+        return;
+      }
+      if (action === "pi-system-prompt" && req.method === "PUT") {
+        await assertPiAllowed(target);
+        const body = (await readJson(req)) as { systemPrompt?: unknown; appendSystemPrompt?: unknown };
+        sendJson(res, 200, await call(target, { type: "put_pi_system_prompt", ...promptPatch(body) }));
+        return;
+      }
       if (action === "policy" && req.method === "PUT") {
         const policy = restrictPolicy(parseUserPolicy(await readJson(req)), loadAgentOptions(agentOptionsFile));
         const flags = loadAgentFlags(agentsFile);
@@ -848,6 +861,17 @@ export function createHub(options: HubOptions) {
       const body = (await readJson(req)) as { commands?: unknown };
       const commands = parseShellCommands(body.commands);
       sendJson(res, 200, await call(user, { type: "put_cursor_commands", commands }));
+      return;
+    }
+    if (parts[1] === "pi-system-prompt" && parts.length === 2 && req.method === "GET") {
+      await assertPiAllowed(user);
+      sendJson(res, 200, await call(user, { type: "get_pi_system_prompt" }));
+      return;
+    }
+    if (parts[1] === "pi-system-prompt" && parts.length === 2 && req.method === "PUT") {
+      await assertPiAllowed(user);
+      const body = (await readJson(req)) as { systemPrompt?: unknown; appendSystemPrompt?: unknown };
+      sendJson(res, 200, await call(user, { type: "put_pi_system_prompt", ...promptPatch(body) }));
       return;
     }
     if (parts[1] === "git-identity" && parts.length === 2 && req.method === "GET") {
@@ -1414,9 +1438,10 @@ export function createHub(options: HubOptions) {
       }
     }
     if (command.type === "pty_open" && !(await loadAccess(user)).rawTerminal) throw new Error("terminal is not enabled");
-    // The pane shows the page the agent drives. Typing an address and clicking the
-    // page are only offered once an administrator turns those controls on.
-    if (isBrowserControl(command.type) && !loadBrowserControls(agentsFile)) {
+    // Clicking, typing, and scrolling the page are always on: the pane is where the
+    // page is, and watching it read-only is not what people ask for. Only the
+    // address bar waits for an administrator to turn it on.
+    if (isAddressBarControl(command.type) && !loadBrowserControls(agentsFile)) {
       throw new Error("browser controls are not enabled");
     }
     if (command.type.startsWith("browser_") && command.type !== "browser_available" && !(await loadAccess(user)).browser) {
@@ -1471,6 +1496,12 @@ export function createHub(options: HubOptions) {
     if (!loadAgentFlags(agentsFile).cursor) throw new Error("invalid agent");
     const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
     if (!policy.agents.includes("cursor")) throw new Error("invalid agent");
+  }
+
+  async function assertPiAllowed(user: LinuxUser) {
+    if (!loadAgentFlags(agentsFile).pi) throw new Error("invalid agent");
+    const policy = (await call(user, { type: "get_policy" })) as UserPolicy;
+    if (!policy.agents.includes("pi")) throw new Error("invalid agent");
   }
 
   async function applyHarnessDefaults(agent: "pi" | "cursor", username: string | null = null) {
@@ -1953,22 +1984,22 @@ function browserFrom(body: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
-const BROWSER_CONTROL_TYPES = new Set<string>([
+// Only the address bar is behind the browser address bar flag. Clicking, typing,
+// and scrolling the page are not here: they work over any page the pane shows.
+// Reload is not here either: it only re-reads the page the agent already opened,
+// and a page that failed to paint would otherwise be stuck until the agent
+// browsed again.
+const ADDRESS_BAR_CONTROL_TYPES = new Set<string>([
   "browser_navigate",
   "browser_back",
   "browser_forward",
-  "browser_reload",
-  "browser_click",
-  "browser_type",
-  "browser_key",
-  "browser_scroll",
   // Agents drive the page over the runner socket, not this path. A browser client
   // reaching browser_tool would be a second way to steer the page by hand.
   "browser_tool",
 ]);
 
-function isBrowserControl(type: string): boolean {
-  return BROWSER_CONTROL_TYPES.has(type);
+function isAddressBarControl(type: string): boolean {
+  return ADDRESS_BAR_CONTROL_TYPES.has(type);
 }
 
 function browserControlsFrom(body: unknown): boolean | undefined {
@@ -2095,6 +2126,13 @@ function noteFailure(key: string) {
     return;
   }
   entry.count += 1;
+}
+
+function promptPatch(body: { systemPrompt?: unknown; appendSystemPrompt?: unknown }) {
+  return {
+    systemPrompt: parseSystemPromptText(body.systemPrompt, "system prompt"),
+    appendSystemPrompt: parseSystemPromptText(body.appendSystemPrompt, "appended system prompt"),
+  };
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {

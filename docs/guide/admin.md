@@ -30,7 +30,7 @@ Available agents is the offer list. Turn an agent on here before you can allow i
 - Import CLI sessions
 - Repository file manager
 - Browser
-- Browser address bar (the address field and page input, off until you turn it on)
+- Browser address bar (the address field and Back and Forward, off until you turn it on; without it the address shows as text and Reload still works, and clicks, keys, and scrolling still reach the page)
 - File editor
 - File download
 - File upload
@@ -90,6 +90,8 @@ Repositories lists the catalog. Check the ones to clone into their folder.
 Appearance and terminal theme is their theme, command-block style, chats shown per project, wrap, and read-only file viewer.
 
 Cursor shell command whitelist, when they have Cursor, is the shell commands Cursor may run for them. Saving changes this person only. Apply to all users, or Apply to this user, on the Agents tab replaces this list when it includes them.
+
+Pi instructions, when they have Pi, is that person's system prompt. System prompt becomes `~/.pi/agent/SYSTEM.md`, which replaces Pi's own instructions, and Appended instructions becomes `~/.pi/agent/APPEND_SYSTEM.md`. Save instructions writes both files for this person only, and saving an empty box removes that file.
 
 Environment is values in their `~/.env` file. Add variable appends a row. Remove drops one. HOME, PATH, and loader variables are left alone when an agent starts. Save environment writes the file.
 

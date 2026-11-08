@@ -100,6 +100,42 @@ test("applying cursor defaults updates saved fast model variants", async () => {
   }
 });
 
+test("pi system prompt files are read and written per person", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "er-pi-prompt-"));
+  const sock = path.join(home, "runner.sock");
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({ home, socketPath: sock, drivers, peerCheck: () => undefined });
+  try {
+    const empty = await rpc(sock, { id: "a", type: "get_pi_system_prompt" });
+    assert.deepEqual(empty.result, { systemPrompt: "", appendSystemPrompt: "" });
+
+    await rpc(sock, {
+      id: "b",
+      type: "put_pi_system_prompt",
+      systemPrompt: "You are terse.\n",
+      appendSystemPrompt: "Answer in French.\n",
+    });
+    const systemFile = path.join(home, ".pi", "agent", "SYSTEM.md");
+    const appendFile = path.join(home, ".pi", "agent", "APPEND_SYSTEM.md");
+    assert.equal(await readFile(systemFile, "utf8"), "You are terse.\n");
+    assert.equal(await readFile(appendFile, "utf8"), "Answer in French.\n");
+    assert.equal((await stat(systemFile)).mode & 0o777, 0o600);
+    const read = await rpc(sock, { id: "c", type: "get_pi_system_prompt" });
+    assert.deepEqual(read.result, { systemPrompt: "You are terse.\n", appendSystemPrompt: "Answer in French.\n" });
+
+    const cleared = await rpc(sock, { id: "d", type: "put_pi_system_prompt", systemPrompt: "  ", appendSystemPrompt: "" });
+    assert.deepEqual(cleared.result, { systemPrompt: "", appendSystemPrompt: "" });
+    await assert.rejects(() => stat(systemFile), /ENOENT/);
+    await assert.rejects(() => stat(appendFile), /ENOENT/);
+  } finally {
+    await runner.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("pinning a chat keeps its updated time", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-pin-"));
   try {

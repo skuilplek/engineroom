@@ -208,7 +208,7 @@ function WhatsEnabled({ session }: { session: Session }) {
         <OptionRow
           label="Browser"
           on={session.browser}
-          detail={`The page a chat shares with the agent. It opens when the agent browses.${grantLine(session.browserOffered, session.browser)}${session.browserControls ? " The address bar and page controls are on." : " The agent drives the page; the address bar stays off."}`}
+          detail={`The page a chat shares with the agent. It opens when the agent browses.${grantLine(session.browserOffered, session.browser)}${session.browserControls ? " The address bar is on." : " The address bar stays off; clicks and keys still reach the page."}`}
         />
         <OptionRow
           label="File editor"

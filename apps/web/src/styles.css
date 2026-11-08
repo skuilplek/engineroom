@@ -3159,6 +3159,16 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   border-bottom: 1px solid var(--line);
 }
 .browser-bar input { flex: 1; min-width: 0; }
+.browser-address {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+.browser-address.empty { font-style: italic; }
 .browser-nav { padding: 6px 10px; }
 .browser-error { padding: 0 12px; }
 .browser-stage {
@@ -3174,18 +3184,12 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   object-fit: fill;
   cursor: pointer;
 }
-.browser-stage.passive img { cursor: default; }
 .browser-empty {
   margin: 0;
   padding: 24px;
   text-align: center;
   color: var(--muted);
   align-self: center;
-}
-.browser-hint {
-  margin: 0;
-  padding: 8px 12px;
-  border-top: 1px solid var(--line);
 }
 .file-drawer-head {
   display: flex;

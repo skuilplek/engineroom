@@ -2450,6 +2450,31 @@ test("harness defaults apply only within each person's agents and models", async
     assert.equal(aliceAfter.selectedModel.parameters.find((item) => item.id === "fast")?.value, "false");
     assert.deepEqual(aliceAfter.permissions.allow, ["Shell(echo)"]);
 
+    const emptyPrompt = await fetch(`${base}/api/pi-system-prompt`, { headers });
+    assert.equal(emptyPrompt.status, 200);
+    assert.deepEqual(await emptyPrompt.json(), { systemPrompt: "", appendSystemPrompt: "" });
+    const savedPrompt = await fetch(`${base}/api/pi-system-prompt`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ systemPrompt: "Be brief.\n", appendSystemPrompt: "Signed, Alice.\n" }),
+    });
+    assert.equal(savedPrompt.status, 200);
+    assert.deepEqual(await savedPrompt.json(), { systemPrompt: "Be brief.\n", appendSystemPrompt: "Signed, Alice.\n" });
+    assert.equal(await readFile(path.join(aliceHome, ".pi", "agent", "SYSTEM.md"), "utf8"), "Be brief.\n");
+    assert.equal(await readFile(path.join(aliceHome, ".pi", "agent", "APPEND_SYSTEM.md"), "utf8"), "Signed, Alice.\n");
+
+    const bobPrompt = await fetch(`${base}/api/admin/users/bob/pi-system-prompt`, { headers });
+    assert.equal(bobPrompt.status, 400);
+    await assert.rejects(() => readFile(path.join(bobHome, ".pi", "agent", "SYSTEM.md"), "utf8"));
+
+    const clearedPrompt = await fetch(`${base}/api/admin/users/alice/pi-system-prompt`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ systemPrompt: "", appendSystemPrompt: "" }),
+    });
+    assert.equal(clearedPrompt.status, 200);
+    await assert.rejects(() => readFile(path.join(aliceHome, ".pi", "agent", "SYSTEM.md"), "utf8"));
+
     const single = await fetch(`${base}/api/admin/agent-defaults`, {
       method: "POST",
       headers,
@@ -2800,6 +2825,19 @@ test("the browser address bar stays hidden until an administrator turns it on", 
 
     const refused = await command(cookie!, { type: "browser_navigate", chatId, url: "https://example.com/" });
     assert.match(String(refused.error), /browser controls are not enabled/);
+
+    // Clicking, typing, and scrolling are not behind the address bar flag: the pane
+    // takes input as soon as the browser itself is on. Obscura is not installed
+    // here, so the gate that answers is the browser one, not the controls one.
+    const typed = await command(cookie!, { type: "browser_type", chatId, text: "hello" });
+    assert.equal(/browser controls are not enabled/.test(String(typed.error)), false);
+    const clicked = await command(cookie!, { type: "browser_click", chatId, x: 4, y: 4 });
+    assert.equal(/browser controls are not enabled/.test(String(clicked.error)), false);
+
+    // Reload is the one control that stays: it re-reads the page the agent opened.
+    // Obscura is not installed here, so the gate that answers is the browser one.
+    const reload = await command(cookie!, { type: "browser_reload", chatId });
+    assert.equal(/browser controls are not enabled/.test(String(reload.error)), false);
 
     const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { browserControls?: boolean };
     assert.equal(stored.browserControls, undefined);

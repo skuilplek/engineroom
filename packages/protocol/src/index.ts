@@ -291,6 +291,9 @@ export interface RepoSearchResult {
 /** Largest file the file manager will download or upload. */
 export const MAX_TRANSFER_BYTES = 32 * 1024 * 1024;
 
+/** Pi reads SYSTEM.md and APPEND_SYSTEM.md from the agent directory. */
+export const MAX_PI_SYSTEM_PROMPT_BYTES = 64 * 1024;
+
 /** Files pasted or picked in the prompt box. */
 export const MAX_PROMPT_ATTACHMENTS = 8;
 export const MAX_PROMPT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -525,6 +528,8 @@ export type RunnerRequest =
   | { id: string; type: "apply_harness_defaults"; agent: "cursor"; writeModel: boolean; commands: string[]; fast: boolean }
   | { id: string; type: "get_cursor_commands" }
   | { id: string; type: "put_cursor_commands"; commands: string[] }
+  | { id: string; type: "get_pi_system_prompt" }
+  | { id: string; type: "put_pi_system_prompt"; systemPrompt: string; appendSystemPrompt: string }
   | { id: string; type: "put_agent_catalog"; agents: AgentDefinition[] }
   | { id: string; type: "list_extensions" }
   | { id: string; type: "install_extension"; source: string }
@@ -814,6 +819,7 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "get_env":
     case "get_access":
     case "get_cursor_commands":
+    case "get_pi_system_prompt":
       return { id: body.id, type: body.type };
     case "put_policy":
       return { id: body.id, type: "put_policy", policy: parseUserPolicy(body.policy) };
@@ -923,6 +929,13 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return parseHarnessDefaults(body);
     case "put_cursor_commands":
       return { id: body.id, type: "put_cursor_commands", commands: parseShellCommands(body.commands) };
+    case "put_pi_system_prompt":
+      return {
+        id: body.id,
+        type: "put_pi_system_prompt",
+        systemPrompt: parseSystemPromptText(body.systemPrompt, "system prompt"),
+        appendSystemPrompt: parseSystemPromptText(body.appendSystemPrompt, "appended system prompt"),
+      };
     case "put_agent_catalog":
       return { id: body.id, type: "put_agent_catalog", agents: parseAgentCatalog(body.agents) };
     case "list_extensions":
@@ -1785,6 +1798,16 @@ export const CURSOR_DEFAULT_PARAMETERS: { id: string; value: string }[] = [
 ];
 
 const SHELL_COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._+/-]*(?: [A-Za-z0-9][A-Za-z0-9._+/-]*)*$/;
+
+export function parseSystemPromptText(value: unknown, label: string): string {
+  if (value == null) return "";
+  if (typeof value !== "string") throw new Error(`invalid ${label}`);
+  if (value.includes("\0")) throw new Error(`invalid ${label}`);
+  if (new TextEncoder().encode(value).byteLength > MAX_PI_SYSTEM_PROMPT_BYTES) {
+    throw new Error(`${label} is too large`);
+  }
+  return value.replace(/\r\n/g, "\n");
+}
 
 export function parseShellCommands(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > 200) throw new Error("invalid commands");

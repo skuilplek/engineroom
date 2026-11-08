@@ -1,6 +1,6 @@
 # Customize
 
-Customize is in the account menu. Change the settings, then Save. A saved note confirms it. Cursor commands and packages save on their own buttons.
+Customize is in the account menu. Change the settings, then Save. A saved note confirms it. Cursor commands, Pi instructions, and packages save on their own buttons.
 
 ## Appearance
 
@@ -29,6 +29,15 @@ If Pi still needs installing, Set up Pi is at the top of this section.
 ## Cursor commands
 
 When Cursor is available, Cursor commands lists shell commands Cursor may run for you, one command per line, such as `ls` or `npm install`. Save commands stores the list. An administrator can replace this list from the Agents tab.
+
+## Pi instructions
+
+When Pi is available, Pi instructions is the text Pi starts every new chat with. It writes two files in `~/.pi/agent`:
+
+- **System prompt** becomes `SYSTEM.md`, which replaces Pi's own system prompt. Leave the box empty, or save it empty, to keep Pi's prompt.
+- **Appended instructions** becomes `APPEND_SYSTEM.md`, which is added after the system prompt.
+
+Save Pi instructions stores both files. An administrator can edit the same files for one person from the Users tab. Pi is started again for each prompt and reads these files then, so a save applies to your next prompt.
 
 ## Packages
 

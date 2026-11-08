@@ -104,6 +104,9 @@ tar -C "$root" --exclude .git --exclude .engineroom --exclude apps/web/dist -cf 
 chmod -R a+rX /usr/local/lib/engineroom
 rm -rf /usr/local/share/engineroom/web
 cp -a apps/web/dist /usr/local/share/engineroom/web
+# Vite writes apps/web/dist mode 700 under a private umask. The hub runs as
+# engineroom and returns {"error":"not found"} when it cannot read this tree.
+chmod -R a+rX /usr/local/share/engineroom/web
 chown -R engineroom:engineroom /var/lib/engineroom
 
 install -d -m 0755 /etc/engineroom

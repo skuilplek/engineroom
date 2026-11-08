@@ -3,8 +3,40 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { mergeCursorAcpConfig, mergeCursorConfig, mergePiDefaults, readShellCommands } from "@engineroom/protocol";
 
+export function piAgentDir(home: string): string {
+  return path.join(home, ".pi", "agent");
+}
+
 export function piSettingsPath(home: string): string {
-  return path.join(home, ".pi", "agent", "settings.json");
+  return path.join(piAgentDir(home), "settings.json");
+}
+
+/** Pi replaces its default prompt with this file when it exists. */
+export function piSystemPromptPath(home: string): string {
+  return path.join(piAgentDir(home), "SYSTEM.md");
+}
+
+/** Pi adds this file to its system prompt when it exists. */
+export function piAppendSystemPromptPath(home: string): string {
+  return path.join(piAgentDir(home), "APPEND_SYSTEM.md");
+}
+
+export interface PiSystemPrompt {
+  systemPrompt: string;
+  appendSystemPrompt: string;
+}
+
+export async function loadPiSystemPrompt(home: string): Promise<PiSystemPrompt> {
+  return {
+    systemPrompt: await readPromptFile(piSystemPromptPath(home)),
+    appendSystemPrompt: await readPromptFile(piAppendSystemPromptPath(home)),
+  };
+}
+
+export async function savePiSystemPrompt(home: string, prompt: PiSystemPrompt): Promise<PiSystemPrompt> {
+  await writePromptFile(piSystemPromptPath(home), prompt.systemPrompt);
+  await writePromptFile(piAppendSystemPromptPath(home), prompt.appendSystemPrompt);
+  return loadPiSystemPrompt(home);
 }
 
 export function cursorConfigPath(home: string): string {
@@ -42,6 +74,33 @@ export async function applyCursorDefaults(
 export async function loadCursorCommands(home: string): Promise<string[]> {
   const current = await readConfigObject(cursorConfigPath(home));
   return readShellCommands(current.value);
+}
+
+async function readPromptFile(file: string): Promise<string> {
+  try {
+    return await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+/** An empty prompt removes the file, so Pi falls back to its own prompt. */
+async function writePromptFile(file: string, text: string): Promise<void> {
+  if (text.trim() === "") {
+    await rm(file, { force: true });
+    return;
+  }
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, text, { mode: 0o600 });
+    await rename(tmp, file);
+    await chmod(file, 0o600);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function readConfigObject(file: string): Promise<{ value: Record<string, unknown>; existed: boolean }> {

@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { displayModelName, isCommandBlockStyle, isTheme, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type ExtensionTheme, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
-import { getCursorCommands, getSettings, saveCursorCommands, saveSettings, type Session } from "../api.ts";
+import { getCursorCommands, getPiSystemPrompt, getSettings, saveCursorCommands, savePiSystemPrompt, saveSettings, type Session } from "../api.ts";
 import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
+import { PiSystemPromptFields, type PiSystemPromptDraft } from "./PiSystemPrompt.tsx";
 import { useReportError } from "../errors.tsx";
 import { message } from "../format.ts";
 import { PackagesSection } from "./PackagesSection.tsx";
@@ -38,7 +39,9 @@ export function SettingsView({
   const [failed, setFailed] = useState(false);
   const [saved, setSaved] = useState("");
   const [commands, setCommands] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<PiSystemPromptDraft | null>(null);
   const cursorOn = agents.includes("cursor");
+  const piOn = agents.includes("pi");
   const report = useReportError();
   function setError(value: string) {
     if (value) report("Settings", value);
@@ -93,6 +96,22 @@ export function SettingsView({
     };
   }, [cursorOn]);
 
+  useEffect(() => {
+    if (!piOn) {
+      setPrompt(null);
+      return;
+    }
+    let cancel = false;
+    getPiSystemPrompt().then((body) => {
+      if (!cancel) setPrompt({ systemPrompt: body.systemPrompt, appendSystemPrompt: body.appendSystemPrompt });
+    }).catch((err) => {
+      if (!cancel) setError(message(err));
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [piOn]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!settings) return;
@@ -130,6 +149,23 @@ export function SettingsView({
       const savedCommands = await saveCursorCommands(commandLines(commands));
       setCommands(savedCommands.commands.join("\n"));
       setSaved("Allowed commands saved");
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePrompt(event: FormEvent) {
+    event.preventDefault();
+    if (prompt == null) return;
+    setBusy(true);
+    setSaved("");
+    setError("");
+    try {
+      const savedPrompt = await savePiSystemPrompt(prompt);
+      setPrompt({ systemPrompt: savedPrompt.systemPrompt, appendSystemPrompt: savedPrompt.appendSystemPrompt });
+      setSaved("Pi instructions saved");
     } catch (err) {
       setError(message(err));
     } finally {
@@ -337,6 +373,14 @@ export function SettingsView({
         <p className="muted">Shell commands Cursor may run for you. An administrator can replace this list from the Agents tab.</p>
         <CursorCommandFields value={commands} onChange={setCommands} />
         <button className="primary" type="submit" disabled={busy}>Save commands</button>
+      </form>
+    )}
+    {prompt != null && (
+      <form onSubmit={(event) => void savePrompt(event)}>
+        <h2>Pi instructions</h2>
+        <p className="muted">The instructions Pi starts each prompt with. These files are yours, and a save applies to the next prompt you send.</p>
+        <PiSystemPromptFields value={prompt} onChange={setPrompt} />
+        <button className="primary" type="submit" disabled={busy}>Save Pi instructions</button>
       </form>
     )}
     <PackagesSection scope="user" onChanged={onPackagesChanged} />

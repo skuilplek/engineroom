@@ -33,7 +33,7 @@ import { AcpUnavailable } from "./acp/session.ts";
 import { BrowserHost, browserGloballyOffered, obscuraInstalled } from "./browser.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
 import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture, whichAll } from "./cli.ts";
-import { applyCursorDefaults, applyPiDefaults, loadCursorCommands } from "./harness-config.ts";
+import { applyCursorDefaults, applyPiDefaults, loadCursorCommands, loadPiSystemPrompt, savePiSystemPrompt } from "./harness-config.ts";
 import { gitClone } from "./clone.ts";
 import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "./git.ts";
 import { defaultDrivers, type AgentDriver, type DriverContext } from "./drivers.ts";
@@ -469,6 +469,13 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "put_cursor_commands":
         await applyCursorDefaults(home, { writeModel: false, commands: request.commands });
         return { commands: request.commands };
+      case "get_pi_system_prompt":
+        return loadPiSystemPrompt(home);
+      case "put_pi_system_prompt":
+        return savePiSystemPrompt(home, {
+          systemPrompt: request.systemPrompt,
+          appendSystemPrompt: request.appendSystemPrompt,
+        });
       case "cancel":
         cancel(request.chatId);
         return { ok: true };

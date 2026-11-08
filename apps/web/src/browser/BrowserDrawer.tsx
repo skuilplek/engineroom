@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type M
 import { IconExpand, IconPanelRight } from "../icons.tsx";
 import { onAgent, sendCommand } from "../socket.ts";
 
+const BROWSER_HINT =
+  "The page the agent uses. Click, type, or scroll to take over; Reload refreshes it. An administrator can add the address bar.";
+
 export function BrowserPaneToggle({
   browserOpen,
   onToggle,
@@ -43,9 +46,7 @@ export function BrowserDrawer({
   const sizeRef = useRef({ width: 0, height: 0 });
   const frameRef = useRef("");
   const opened = useRef(false);
-  const controlsRef = useRef(controls);
   frameRef.current = frame;
-  controlsRef.current = controls;
 
   useEffect(() => {
     return onAgent((message) => {
@@ -85,7 +86,7 @@ export function BrowserDrawer({
     });
     observer.observe(node);
     const onWheelNative = (event: WheelEvent) => {
-      if (!controlsRef.current || !frameRef.current || !(event.target instanceof HTMLElement)) return;
+      if (!frameRef.current || !(event.target instanceof HTMLElement)) return;
       event.preventDefault();
       const rect = event.target.getBoundingClientRect();
       const width = sizeRef.current.width || rect.width;
@@ -150,7 +151,7 @@ export function BrowserDrawer({
     <aside className={expanded ? "browser-drawer expanded" : "browser-drawer"} aria-label="Browser">
       <header className="file-drawer-head">
         <div className="file-drawer-title">
-          <strong title={title || "Browser"}>Browser</strong>
+          <strong title={title ? `${title} — ${BROWSER_HINT}` : BROWSER_HINT}>Browser</strong>
         </div>
         <div className="file-drawer-actions">
           {onToggleExpanded && !narrow && (
@@ -169,7 +170,7 @@ export function BrowserDrawer({
           </button>
         </div>
       </header>
-      {controls && (
+      {controls ? (
         <form className="browser-bar" onSubmit={go}>
           <button className="ghost browser-nav" type="button" aria-label="Back" disabled={!canBack} onClick={() => sendCommand({ type: "browser_back", chatId })}>Back</button>
           <button className="ghost browser-nav" type="button" aria-label="Forward" disabled={!canForward} onClick={() => sendCommand({ type: "browser_forward", chatId })}>Forward</button>
@@ -183,20 +184,21 @@ export function BrowserDrawer({
           />
           <button className="primary browser-nav" type="submit">Go</button>
         </form>
+      ) : (
+        // Without the address bar there is nothing to type into: the address is
+        // plain text. Reload and the page itself still take input.
+        <div className="browser-bar">
+          <button className="ghost browser-nav" type="button" aria-label="Reload" onClick={() => sendCommand({ type: "browser_reload", chatId })}>Reload</button>
+          <span className={address ? "browser-address" : "browser-address empty"} title={address || undefined}>
+            {address || "No page open"}
+          </span>
+        </div>
       )}
       {error && <p className="alert browser-error" role="alert">{error}</p>}
-      <div
-        className={controls ? "browser-stage" : "browser-stage passive"}
-        ref={stageRef}
-        tabIndex={controls ? 0 : -1}
-        onKeyDown={controls ? onKey : undefined}
-      >
+      {/* Clicking, typing, and scrolling work whether or not the address bar is on. */}
+      <div className="browser-stage" ref={stageRef} tabIndex={0} onKeyDown={onKey}>
         {frame ? (
-          <img
-            src={`data:image/jpeg;base64,${frame}`}
-            alt={title || "Browser page"}
-            onClick={controls ? onClick : undefined}
-          />
+          <img src={`data:image/jpeg;base64,${frame}`} alt={title || "Browser page"} onClick={onClick} />
         ) : (
           <p className="browser-empty">
             {controls
@@ -205,7 +207,6 @@ export function BrowserDrawer({
           </p>
         )}
       </div>
-      {!controls && <p className="browser-hint muted">The agent drives this page. An administrator can add the address bar and page controls.</p>}
     </aside>
   );
 }
