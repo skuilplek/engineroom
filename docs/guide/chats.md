@@ -46,3 +46,5 @@ When the agent asks to use a tool, a prompt appears above the composer with the 
 Shell, when the agent reports shell output separately, expands that log.
 
 Terminal, on the chat title bar, switches the transcript for a shell. Chat switches back. That button is present when the terminal is on, and it stays disabled while a reply is running.
+
+Browser, beside that, opens the page this chat shares with the agent. It opens on its own when the agent browses.

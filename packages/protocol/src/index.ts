@@ -345,6 +345,8 @@ export interface UserPolicy {
   binaries: Partial<Record<AgentId, string>>;
   rawTerminal: boolean;
   fileManager: boolean;
+  /** Omitted on older policy files. Parsed as on. */
+  browser?: boolean;
   fileEditor?: boolean;
   fileDownload: boolean;
   fileUpload: boolean;
@@ -359,6 +361,24 @@ export interface EnvEntry {
   /** Set on reads when a value is stored and omitted from this response. */
   saved?: boolean;
 }
+
+export interface BrowserStatus {
+  url: string;
+  title: string;
+  canBack: boolean;
+  canForward: boolean;
+  error?: string;
+}
+
+export type BrowserToolName =
+  | "browser_navigate"
+  | "browser_snapshot"
+  | "browser_click"
+  | "browser_type"
+  | "browser_press"
+  | "browser_scroll";
+
+export type BrowserToolArgs = Record<string, string | number | boolean>;
 
 export interface UserAccess {
   policy: UserPolicy;
@@ -554,7 +574,20 @@ export type RunnerRequest =
     }
   | { id: string; type: "start_project_archive"; workspace: string }
   | { id: string; type: "project_archive_status"; archiveId: string }
-  | { id: string; type: "read_project_archive"; archiveId: string };
+  | { id: string; type: "read_project_archive"; archiveId: string }
+  | { id: string; type: "browser_available" }
+  | { id: string; type: "browser_open"; chatId: string; width: number; height: number }
+  | { id: string; type: "browser_resize"; chatId: string; width: number; height: number }
+  | { id: string; type: "browser_close"; chatId: string }
+  | { id: string; type: "browser_navigate"; chatId: string; url: string }
+  | { id: string; type: "browser_back"; chatId: string }
+  | { id: string; type: "browser_forward"; chatId: string }
+  | { id: string; type: "browser_reload"; chatId: string }
+  | { id: string; type: "browser_click"; chatId: string; x: number; y: number }
+  | { id: string; type: "browser_type"; chatId: string; text: string }
+  | { id: string; type: "browser_key"; chatId: string; key: string }
+  | { id: string; type: "browser_scroll"; chatId: string; x: number; y: number; deltaX: number; deltaY: number }
+  | { id: string; type: "browser_tool"; chatId: string; name: BrowserToolName; args: BrowserToolArgs };
 
 export type RunnerResponse =
   | { id: string; type: "event"; event: StreamEvent }
@@ -1132,6 +1165,54 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "project_archive_status", archiveId: assertArchiveId(body.archiveId) };
     case "read_project_archive":
       return { id: body.id, type: "read_project_archive", archiveId: assertArchiveId(body.archiveId) };
+    case "browser_available":
+      return { id: body.id, type: "browser_available" };
+    case "browser_open":
+    case "browser_resize":
+      return {
+        id: body.id,
+        type: body.type,
+        chatId: assertChatId(body.chatId),
+        width: parseBrowserSize(body.width),
+        height: parseBrowserSize(body.height),
+      };
+    case "browser_close":
+    case "browser_back":
+    case "browser_forward":
+    case "browser_reload":
+      return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
+    case "browser_navigate":
+      return { id: body.id, type: "browser_navigate", chatId: assertChatId(body.chatId), url: parseBrowserUrl(body.url) };
+    case "browser_click":
+      return {
+        id: body.id,
+        type: "browser_click",
+        chatId: assertChatId(body.chatId),
+        x: parseBrowserPoint(body.x),
+        y: parseBrowserPoint(body.y),
+      };
+    case "browser_type":
+      return { id: body.id, type: "browser_type", chatId: assertChatId(body.chatId), text: parseBrowserText(body.text) };
+    case "browser_key":
+      return { id: body.id, type: "browser_key", chatId: assertChatId(body.chatId), key: parseBrowserKey(body.key) };
+    case "browser_scroll":
+      return {
+        id: body.id,
+        type: "browser_scroll",
+        chatId: assertChatId(body.chatId),
+        x: parseBrowserPoint(body.x),
+        y: parseBrowserPoint(body.y),
+        deltaX: parseBrowserDelta(body.deltaX),
+        deltaY: parseBrowserDelta(body.deltaY),
+      };
+    case "browser_tool":
+      return {
+        id: body.id,
+        type: "browser_tool",
+        chatId: assertChatId(body.chatId),
+        name: parseBrowserToolName(body.name),
+        args: parseBrowserToolArgs(body.args),
+      };
     case "upload_repo_file": {
       const workspace = optionalString(body.workspace, "workspace", 4096);
       if (!workspace?.trim()) throw new Error("invalid workspace");
@@ -1353,6 +1434,93 @@ function parseDim(value: unknown): number {
   return value;
 }
 
+function parseBrowserSize(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 4096) {
+    throw new Error("invalid browser size");
+  }
+  return value;
+}
+
+function parseBrowserPoint(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 10000) {
+    throw new Error("invalid browser input");
+  }
+  return value;
+}
+
+function parseBrowserDelta(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < -10000 || value > 10000) {
+    throw new Error("invalid browser input");
+  }
+  return value;
+}
+
+function parseBrowserText(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4000 || value.includes("\0")) {
+    throw new Error("invalid browser input");
+  }
+  return value;
+}
+
+function parseBrowserKey(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 32 || /[\u0000-\u001f]/.test(value)) {
+    throw new Error("invalid browser key");
+  }
+  return value;
+}
+
+const BROWSER_TOOLS = new Set<BrowserToolName>([
+  "browser_navigate",
+  "browser_snapshot",
+  "browser_click",
+  "browser_type",
+  "browser_press",
+  "browser_scroll",
+]);
+
+function parseBrowserToolName(value: unknown): BrowserToolName {
+  if (typeof value !== "string" || !BROWSER_TOOLS.has(value as BrowserToolName)) throw new Error("invalid browser tool");
+  return value as BrowserToolName;
+}
+
+function parseBrowserToolArgs(value: unknown): BrowserToolArgs {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid browser tool");
+  const args: BrowserToolArgs = {};
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 20) throw new Error("invalid browser tool");
+  for (const [key, item] of entries) {
+    if (!/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(key)) throw new Error("invalid browser tool");
+    if (typeof item === "string") {
+      if (item.length > 8000) throw new Error("invalid browser tool");
+      args[key] = item;
+    } else if (typeof item === "number" && Number.isFinite(item)) {
+      args[key] = item;
+    } else if (typeof item === "boolean") {
+      args[key] = item;
+    } else {
+      throw new Error("invalid browser tool");
+    }
+  }
+  return args;
+}
+
+export function parseBrowserUrl(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid url");
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2048) throw new Error("invalid url");
+  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw new Error("invalid url");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("invalid url");
+  if (url.username || url.password) throw new Error("invalid url");
+  return url.toString();
+}
+
 function parseActionLabel(value: unknown): string {
   if (typeof value !== "string") throw new Error("invalid action");
   const action = value.replace(/\s+/g, " ").trim();
@@ -1406,6 +1574,22 @@ export function encodePtyFrame(chatId: string, data: Uint8Array): Uint8Array {
 
 export function decodePtyFrame(frame: Uint8Array): { chatId: string; data: Uint8Array } | null {
   if (frame.length < 1 + PTY_ID_BYTES || frame[0] !== 1) return null;
+  const chatId = new TextDecoder().decode(frame.subarray(1, 1 + PTY_ID_BYTES));
+  if (!CHAT_ID_RE.test(chatId)) return null;
+  return { chatId, data: frame.subarray(1 + PTY_ID_BYTES) };
+}
+
+export function encodeBrowserFrame(chatId: string, data: Uint8Array): Uint8Array {
+  assertChatId(chatId);
+  const frame = new Uint8Array(1 + PTY_ID_BYTES + data.length);
+  frame[0] = 2;
+  frame.set(new TextEncoder().encode(chatId), 1);
+  frame.set(data, 1 + PTY_ID_BYTES);
+  return frame;
+}
+
+export function decodeBrowserFrame(frame: Uint8Array): { chatId: string; data: Uint8Array } | null {
+  if (frame.length < 1 + PTY_ID_BYTES || frame[0] !== 2) return null;
   const chatId = new TextDecoder().decode(frame.subarray(1, 1 + PTY_ID_BYTES));
   if (!CHAT_ID_RE.test(chatId)) return null;
   return { chatId, data: frame.subarray(1 + PTY_ID_BYTES) };
@@ -1559,6 +1743,8 @@ export function parseUserPolicy(value: unknown): UserPolicy {
   }
   if (typeof body.rawTerminal !== "boolean") throw new Error("invalid terminal");
   const fileManager = typeof body.fileManager === "boolean" ? body.fileManager : true;
+  if (body.browser != null && typeof body.browser !== "boolean") throw new Error("invalid browser");
+  const browser = body.browser == null ? true : body.browser;
   if (body.fileEditor != null && typeof body.fileEditor !== "boolean") throw new Error("invalid file editor");
   const fileEditor = body.fileEditor == null ? true : body.fileEditor;
   if (body.fileDownload != null && typeof body.fileDownload !== "boolean") throw new Error("invalid file download");
@@ -1573,6 +1759,7 @@ export function parseUserPolicy(value: unknown): UserPolicy {
     binaries: parsePolicyBinaries(body.binaries),
     rawTerminal: body.rawTerminal,
     fileManager,
+    browser,
     fileEditor,
     fileDownload,
     fileUpload,
@@ -1835,6 +2022,7 @@ export function defaultPolicy(): UserPolicy {
     binaries: {},
     rawTerminal: true,
     fileManager: true,
+    browser: true,
     fileEditor: true,
     fileDownload: true,
     fileUpload: true,

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm, chmod, unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { peerCredentials } from "@engineroom/peercred";
 import {
@@ -13,6 +13,7 @@ import {
   MAX_TRANSFER_BYTES,
   maxSeq,
   parseRunnerRequest,
+  socketPathForUser,
   titleFromPrompt,
   type AgentDefinition,
   type AgentId,
@@ -29,6 +30,7 @@ import { ProjectArchives } from "./archive.ts";
 import { loadAgentCatalog, saveAgentCatalog } from "./agent-catalog.ts";
 import { AcpManager, type AcpContext } from "./acp/manager.ts";
 import { AcpUnavailable } from "./acp/session.ts";
+import { BrowserHost, browserGloballyOffered, obscuraInstalled } from "./browser.ts";
 import { type BusSink, ChatBus, type PushMessage } from "./bus.ts";
 import { binaryNames, childEnv, parsePiModelList, refreshLoginCommandDirs, resolveBinary, runCapture, whichAll } from "./cli.ts";
 import { applyCursorDefaults, applyPiDefaults, loadCursorCommands } from "./harness-config.ts";
@@ -116,7 +118,8 @@ const TURN_SETTLE_MS = 150;
 export async function startRunner(options: RunnerOptions): Promise<RunningRunner> {
   const home = options.home;
   const drivers = options.drivers ?? defaultDrivers();
-  const acp = options.acp === undefined ? (options.drivers ? null : new AcpManager()) : options.acp;
+  const runnerSocket = options.socketPath || socketPathForUser(process.env.ENGINEROOM_SOCKET_DIR || "/run/engineroom", userInfo().username);
+  const acp = options.acp === undefined ? (options.drivers ? null : new AcpManager({ browserMcp: (chatId) => browserMcpServers(chatId) })) : options.acp;
   let agentCatalog: AgentDefinition[] = [];
   await refreshCatalog(await loadAgentCatalog(home));
 
@@ -155,6 +158,12 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     return extras.some((item) => item.id === agent);
   }
   const pty = options.pty ?? new PtyManager();
+  const browser = new BrowserHost({
+    home,
+    onFrame: (chatId, data) => bus.browserFrame(chatId, data),
+    onStatus: (chatId, status) => bus.browserStatus(chatId, status),
+    onActivity: (chatId) => bus.browserActivity(chatId),
+  });
   const runs = new Map<string, RunState>();
   const archives = new ProjectArchives();
   const bus = new ChatBus();
@@ -341,6 +350,31 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
 
   async function dispatch(request: RunnerRequest): Promise<unknown> {
     switch (request.type) {
+      case "browser_available":
+        return { available: await obscuraInstalled(home, process.env) };
+      case "browser_open":
+      case "browser_resize":
+        return useBrowser(request.chatId, () => browser.watch(request.chatId, request.width, request.height));
+      case "browser_close":
+        return useBrowser(request.chatId, () => browser.unwatch(request.chatId));
+      case "browser_navigate":
+        return useBrowser(request.chatId, () => browser.navigate(request.chatId, request.url));
+      case "browser_back":
+        return useBrowser(request.chatId, () => browser.back(request.chatId));
+      case "browser_forward":
+        return useBrowser(request.chatId, () => browser.forward(request.chatId));
+      case "browser_reload":
+        return useBrowser(request.chatId, () => browser.reload(request.chatId));
+      case "browser_click":
+        return useBrowser(request.chatId, () => browser.click(request.chatId, request.x, request.y));
+      case "browser_type":
+        return useBrowser(request.chatId, () => browser.type(request.chatId, request.text));
+      case "browser_key":
+        return useBrowser(request.chatId, () => browser.key(request.chatId, request.key));
+      case "browser_scroll":
+        return useBrowser(request.chatId, () => browser.scroll(request.chatId, request.x, request.y, request.deltaX, request.deltaY));
+      case "browser_tool":
+        return useBrowser(request.chatId, async () => ({ text: await browser.tool(request.chatId, request.name, request.args) }));
       case "list_chats": {
         const chats = await listChats(home, new Set(runs.keys()));
         for (const chat of chats) {
@@ -914,6 +948,37 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
     return { ok: true };
   }
 
+  async function browserAllowed(): Promise<boolean> {
+    const policy = await loadPolicy(home);
+    if (policy.browser === false) return false;
+    return browserGloballyOffered();
+  }
+
+  async function browserMcpServers(chatId: string) {
+    if (!(await browserAllowed())) return [];
+    if (!(await obscuraInstalled(home, process.env))) return [];
+    const script = fileURLToPath(new URL("./browser-mcp.ts", import.meta.url));
+    return [{
+      name: "browser",
+      command: process.execPath,
+      args: [script],
+      env: [
+        { name: "ENGINEROOM_RUNNER_SOCK", value: runnerSocket },
+        { name: "ENGINEROOM_BROWSER_CHAT", value: chatId },
+      ],
+    }];
+  }
+
+  async function useBrowser<T>(chatId: string, fn: () => Promise<T>): Promise<T | { ok: false; error: string }> {
+    if (!(await browserAllowed())) throw new Error("browser is not enabled");
+    await getChat(home, chatId, false);
+    try {
+      return await fn();
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "browser failed" };
+    }
+  }
+
   async function listSessions(agent?: AgentId) {
     const chosen = agent ?? "cursor";
     if (!acp?.supports(chosen)) return { sessions: [] };
@@ -939,6 +1004,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       await writer.flushAll();
       await acp?.stopAll?.();
       pty.closeAll();
+      browser.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });

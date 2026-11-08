@@ -25,7 +25,7 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 
 | Variable | Default | Contents |
 | --- | --- | --- |
-| `ENGINEROOM_AGENTS_FILE` | `/var/lib/engineroom/agents.json` | Which agents are offered, custom agents, branding, and feature flags (terminal, file manager, editor, download, upload, CLI import). |
+| `ENGINEROOM_AGENTS_FILE` | `/var/lib/engineroom/agents.json` | Which agents are offered, custom agents, branding, and feature flags (terminal, file manager, browser, browser address bar, editor, download, upload, CLI import). The runner reads the same file when `ENGINEROOM_AGENTS_FILE` is set, so a global browser switch applies to agent use as well as the pane. The browser address bar is stored as `browserControls` and does not reach the runner: the hub hides the controls and refuses those commands. |
 | `ENGINEROOM_AGENT_OPTIONS_FILE` | `/var/lib/engineroom/agent-options.json` | Modes and models offered per agent. |
 | `ENGINEROOM_CATALOG_FILE` | `/var/lib/engineroom/catalog.json` | Shared repository catalog. |
 | `ENGINEROOM_REPOS_FILE` | `/var/lib/engineroom/repos.json` | Repository directory name under each home, and file visibility. |

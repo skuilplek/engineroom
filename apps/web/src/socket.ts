@@ -1,4 +1,4 @@
-import { decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type ChatMeta, type ListedSession, type PermissionOption, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
+import { decodeBrowserFrame, decodePtyFrame, encodePtyFrame, type AgentMode, type AgentModel, type BrowserStatus, type ChatMeta, type ListedSession, type PermissionOption, type QueuedPrompt, type StreamEvent, type TranscriptEntry } from "@engineroom/protocol";
 import { notifySessionExpired } from "./sessionExpired.ts";
 
 export type { AgentMode, AgentModel };
@@ -21,6 +21,9 @@ export type ServerMessage =
   | { type: "event"; chatId: string; seq: number; at: string; event: StreamEvent; turn?: number }
   | { type: "chats_changed" }
   | { type: "pty"; chatId: string; data: Uint8Array }
+  | { type: "browser_frame"; chatId: string; data: string }
+  | ({ type: "browser_status"; chatId: string } & BrowserStatus)
+  | { type: "browser_activity"; chatId: string }
   | { type: "sessions"; sessions: ListedSession[] }
   | { type: "imported"; chat: ChatMeta }
   | { type: "accepted"; chatId: string; queued: boolean }
@@ -76,7 +79,13 @@ export class AgentSocket {
     ws.onmessage = (event) => {
       if (generation !== this.generation || this.transport !== ws) return;
       if (event.data instanceof ArrayBuffer) {
-        const frame = decodePtyFrame(new Uint8Array(event.data));
+        const bytes = new Uint8Array(event.data);
+        const page = decodeBrowserFrame(bytes);
+        if (page) {
+          this.emit({ type: "browser_frame", chatId: page.chatId, data: bytesToBase64(page.data) });
+          return;
+        }
+        const frame = decodePtyFrame(bytes);
         if (frame) this.emit({ type: "pty", chatId: frame.chatId, data: frame.data });
         return;
       }
@@ -213,6 +222,15 @@ export function noteSeq(chatId: string, seq: number) {
 
 export function sendCommand(command: object) {
   browserSocket.sendCommand(command);
+}
+
+function bytesToBase64(data: Uint8Array): string {
+  let binary = "";
+  const size = 0x8000;
+  for (let index = 0; index < data.length; index += size) {
+    binary += String.fromCharCode(...data.subarray(index, index + size));
+  }
+  return btoa(binary);
 }
 
 export function sendPty(chatId: string, data: string) {

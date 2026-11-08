@@ -18,4 +18,4 @@ Open the account menu. If a name and email are missing, the form is already open
 
 The panel button at the top of the sidebar collapses it. Expand menu opens it again. Full screen, beside that button, fills the browser when the browser allows it. Exit full screen returns to the window.
 
-On a narrow screen the sidebar stays hidden until you choose Open menu. Collapse menu, or the dimmed area beside the sidebar, puts it away. Files, in the top bar, opens the file list when the file manager is on.
+On a narrow screen the sidebar stays hidden until you choose Open menu. Collapse menu, or the dimmed area beside the sidebar, puts it away. Files, in the top bar, opens the file list when the file manager is on. Browser opens the shared page when the browser is on.

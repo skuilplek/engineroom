@@ -6,6 +6,7 @@ import { useReportError } from "../errors.tsx";
 import { workspaceLabel } from "../format.ts";
 import { isMissingChat } from "./missingChat.ts";
 import { noteSeq, onAgent, sendCommand, unwatchChat, watchChat } from "../socket.ts";
+import { BrowserPaneToggle } from "../browser/BrowserDrawer.tsx";
 import { TerminalPanel } from "../terminal/TerminalPanel.tsx";
 import { groupTranscript } from "./group.ts";
 import { ToolBlock } from "./ToolBlock.tsx";
@@ -36,6 +37,8 @@ export function ChatView({
   projectCreate,
   onReposChanged,
   onOpenFile,
+  browserOpen,
+  onToggleBrowser,
 }: {
   chatId: string;
   home: string;
@@ -54,6 +57,8 @@ export function ChatView({
   projectCreate: boolean;
   onReposChanged?: () => void;
   onOpenFile?: (path: string) => void;
+  browserOpen?: boolean;
+  onToggleBrowser?: () => void;
 }) {
   const [live, setLive] = useState<ChatLive>(() => readCachedLive(username, chatId) ?? emptyLive());
   const { prompt, setPrompt, attachments, setAttachments, clear: clearDraftInput } = useComposerDraft<ComposerAttachment>(`chat:${chatId}`);
@@ -259,6 +264,7 @@ export function ChatView({
                   {raw ? "Chat" : "Terminal"}
                 </button>
               )}
+              <BrowserPaneToggle browserOpen={browserOpen} onToggle={onToggleBrowser} />
               <FilesPaneToggle filesOpen={filesOpen} onToggle={onToggleFiles} />
             </div>
           </header>

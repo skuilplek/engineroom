@@ -29,6 +29,8 @@ Available agents is the offer list. Turn an agent on here before you can allow i
 - Raw terminal
 - Import CLI sessions
 - Repository file manager
+- Browser
+- Browser address bar (the address field and page input, off until you turn it on)
 - File editor
 - File download
 - File upload
@@ -79,7 +81,7 @@ Add a user creates a Linux account when the name is new, or grants access and se
 
 On a person's page, Refresh reloads their record. Save changes stores agents, modes, models, tools, defaults, and repository grants together.
 
-Granted system tools includes each offered agent, plus Terminal, File manager, File editor, Download, Upload, and Projects. A tool that is off for everyone stays off here until the global switch is turned on. For each granted agent, check the modes and models that person may use. Load modes and models on the Agents tab first. Saving keeps only the modes and models checked here.
+Granted system tools includes each offered agent, plus Terminal, File manager, Browser, File editor, Download, Upload, and Projects. A tool that is off for everyone stays off here until the global switch is turned on. For each granted agent, check the modes and models that person may use. Load modes and models on the Agents tab first. Saving keeps only the modes and models checked here.
 
 Default agent, Default model, and Tool approval are that person's starting choices.
 

@@ -42,6 +42,9 @@ export interface Session {
   rawTerminal: boolean;
   fileManager: boolean;
   fileManagerOffered?: boolean;
+  browser: boolean;
+  browserOffered?: boolean;
+  browserControls?: boolean;
   fileEditor: boolean;
   fileDownload?: boolean;
   fileUpload?: boolean;
@@ -86,6 +89,8 @@ export interface AgentInventory {
   fileEditor?: boolean;
   fileDownload?: boolean;
   fileUpload?: boolean;
+  browser?: boolean;
+  browserControls?: boolean;
   piProvider?: string;
   piModel?: string;
   cursorCommands?: string[];
@@ -718,6 +723,8 @@ export function saveAgents(
   fileEditor?: boolean,
   fileDownload?: boolean,
   fileUpload?: boolean,
+  browser?: boolean,
+  browserControls?: boolean,
   extra?: {
     piProvider?: string;
     piModel?: string;
@@ -733,6 +740,8 @@ export function saveAgents(
     fileEditor?: boolean;
     fileDownload?: boolean;
     fileUpload?: boolean;
+    browser?: boolean;
+    browserControls?: boolean;
     agentCatalog?: { id: string; label: string }[];
     piProvider?: string;
     piModel?: string;
@@ -740,7 +749,7 @@ export function saveAgents(
     cursorFast?: boolean;
   }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, ...extra }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, ...extra }),
   });
 }
 

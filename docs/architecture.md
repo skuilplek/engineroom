@@ -39,6 +39,7 @@ The runner owns:
 - The ACP session manager for Cursor and custom agents, with CLI fallbacks where ACP is not available
 - A PTY for the raw terminal (`node-pty`)
 - Repository detection, git clone, and the file manager (list, read, write, rename)
+- One Obscura process per account, with one page per chat. The runner holds the only debugging connection and sends pictures of that page to the browser. The agent drives the same page through a helper on the runner socket, so a second connection cannot open a different page.
 
 The hub never runs `agent` or `pi`. Those processes are children of the runner, so they see the user's `HOME`, `PATH`, and SSH agent.
 

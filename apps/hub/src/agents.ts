@@ -140,6 +140,28 @@ export function loadCliImport(file: string): boolean {
   return false;
 }
 
+export function loadBrowser(file: string): boolean {
+  if (!file) return true;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { browser?: unknown };
+    if (typeof parsed.browser === "boolean") return parsed.browser;
+  } catch {
+    /* default on */
+  }
+  return true;
+}
+
+export function loadBrowserControls(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { browserControls?: unknown };
+    if (typeof parsed.browserControls === "boolean") return parsed.browserControls;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
 export function loadFileManager(file: string): boolean {
   if (!file) return false;
   try {
@@ -235,6 +257,8 @@ export function saveAgentFlags(
   fileEditor?: boolean,
   fileDownload?: boolean,
   fileUpload?: boolean,
+  browser?: boolean,
+  browserControls?: boolean,
 ): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
@@ -255,6 +279,9 @@ export function saveAgentFlags(
   const editor = typeof fileEditor === "boolean" ? fileEditor : loadFileEditor(file);
   const download = typeof fileDownload === "boolean" ? fileDownload : loadFileDownload(file);
   const upload = typeof fileUpload === "boolean" ? fileUpload : loadFileUpload(file);
+  const pages = typeof browser === "boolean" ? browser : loadBrowser(file);
+  // Controls only mean something over a page, so turning the browser off clears them.
+  const manual = (typeof browserControls === "boolean" ? browserControls : loadBrowserControls(file)) && pages;
   const current = readAgentFile(file);
   delete current.piAuth;
   delete current.piInstall;
@@ -271,6 +298,8 @@ export function saveAgentFlags(
     fileEditor: editor,
     fileDownload: download,
     fileUpload: upload,
+    browser: pages,
+    browserControls: manual,
     piProvider: pi.provider,
     piModel: pi.model,
     cursorCommands,

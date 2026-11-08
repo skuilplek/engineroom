@@ -1,9 +1,12 @@
-import type { ChatEvent, StreamEvent } from "@engineroom/protocol";
+import type { BrowserStatus, ChatEvent, StreamEvent } from "@engineroom/protocol";
 
 export type PushMessage =
   | ({ id: "push"; type: "chat_event" } & ChatEvent)
   | { id: "push"; type: "chats_changed" }
-  | { id: "push"; type: "pty"; chatId: string; data: string };
+  | { id: "push"; type: "pty"; chatId: string; data: string }
+  | { id: "push"; type: "browser_frame"; chatId: string; data: string }
+  | ({ id: "push"; type: "browser_status"; chatId: string } & BrowserStatus)
+  | { id: "push"; type: "browser_activity"; chatId: string };
 
 export interface BusSink {
   send(message: PushMessage): void;
@@ -70,6 +73,21 @@ export class ChatBus {
 
   pty(chatId: string, data: string) {
     const message: PushMessage = { id: "push", type: "pty", chatId, data };
+    for (const sink of this.sinks) sink.send(message);
+  }
+
+  browserFrame(chatId: string, data: string) {
+    const message: PushMessage = { id: "push", type: "browser_frame", chatId, data };
+    for (const sink of this.sinks) sink.send(message);
+  }
+
+  browserStatus(chatId: string, status: BrowserStatus) {
+    const message: PushMessage = { id: "push", type: "browser_status", chatId, ...status };
+    for (const sink of this.sinks) sink.send(message);
+  }
+
+  browserActivity(chatId: string) {
+    const message: PushMessage = { id: "push", type: "browser_activity", chatId };
     for (const sink of this.sinks) sink.send(message);
   }
 

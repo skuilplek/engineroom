@@ -3,7 +3,7 @@ import { childEnv, resolveBinary } from "../cli.ts";
 import { binaryFor, loadPolicy } from "../policy.ts";
 import { agentContentBlocks, type LoadedPromptAttachment } from "../prompt-content.ts";
 import { loadSettings } from "../store.ts";
-import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, type AcpStart } from "./session.ts";
+import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, type AcpMcpServer, type AcpStart } from "./session.ts";
 
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_SESSIONS = 4;
@@ -46,9 +46,13 @@ export class AcpManager {
 
   private readonly options: {
     launch?: (agent: AgentId, ctx: AcpContext) => Promise<AcpLaunch>;
+    browserMcp?: (chatId: string) => Promise<AcpMcpServer[]>;
   };
 
-  constructor(options: { launch?: (agent: AgentId, ctx: AcpContext) => Promise<AcpLaunch> } = {}) {
+  constructor(options: {
+    launch?: (agent: AgentId, ctx: AcpContext) => Promise<AcpLaunch>;
+    browserMcp?: (chatId: string) => Promise<AcpMcpServer[]>;
+  } = {}) {
     this.options = options;
   }
 
@@ -252,6 +256,7 @@ export class AcpManager {
     await this.reap();
     const generation = this.generation(chatId);
     const launch = await this.launch(ctx.agent, ctx);
+    const mcpServers = this.options.browserMcp ? await this.options.browserMcp(chatId).catch(() => []) : [];
     const session = new AcpSession({
       binary: launch.binary,
       args: launch.args,
@@ -262,6 +267,7 @@ export class AcpManager {
       mode: ctx.mode,
       needsResync: ctx.needsResync,
       permission: ctx.permission,
+      mcpServers,
       onEvent: ctx.onEvent,
     } satisfies AcpStart);
     this.opening.set(chatId, session);

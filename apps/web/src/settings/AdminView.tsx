@@ -89,6 +89,8 @@ type OfferSnapshot = {
   fileEditor: boolean;
   fileDownload: boolean;
   fileUpload: boolean;
+  browser: boolean;
+  browserControls: boolean;
   piProvider: string;
   piModel: string;
   cursorCommands: string[];
@@ -124,6 +126,8 @@ export function AdminView({
     agentCatalog?: { id: string; label: string }[],
     fileDownloadOffered?: boolean,
     fileUploadOffered?: boolean,
+    browserOffered?: boolean,
+    browserControls?: boolean,
   ) => void;
   onBranding: (appName: string) => void;
   onSessionHours: (sessionHours: number) => void;
@@ -142,6 +146,8 @@ export function AdminView({
   const [fileEditor, setFileEditor] = useState(session.fileEditor ?? true);
   const [fileDownload, setFileDownload] = useState(session.fileDownloadOffered ?? false);
   const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
+  const [browser, setBrowser] = useState(session.browserOffered ?? true);
+  const [browserControls, setBrowserControls] = useState(session.browserControls ?? false);
   const [piProvider, setPiProvider] = useState("");
   const [piModel, setPiModel] = useState("");
   const [cursorCommandText, setCursorCommandText] = useState("");
@@ -242,6 +248,8 @@ export function AdminView({
       setFileEditor(body.fileEditor ?? true);
       setFileDownload(body.fileDownload ?? false);
       setFileUpload(body.fileUpload ?? false);
+      setBrowser(body.browser ?? true);
+      setBrowserControls(body.browserControls ?? false);
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
       setCursorCommandText((body.cursorCommands ?? []).join("\n"));
@@ -255,6 +263,8 @@ export function AdminView({
         fileEditor: body.fileEditor ?? true,
         fileDownload: body.fileDownload ?? false,
         fileUpload: body.fileUpload ?? false,
+        browser: body.browser ?? true,
+        browserControls: body.browserControls ?? false,
         piProvider: body.piProvider ?? "",
         piModel: body.piModel ?? "",
         cursorCommands: [...(body.cursorCommands ?? [])],
@@ -284,7 +294,7 @@ export function AdminView({
     setFlags(next);
   }
 
-  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean }, select?: string) {
+  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean; browser?: boolean; browserControls?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
     setFlags(nextFlags);
@@ -294,6 +304,8 @@ export function AdminView({
     if (typeof body.fileEditor === "boolean") setFileEditor(body.fileEditor);
     if (typeof body.fileDownload === "boolean") setFileDownload(body.fileDownload);
     if (typeof body.fileUpload === "boolean") setFileUpload(body.fileUpload);
+    if (typeof body.browser === "boolean") setBrowser(body.browser);
+    if (typeof body.browserControls === "boolean") setBrowserControls(body.browserControls);
     setSavedOffer((current) => ({
       ...current,
       flags: nextFlags,
@@ -303,6 +315,8 @@ export function AdminView({
       fileEditor: typeof body.fileEditor === "boolean" ? body.fileEditor : current.fileEditor,
       fileDownload: typeof body.fileDownload === "boolean" ? body.fileDownload : current.fileDownload,
       fileUpload: typeof body.fileUpload === "boolean" ? body.fileUpload : current.fileUpload,
+      browser: typeof body.browser === "boolean" ? body.browser : current.browser,
+      browserControls: typeof body.browserControls === "boolean" ? body.browserControls : current.browserControls,
     }));
     if (select) setAgentTab(select);
   }
@@ -348,7 +362,7 @@ export function AdminView({
     setError("");
     try {
       const commands = commandLines(cursorCommandText);
-      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, {
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, {
         piProvider: piProvider.trim(),
         piModel: piModel.trim(),
         cursorCommands: commands,
@@ -363,6 +377,8 @@ export function AdminView({
         savedAgents.agentCatalog,
         savedAgents.fileDownload ?? fileDownload,
         savedAgents.fileUpload ?? fileUpload,
+        savedAgents.browser ?? browser,
+        savedAgents.browserControls ?? browserControls,
       );
       const provider = piProvider.trim();
       const model = piModel.trim();
@@ -391,6 +407,8 @@ export function AdminView({
         fileEditor: savedAgents.fileEditor ?? fileEditor,
         fileDownload: savedAgents.fileDownload ?? fileDownload,
         fileUpload: savedAgents.fileUpload ?? fileUpload,
+        browser: savedAgents.browser ?? browser,
+        browserControls: savedAgents.browserControls ?? browserControls,
         piProvider: savedAgents.piProvider ?? provider,
         piModel: savedAgents.piModel ?? model,
         cursorCommands: [...(savedAgents.cursorCommands ?? commands)],
@@ -414,6 +432,8 @@ export function AdminView({
     setFileEditor(savedOffer.fileEditor);
     setFileDownload(savedOffer.fileDownload);
     setFileUpload(savedOffer.fileUpload);
+    setBrowser(savedOffer.browser);
+    setBrowserControls(savedOffer.browserControls);
     setPiProvider(savedOffer.piProvider);
     setPiModel(savedOffer.piModel);
     setCursorCommandText(savedOffer.cursorCommands.join("\n"));
@@ -438,6 +458,8 @@ export function AdminView({
     fileEditor,
     fileDownload,
     fileUpload,
+    browser,
+    browserControls,
     piProvider,
     piModel,
     cursorCommands: commandLines(cursorCommandText),
@@ -686,7 +708,7 @@ export function AdminView({
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>
                 <span>Agents</span>
                 <strong>{offered.length}</strong>
-                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {browser ? "Browser on." : "Browser off."} {browserControls ? "Browser address bar on." : "Browser address bar off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
               </button>
               <button className="overview-link" type="button" onClick={() => openTab("packages")}>
                 <span>Packages</span>
@@ -736,7 +758,7 @@ export function AdminView({
               <section className="agents-card">
                 <div className="agents-card-head">
                   <h2>Available agents</h2>
-                  <p className="muted">Offer an agent here, then allow it for each person. They can use it only while that offer is on and the command is installed on their account.</p>
+                  <p className="muted">Offer an agent here, then allow it for each person. They can use it only while that offer is on and the command is installed on their account. The browser stays a page the agent drives; Browser address bar adds the address field, page clicks, and keys for people.</p>
                 </div>
                 <div className="agents-privileges">
                   <span className="eyebrow">Global tooling</span>
@@ -752,6 +774,27 @@ export function AdminView({
                     <label className={fileManager ? "privilege on" : "privilege"}>
                       <input type="checkbox" checked={fileManager} onChange={() => setFileManager((value) => !value)} />
                       Repository file manager
+                    </label>
+                    <label className={browser ? "privilege on" : "privilege"}>
+                      <input
+                        type="checkbox"
+                        checked={browser}
+                        onChange={() => {
+                          // Turning the browser off drops the address bar with it.
+                          if (browser) setBrowserControls(false);
+                          setBrowser(!browser);
+                        }}
+                      />
+                      Browser
+                    </label>
+                    <label className={browserControls ? "privilege on" : "privilege"}>
+                      <input
+                        type="checkbox"
+                        checked={browserControls}
+                        disabled={!browser}
+                        onChange={() => setBrowserControls((value) => !value)}
+                      />
+                      Browser address bar
                     </label>
                     <label className={fileEditor ? "privilege on" : "privilege"}>
                       <input type="checkbox" checked={fileEditor} onChange={() => setFileEditor((value) => !value)} />
@@ -1126,6 +1169,7 @@ export function AdminView({
               globalAgents={inventory.length > 0 ? inventory.filter((agent) => agent.enabled).map((agent) => agent.id) : session.agents}
               globalTerminal={session.rawTerminal}
               globalFileManager={session.fileManagerOffered ?? false}
+              globalBrowser={session.browserOffered ?? true}
               globalFileEditor={fileEditor}
               globalFileDownload={fileDownload}
               globalFileUpload={fileUpload}
@@ -1678,6 +1722,7 @@ function PersonPanel({
   globalAgents,
   globalTerminal,
   globalFileManager,
+  globalBrowser,
   globalFileEditor,
   globalFileDownload,
   globalFileUpload,
@@ -1700,6 +1745,7 @@ function PersonPanel({
   globalAgents: AgentId[];
   globalTerminal: boolean;
   globalFileManager: boolean;
+  globalBrowser: boolean;
   globalFileEditor: boolean;
   globalFileDownload: boolean;
   globalFileUpload: boolean;
@@ -1987,6 +2033,7 @@ function PersonPanel({
   const limits = [
     !globalTerminal ? "The terminal is off for everyone, so this stays off until that is turned on." : "",
     !globalFileManager ? "The file manager is off for everyone, so this stays off until that is turned on." : "",
+    !globalBrowser ? "The browser is off for everyone, so this stays off until that is turned on." : "",
     !globalFileEditor ? "The file editor is off for everyone, so this stays read-only until that is turned on." : "",
     !globalFileDownload ? "File download is off for everyone, so this stays off until that is turned on." : "",
     !globalFileUpload ? "File upload is off for everyone, so this stays off until that is turned on." : "",
@@ -2046,7 +2093,7 @@ function PersonPanel({
             <section className="person-card" aria-labelledby="person-access">
               <header className="person-card-head">
                 <PersonHeading id="person-access">Agents, modes, models and tools</PersonHeading>
-                <p className="muted">Agents, modes, models, the terminal, the file manager, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
+                <p className="muted">Agents, modes, models, the terminal, the file manager, the browser, download, upload, project creation, defaults, and repositories for this person. Saving keeps only the modes and models checked here.</p>
               </header>
               <div>
                 <span className="person-label">Granted system tools</span>
@@ -2061,6 +2108,7 @@ function PersonPanel({
                   ))}
                   <ToolChip label="Terminal" checked={policy.rawTerminal} onChange={() => setPolicy({ ...policy, rawTerminal: !policy.rawTerminal })} />
                   <ToolChip label="File manager" checked={policy.fileManager} onChange={() => setPolicy({ ...policy, fileManager: !policy.fileManager })} />
+                  <ToolChip label="Browser" checked={policy.browser !== false} onChange={() => setPolicy({ ...policy, browser: !(policy.browser !== false) })} />
                   <ToolChip label="File editor" checked={policy.fileEditor !== false} onChange={() => setPolicy({ ...policy, fileEditor: !(policy.fileEditor !== false) })} />
                   <ToolChip label="Download" checked={policy.fileDownload !== false} onChange={() => setPolicy({ ...policy, fileDownload: !(policy.fileDownload !== false) })} />
                   <ToolChip label="Upload" checked={policy.fileUpload !== false} onChange={() => setPolicy({ ...policy, fileUpload: !(policy.fileUpload !== false) })} />
@@ -2797,6 +2845,8 @@ function sessionOffer(session: Session): OfferSnapshot {
     fileEditor: session.fileEditor ?? true,
     fileDownload: session.fileDownloadOffered ?? false,
     fileUpload: session.fileUploadOffered ?? false,
+    browser: session.browserOffered ?? true,
+    browserControls: session.browserControls ?? false,
     piProvider: "",
     piModel: "",
     cursorCommands: [],
@@ -2844,6 +2894,8 @@ function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
   if (left.fileEditor !== right.fileEditor) return false;
   if (left.fileDownload !== right.fileDownload) return false;
   if (left.fileUpload !== right.fileUpload) return false;
+  if (left.browser !== right.browser) return false;
+  if (left.browserControls !== right.browserControls) return false;
   if (left.piProvider !== right.piProvider) return false;
   if (left.piModel !== right.piModel) return false;
   if (left.cursorCommands.length !== right.cursorCommands.length) return false;

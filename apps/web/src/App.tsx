@@ -9,6 +9,7 @@ import { clearCachedLive, forgetCachedLive } from "./chat/liveCache.ts";
 import { OpeningQueue } from "./chat/openings.ts";
 import { clearProjectDownload, saveProjectDownload, useProjectDownload } from "./chat/projectDownload.ts";
 import { StartView } from "./chat/StartView.tsx";
+import { BrowserDrawer } from "./browser/BrowserDrawer.tsx";
 import { FileManagerDrawer } from "./files/FileManagerDrawer.tsx";
 import { ErrorProvider, useErrors, useReportError } from "./errors.tsx";
 import { strip } from "./format.ts";
@@ -245,6 +246,20 @@ function Shell({
       return false;
     }
   });
+  const [browserOpen, setBrowserOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("engineroom.browserOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [browserExpanded, setBrowserExpanded] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("engineroom.browserExpanded") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("engineroom.sidebarCollapsed") === "1";
@@ -284,6 +299,39 @@ function Shell({
       const next = !current;
       try {
         localStorage.setItem("engineroom.filesOpen", next ? "1" : "0");
+      } catch {
+        /* ignore storage failure */
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleBrowser = useCallback(() => {
+    setBrowserOpen((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("engineroom.browserOpen", next ? "1" : "0");
+      } catch {
+        /* ignore storage failure */
+      }
+      return next;
+    });
+  }, []);
+
+  const openBrowser = useCallback(() => {
+    setBrowserOpen(true);
+    try {
+      localStorage.setItem("engineroom.browserOpen", "1");
+    } catch {
+      /* ignore storage failure */
+    }
+  }, []);
+
+  const toggleBrowserExpanded = useCallback(() => {
+    setBrowserExpanded((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("engineroom.browserExpanded", next ? "1" : "0");
       } catch {
         /* ignore storage failure */
       }
@@ -420,6 +468,7 @@ function Shell({
   }, [downloadJob, report]);
   const filesEnabled = session.fileManager;
   const showFileManager = filesEnabled && (view === "chat" || view === "start") && Boolean(selectedRepo);
+  const showBrowser = Boolean(session.browser) && view === "chat" && Boolean(activeId);
 
   useEffect(() => {
     if (filesEnabled) return;
@@ -430,6 +479,13 @@ function Shell({
       /* ignore storage failure */
     }
   }, [filesEnabled]);
+
+  useEffect(() => {
+    if (!showBrowser) return;
+    return onAgent((message) => {
+      if (message.type === "browser_activity" && message.chatId === activeId) openBrowser();
+    });
+  }, [activeId, openBrowser, showBrowser]);
 
   function remember(chat: ChatMeta) {
     setChats((current) => [chat, ...current.filter((item) => item.id !== chat.id)]);
@@ -526,10 +582,12 @@ function Shell({
   const canDownloadFiles = Boolean(session.fileDownload);
   const canUploadFiles = Boolean(session.fileUpload) && !session.filesReadOnly;
 
+  const sideOpen = (showFileManager && filesOpen) || (showBrowser && browserOpen);
+  const sideExpanded = sideOpen && !narrow && ((showFileManager && filesOpen && filesExpanded) || (showBrowser && browserOpen && browserExpanded));
   const shellClass = [
     "shell",
-    showFileManager && filesOpen ? "with-drawer" : "",
-    showFileManager && filesOpen && filesExpanded && !narrow ? "drawer-expanded" : "",
+    sideOpen ? "with-drawer" : "",
+    sideExpanded ? "drawer-expanded" : "",
     sidebarCollapsed && !narrow ? "sidebar-collapsed" : "",
     narrow && navOpen ? "nav-open" : "",
   ].filter(Boolean).join(" ");
@@ -609,6 +667,11 @@ function Shell({
               Files
             </button>
           )}
+          {showBrowser && (
+            <button className="mobile-files" type="button" aria-label="Browser" onClick={toggleBrowser}>
+              Browser
+            </button>
+          )}
         </header>
         {view === "settings" && (
           <SettingsView
@@ -632,7 +695,7 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog, fileDownloadOffered, fileUploadOffered) => onSession({
+            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog, fileDownloadOffered, fileUploadOffered, browserOffered, browserControls) => onSession({
               ...session,
               agents,
               rawTerminal,
@@ -641,6 +704,8 @@ function Shell({
               fileEditor: fileEditor ?? session.fileEditor,
               fileDownloadOffered: fileDownloadOffered ?? session.fileDownloadOffered,
               fileUploadOffered: fileUploadOffered ?? session.fileUploadOffered,
+              browserOffered: browserOffered ?? session.browserOffered,
+              browserControls: browserControls ?? session.browserControls,
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}
@@ -720,27 +785,47 @@ function Shell({
             projectCreate={Boolean(session.projectCreate)}
             onReposChanged={refreshRepos}
             onOpenFile={showFileManager ? openAgentFile : undefined}
+            browserOpen={showBrowser ? browserOpen : undefined}
+            onToggleBrowser={showBrowser ? toggleBrowser : undefined}
           />
         )}
       </section>
-      {showFileManager && selectedRepo && (
-        <FileManagerDrawer
-          workspace={selectedRepo.path}
-          repoName={selectedRepo.name}
-          open={filesOpen}
-          expanded={narrow ? false : filesExpanded}
-          canEdit={canEditFiles}
-          canDownload={canDownloadFiles}
-          canUpload={canUploadFiles}
-          refreshKey={filesRefreshKey}
-          openRequest={fileOpenRequest}
-          narrow={narrow}
-          onToggleExpanded={narrow ? undefined : toggleFilesExpanded}
-          onClose={() => {
-            setNavOpen(false);
-            toggleFiles();
-          }}
-        />
+      {(showFileManager || showBrowser) && (
+        <div className={sideOpen ? "side-column open" : "side-column"}>
+          {showFileManager && selectedRepo && (
+            <FileManagerDrawer
+              workspace={selectedRepo.path}
+              repoName={selectedRepo.name}
+              open={filesOpen}
+              expanded={narrow ? false : filesExpanded}
+              canEdit={canEditFiles}
+              canDownload={canDownloadFiles}
+              canUpload={canUploadFiles}
+              refreshKey={filesRefreshKey}
+              openRequest={fileOpenRequest}
+              narrow={narrow}
+              onToggleExpanded={narrow ? undefined : toggleFilesExpanded}
+              onClose={() => {
+                setNavOpen(false);
+                toggleFiles();
+              }}
+            />
+          )}
+          {showBrowser && activeId && browserOpen && (
+            <BrowserDrawer
+              key={activeId}
+              chatId={activeId}
+              controls={Boolean(session.browserControls)}
+              expanded={narrow ? false : browserExpanded}
+              narrow={narrow}
+              onToggleExpanded={narrow ? undefined : toggleBrowserExpanded}
+              onClose={() => {
+                setNavOpen(false);
+                toggleBrowser();
+              }}
+            />
+          )}
+        </div>
       )}
       {downloadJob?.phase === "ready" && !onDownloadPage && (
         <div className="download-popup" role="dialog" aria-labelledby="download-popup-title">

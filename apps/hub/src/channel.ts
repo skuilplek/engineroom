@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
-import type { RunnerRequest, StreamEvent } from "@engineroom/protocol";
+import type { BrowserStatus, RunnerRequest, StreamEvent } from "@engineroom/protocol";
 import { openRunnerSocket, type RunnerLink } from "./runner-client.ts";
 
 export type PushMessage =
   | { id: "push"; type: "chat_event"; chatId: string; seq: number; at: string; event: StreamEvent; turn?: number }
   | { id: "push"; type: "chats_changed" }
-  | { id: "push"; type: "pty"; chatId: string; data: string };
+  | { id: "push"; type: "pty"; chatId: string; data: string }
+  | { id: "push"; type: "browser_frame"; chatId: string; data: string }
+  | ({ id: "push"; type: "browser_status"; chatId: string } & BrowserStatus)
+  | { id: "push"; type: "browser_activity"; chatId: string };
 
 interface RunnerLine {
   id?: string;
@@ -19,6 +22,10 @@ interface RunnerLine {
   at?: string;
   turn?: number;
   data?: string;
+  url?: string;
+  title?: string;
+  canBack?: boolean;
+  canForward?: boolean;
 }
 
 export class RunnerChannel {
@@ -89,6 +96,28 @@ export class RunnerChannel {
           this.onPush({ id: "push", type: "chats_changed" });
         } else if (message.type === "pty" && message.chatId && typeof message.data === "string") {
           this.onPush({ id: "push", type: "pty", chatId: message.chatId, data: message.data });
+        } else if (message.type === "browser_frame" && message.chatId && typeof message.data === "string") {
+          this.onPush({ id: "push", type: "browser_frame", chatId: message.chatId, data: message.data });
+        } else if (message.type === "browser_activity" && message.chatId) {
+          this.onPush({ id: "push", type: "browser_activity", chatId: message.chatId });
+        } else if (
+          message.type === "browser_status"
+          && message.chatId
+          && typeof message.url === "string"
+          && typeof message.title === "string"
+          && typeof message.canBack === "boolean"
+          && typeof message.canForward === "boolean"
+        ) {
+          this.onPush({
+            id: "push",
+            type: "browser_status",
+            chatId: message.chatId,
+            url: message.url,
+            title: message.title,
+            canBack: message.canBack,
+            canForward: message.canForward,
+            ...(typeof message.error === "string" ? { error: message.error } : {}),
+          });
         }
         continue;
       }

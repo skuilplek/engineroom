@@ -1494,7 +1494,7 @@ html[data-wrap="1"] .diff-rows { width: auto; }
 @keyframes blink { 50% { opacity: 0; } }
 
 @media (min-width: 801px) {
-  .shell, .sidebar, .main, .file-drawer { height: 100vh; height: 100dvh; }
+  .shell, .sidebar, .main, .side-column, .file-drawer { height: 100vh; height: 100dvh; }
   .main { min-height: 0; overflow: hidden; }
 }
 .mobile-bar, .nav-scrim { display: none; }
@@ -1614,6 +1614,29 @@ html[data-wrap="1"] .diff-rows { width: auto; }
     white-space: nowrap;
     font-size: 15px;
     font-weight: 600;
+  }
+  .side-column.open {
+    display: flex;
+    position: fixed;
+    top: var(--vvtop, 0px);
+    left: 0;
+    right: 0;
+    width: auto;
+    height: var(--vvh, 100dvh);
+    z-index: 30;
+    background: var(--sidebar);
+  }
+  .side-column .file-drawer,
+  .side-column .file-drawer.expanded,
+  .side-column .browser-drawer {
+    position: static;
+    top: auto;
+    left: auto;
+    right: auto;
+    width: auto;
+    height: auto;
+    flex: 1 1 0;
+    max-height: none;
   }
   .file-drawer, .file-drawer.expanded {
     position: fixed;
@@ -3092,6 +3115,25 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   border-color: var(--line-strong);
 }
 
+.side-column {
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--sidebar);
+  border-left: 1px solid var(--line);
+}
+.side-column.open { display: flex; }
+.side-column > .file-drawer,
+.side-column > .browser-drawer {
+  flex: 1 1 0;
+  min-height: 0;
+  border-left: 0;
+}
+.side-column.open > .file-drawer:not(.closed) + .browser-drawer {
+  border-top: 1px solid var(--line);
+}
+.file-drawer.closed { display: none; }
 .file-drawer {
   background: var(--sidebar);
   border-left: 1px solid var(--line);
@@ -3100,6 +3142,50 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+.browser-drawer {
+  background: var(--sidebar);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.browser-bar input { flex: 1; min-width: 0; }
+.browser-nav { padding: 6px 10px; }
+.browser-error { padding: 0 12px; }
+.browser-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  background: #111;
+  outline: none;
+}
+.browser-stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  cursor: pointer;
+}
+.browser-stage.passive img { cursor: default; }
+.browser-empty {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  align-self: center;
+}
+.browser-hint {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
 }
 .file-drawer-head {
   display: flex;
@@ -4171,7 +4257,8 @@ html[data-wrap="1"] .code-editor-input {
   letter-spacing: 0.02em;
 }
 [data-theme="haxor"] .sidebar,
-[data-theme="haxor"] .file-drawer {
+[data-theme="haxor"] .file-drawer,
+[data-theme="haxor"] .browser-drawer {
   background:
     linear-gradient(180deg, rgba(0, 255, 65, 0.04) 0%, transparent 100%),
     var(--sidebar);
@@ -4215,7 +4302,8 @@ html[data-wrap="1"] .code-editor-input {
     var(--bg);
 }
 [data-theme="midnight"] .sidebar,
-[data-theme="midnight"] .file-drawer {
+[data-theme="midnight"] .file-drawer,
+[data-theme="midnight"] .browser-drawer {
   background:
     linear-gradient(180deg, rgba(139, 92, 246, 0.09) 0%, rgba(14, 7, 32, 0.96) 45%, rgba(217, 70, 239, 0.06) 100%),
     var(--sidebar);
@@ -4271,7 +4359,8 @@ html[data-wrap="1"] .code-editor-input {
     linear-gradient(180deg, #061015 0%, #04090c 100%);
 }
 [data-theme="engine"] .sidebar,
-[data-theme="engine"] .file-drawer {
+[data-theme="engine"] .file-drawer,
+[data-theme="engine"] .browser-drawer {
   background:
     linear-gradient(90deg, rgba(0, 242, 255, 0.6), rgba(43, 240, 160, 0.55), rgba(0, 242, 255, 0.15)) top / 100% 2px no-repeat,
     repeating-linear-gradient(
@@ -4414,7 +4503,8 @@ html[data-wrap="1"] .code-editor-input {
   background: transparent;
 }
 [data-theme="pi"] .sidebar,
-[data-theme="pi"] .file-drawer {
+[data-theme="pi"] .file-drawer,
+[data-theme="pi"] .browser-drawer {
   background:
     linear-gradient(180deg, rgba(33, 39, 48, 0.97), rgba(13, 17, 22, 0.94)),
     linear-gradient(90deg, rgba(75, 96, 124, 0.16), rgba(47, 95, 138, 0.08));

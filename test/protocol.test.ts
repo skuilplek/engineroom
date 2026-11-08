@@ -32,7 +32,11 @@ import {
   setCursorVariantFast,
   parseTransferBase64,
   repoUploadPath,
+  decodeBrowserFrame,
+  decodePtyFrame,
   defaultPolicy,
+  encodeBrowserFrame,
+  parseBrowserUrl,
   parseUserPolicy,
   socketPathForUser,
   THEMES,
@@ -1058,5 +1062,28 @@ test("prompt attachments must live in the upload folder", () => {
       size: 1,
     })),
   }), /too many attachments/);
+});
+
+test("browser policy, addresses, and frames stay separate from the terminal", () => {
+  assert.equal(defaultPolicy().browser, true);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true }).browser, true);
+  assert.equal(parseUserPolicy({ agents: ["cursor"], rawTerminal: true, browser: false }).browser, false);
+  assert.throws(() => parseUserPolicy({ agents: ["cursor"], rawTerminal: true, browser: "yes" }), /invalid browser/);
+  assert.equal(parseBrowserUrl("example.com/a"), "https://example.com/a");
+  assert.equal(parseBrowserUrl("http://127.0.0.1:9/hi"), "http://127.0.0.1:9/hi");
+  assert.throws(() => parseBrowserUrl("javascript:alert(1)"), /invalid url/);
+  assert.throws(() => parseBrowserUrl("file:///etc/passwd"), /invalid url/);
+  assert.throws(() => parseBrowserUrl("https://user:pass@example.com/"), /invalid url/);
+  const chatId = "11111111-1111-4111-8111-111111111111";
+  const jpeg = new Uint8Array([1, 2, 3]);
+  const frame = encodeBrowserFrame(chatId, jpeg);
+  assert.equal(frame[0], 2);
+  assert.equal(decodePtyFrame(frame), null);
+  const decoded = decodeBrowserFrame(frame);
+  assert.equal(decoded?.chatId, chatId);
+  assert.deepEqual(decoded?.data, jpeg);
+  const request = parseRunnerRequest({ id: "b", type: "browser_navigate", chatId, url: "example.com" });
+  assert.equal(request.type, "browser_navigate");
+  if (request.type === "browser_navigate") assert.equal(request.url, "https://example.com/");
 });
 

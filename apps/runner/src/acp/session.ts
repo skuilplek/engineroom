@@ -15,6 +15,13 @@ export class AcpUnavailable extends Error {
   }
 }
 
+export interface AcpMcpServer {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+}
+
 export interface AcpStart {
   binary: string;
   args: string[];
@@ -25,6 +32,7 @@ export interface AcpStart {
   mode: string;
   needsResync: boolean;
   permission: PermissionPolicy;
+  mcpServers?: AcpMcpServer[];
   onEvent: (event: StreamEvent) => void;
 }
 
@@ -109,8 +117,9 @@ export class AcpSession {
     if (method) await rpcTimeout(this.rpc.request("authenticate", { methodId: method }));
     if (this.start.needsResync) this.suppress = false;
     else this.suppress = Boolean(this.start.sessionId);
+    const mcpServers = this.start.mcpServers ?? [];
     const openNew = () =>
-      rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers: [] })) as Promise<Record<string, unknown>>;
+      rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers })) as Promise<Record<string, unknown>>;
     let created: Record<string, unknown>;
     if (this.start.sessionId) {
       try {
@@ -118,7 +127,7 @@ export class AcpSession {
           this.rpc.request("session/load", {
             sessionId: this.start.sessionId,
             cwd: this.start.cwd,
-            mcpServers: [],
+            mcpServers,
           }),
         )) as Record<string, unknown>;
       } catch {

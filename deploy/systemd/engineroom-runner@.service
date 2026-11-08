@@ -13,6 +13,8 @@ RestartSec=1
 # ~ is the home of User=. %h is /root for a system service.
 WorkingDirectory=~
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=ENGINEROOM_AGENTS_FILE=/var/lib/engineroom/agents.json
+Environment=ENGINEROOM_SOCKET_DIR=/run/engineroom
 Environment=ENGINEROOM_PEERCRED=/usr/local/bin/engineroom-peercred
 Environment=ENGINEROOM_HUB_USER=engineroom
 UMask=0077

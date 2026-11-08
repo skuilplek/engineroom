@@ -799,6 +799,7 @@ export function FileManagerDrawer({
   const listCollapsed = narrow && viewingFile && !listOpen;
   const drawerClass = [
     "file-drawer",
+    open ? "" : "closed",
     expanded ? "expanded" : "",
     listCollapsed ? "list-collapsed" : "",
     narrow && viewingFile && listOpen ? "list-open" : "",

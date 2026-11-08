@@ -101,7 +101,7 @@ systemctl status engineroom-runner@alice.socket
 The administrator named by `ENGINEROOM_ADMIN` in `/etc/engineroom/hub.env` can, from the Admin page:
 
 - Turn built-in agents on or off, add custom agent commands, and limit modes and models
-- Turn the raw terminal, file manager, file editor, and CLI session import on or off
+- Turn the raw terminal, file manager, file editor, browser, and CLI session import on or off
 - Maintain the repository catalog and the folder under each home where clones land
 - Add, revoke, remove, or set passwords for accounts, and set per-user grants, environment, and policy
 - Set the network name advertised as `<name>.local`, and connect Wi-Fi when a wireless card is present

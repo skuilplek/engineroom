@@ -6,6 +6,7 @@ import { useReportError } from "../errors.tsx";
 import adminGuide from "../../../../docs/guide/admin.md?raw";
 import chatsGuide from "../../../../docs/guide/chats.md?raw";
 import customizeGuide from "../../../../docs/guide/customize.md?raw";
+import browserGuide from "../../../../docs/guide/browser.md?raw";
 import filesGuide from "../../../../docs/guide/files.md?raw";
 import gitGuide from "../../../../docs/guide/git.md?raw";
 import howGuide from "../../../../docs/guide/how-it-works.md?raw";
@@ -20,7 +21,7 @@ interface DocLink {
   title: string;
 }
 
-type GuideId = "how" | "account" | "projects" | "chats" | "git" | "files" | "terminal" | "customize" | "enabled" | "admin";
+type GuideId = "how" | "account" | "projects" | "chats" | "git" | "files" | "browser" | "terminal" | "customize" | "enabled" | "admin";
 
 const GUIDE: { id: GuideId; title: string; markdown?: string; admin?: boolean }[] = [
   { id: "how", title: "How it works", markdown: howGuide },
@@ -29,6 +30,7 @@ const GUIDE: { id: GuideId; title: string; markdown?: string; admin?: boolean }[
   { id: "chats", title: "Chats", markdown: chatsGuide },
   { id: "git", title: "Git", markdown: gitGuide },
   { id: "files", title: "Files", markdown: filesGuide },
+  { id: "browser", title: "Browser", markdown: browserGuide },
   { id: "terminal", title: "Terminal", markdown: terminalGuide },
   { id: "customize", title: "Customize", markdown: customizeGuide },
   { id: "enabled", title: "What's enabled" },
@@ -202,6 +204,11 @@ function WhatsEnabled({ session }: { session: Session }) {
           label="File manager"
           on={session.fileManager}
           detail={`Lists the files in a project. Open it with Files on the start page or a chat.${grantLine(session.fileManagerOffered, session.fileManager)}`}
+        />
+        <OptionRow
+          label="Browser"
+          on={session.browser}
+          detail={`The page a chat shares with the agent. It opens when the agent browses.${grantLine(session.browserOffered, session.browser)}${session.browserControls ? " The address bar and page controls are on." : " The agent drives the page; the address bar stays off."}`}
         />
         <OptionRow
           label="File editor"

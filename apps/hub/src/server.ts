@@ -3,11 +3,11 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodeBrowserFrame, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
 import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, loadSessionHours, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, saveSessionHours, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadBrowser, loadBrowserControls, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, loadSessionHours, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, saveSessionHours, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { addSiteDoc, assertMarkdownName, listSiteDocs, readSiteDoc, removeSiteDoc, updateSiteDoc } from "./site-docs.ts";
@@ -268,6 +268,9 @@ export function createHub(options: HubOptions) {
       rawTerminal: access.rawTerminal,
       fileManager: access.fileManager,
       fileManagerOffered: loadFileManager(agentsFile),
+      browser: access.browser,
+      browserOffered: loadBrowser(agentsFile),
+      browserControls: loadBrowserControls(agentsFile),
       fileEditor: access.fileEditor,
       fileDownload: access.fileDownload,
       fileUpload: access.fileUpload,
@@ -296,6 +299,7 @@ export function createHub(options: HubOptions) {
     agents: AgentId[];
     rawTerminal: boolean;
     fileManager: boolean;
+    browser: boolean;
     fileEditor: boolean;
     fileDownload: boolean;
     fileUpload: boolean;
@@ -326,10 +330,14 @@ export function createHub(options: HubOptions) {
       optionMap[agent] = effectiveAgentOptions(config?.discovered, config?.offered, policy.options?.[agent]);
     }
     const fileManager = loadFileManager(agentsFile) && policy.fileManager;
+    const installed = await call(user, { type: "browser_available" })
+      .then((result) => Boolean((result as { available?: boolean }).available))
+      .catch(() => false);
     return {
       agents,
       rawTerminal: loadRawTerminal(agentsFile) && policy.rawTerminal,
       fileManager,
+      browser: loadBrowser(agentsFile) && policy.browser !== false && installed,
       fileEditor: loadFileEditor(agentsFile) && policy.fileEditor !== false,
       fileDownload: fileManager && loadFileDownload(agentsFile) && policy.fileDownload,
       fileUpload: fileManager && loadFileUpload(agentsFile) && policy.fileUpload,
@@ -555,6 +563,8 @@ export function createHub(options: HubOptions) {
         fileEditorFrom(body),
         fileDownloadFrom(body),
         fileUploadFrom(body),
+        browserFrom(body),
+        browserControlsFrom(body),
       );
       const listed = await visibleAgents(user);
       sendJson(res, 200, {
@@ -565,6 +575,8 @@ export function createHub(options: HubOptions) {
         fileEditor: loadFileEditor(agentsFile),
         fileDownload: loadFileDownload(agentsFile),
         fileUpload: loadFileUpload(agentsFile),
+        browser: loadBrowser(agentsFile),
+        browserControls: loadBrowserControls(agentsFile),
         agentCatalog: namesFor(
           offeredAgentIds(flags, listed),
           agentsFile,
@@ -1402,6 +1414,15 @@ export function createHub(options: HubOptions) {
       }
     }
     if (command.type === "pty_open" && !(await loadAccess(user)).rawTerminal) throw new Error("terminal is not enabled");
+    // The pane shows the page the agent drives. Typing an address and clicking the
+    // page are only offered once an administrator turns those controls on.
+    if (isBrowserControl(command.type) && !loadBrowserControls(agentsFile)) {
+      throw new Error("browser controls are not enabled");
+    }
+    if (command.type.startsWith("browser_") && command.type !== "browser_available" && !(await loadAccess(user)).browser) {
+      throw new Error("browser is not enabled");
+    }
+
     if ((command.type === "list_sessions" || command.type === "import_session") && !loadCliImport(agentsFile)) {
       throw new Error("CLI import is not enabled");
     }
@@ -1530,6 +1551,8 @@ export function createHub(options: HubOptions) {
       fileEditor: loadFileEditor(agentsFile),
       fileDownload: loadFileDownload(agentsFile),
       fileUpload: loadFileUpload(agentsFile),
+      browser: loadBrowser(agentsFile),
+      browserControls: loadBrowserControls(agentsFile),
       ...piPayload(agentsFile),
     };
   }
@@ -1787,6 +1810,26 @@ function forward(ws: WebSocket, message: PushMessage) {
     ws.send(encodePtyFrame(message.chatId, Buffer.from(message.data, "base64")));
     return;
   }
+  if (message.type === "browser_frame") {
+    ws.send(encodeBrowserFrame(message.chatId, Buffer.from(message.data, "base64")));
+    return;
+  }
+  if (message.type === "browser_activity") {
+    ws.send(JSON.stringify({ type: "browser_activity", chatId: message.chatId }));
+    return;
+  }
+  if (message.type === "browser_status") {
+    ws.send(JSON.stringify({
+      type: "browser_status",
+      chatId: message.chatId,
+      url: message.url,
+      title: message.title,
+      canBack: message.canBack,
+      canForward: message.canForward,
+      ...(message.error ? { error: message.error } : {}),
+    }));
+    return;
+  }
   if (message.type === "chats_changed") {
     ws.send(JSON.stringify({ type: "chats_changed" }));
     return;
@@ -1901,6 +1944,36 @@ function rawTerminalFrom(body: unknown): boolean | undefined {
 function cliImportFrom(body: unknown): boolean | undefined {
   if (!body || typeof body !== "object") return undefined;
   const value = (body as { cliImport?: unknown }).cliImport;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function browserFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { browser?: unknown }).browser;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+const BROWSER_CONTROL_TYPES = new Set<string>([
+  "browser_navigate",
+  "browser_back",
+  "browser_forward",
+  "browser_reload",
+  "browser_click",
+  "browser_type",
+  "browser_key",
+  "browser_scroll",
+  // Agents drive the page over the runner socket, not this path. A browser client
+  // reaching browser_tool would be a second way to steer the page by hand.
+  "browser_tool",
+]);
+
+function isBrowserControl(type: string): boolean {
+  return BROWSER_CONTROL_TYPES.has(type);
+}
+
+function browserControlsFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { browserControls?: unknown }).browserControls;
   return typeof value === "boolean" ? value : undefined;
 }
 

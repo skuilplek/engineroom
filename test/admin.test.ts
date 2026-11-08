@@ -2723,3 +2723,118 @@ test("engineroom-update refuses to run without root", () => {
   assert.match(result.stderr, /must run as root/);
 });
 
+
+test("the browser address bar stays hidden until an administrator turns it on", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-browser-controls-"));
+  const home = path.join(root, "alice");
+  const socketDir = path.join(root, "socks");
+  const agentsFile = path.join(root, "agents.json");
+  await mkdir(home);
+  await mkdir(socketDir);
+  await writeFile(agentsFile, JSON.stringify({ cursor: true, pi: true }));
+  const uid = process.getuid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid: process.getgid?.() ?? 1000,
+    home,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const runner = await startRunner({ home, socketPath: socketPathForUser(socketDir, "alice"), drivers });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("browser-controls-secret"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    agentsFile,
+    lookup: (username) => (username === "alice" ? alice : null),
+    authenticate: async () => true,
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+
+  function command(cookie: string, payload: object) {
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${new URL(base).port}/api/ws`, {
+        headers: { Cookie: cookie, Origin: base },
+      });
+      const timer = setTimeout(() => {
+        socket.close();
+        reject(new Error("no reply to the browser command"));
+      }, 3000);
+      socket.on("message", (data) => {
+        const text = data.toString();
+        if (!text.includes('"error"')) return;
+        clearTimeout(timer);
+        socket.close();
+        resolve(JSON.parse(text) as Record<string, unknown>);
+      });
+      socket.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      socket.once("open", () => socket.send(JSON.stringify(payload)));
+    });
+  }
+
+  try {
+    const loggedIn = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const cookie = (loggedIn.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    assert.ok(cookie);
+    const headers = { Cookie: cookie!, "Content-Type": "application/json" };
+    const chatId = "8f14e45f-ceea-467f-a1b2-2d3c4b5a6e70";
+
+    const hidden = (await (await fetch(`${base}/api/me`, { headers })).json()) as { browserControls?: boolean; browserOffered?: boolean };
+    assert.equal(hidden.browserControls, false);
+    assert.equal(hidden.browserOffered, true);
+
+    const refused = await command(cookie!, { type: "browser_navigate", chatId, url: "https://example.com/" });
+    assert.match(String(refused.error), /browser controls are not enabled/);
+
+    const stored = JSON.parse(await readFile(agentsFile, "utf8")) as { browserControls?: boolean };
+    assert.equal(stored.browserControls, undefined);
+
+    const saved = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, pi: true, browser: true, browserControls: true }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(((await saved.json()) as { browserControls: boolean }).browserControls, true);
+
+    const shown = (await (await fetch(`${base}/api/me`, { headers })).json()) as { browserControls?: boolean };
+    assert.equal(shown.browserControls, true);
+    const withControls = JSON.parse(await readFile(agentsFile, "utf8")) as { browser?: boolean; browserControls?: boolean };
+    assert.equal(withControls.browser, true);
+    assert.equal(withControls.browserControls, true);
+
+    // The address bar is allowed now, so the refusal comes from elsewhere: obscura
+    // is not installed for this account.
+    const allowed = await command(cookie!, { type: "browser_navigate", chatId, url: "https://example.com/" });
+    assert.equal(/browser controls are not enabled/.test(String(allowed.error)), false);
+
+    const off = await fetch(`${base}/api/admin/agents`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ cursor: true, pi: true, browser: true, browserControls: false }),
+    });
+    assert.equal(off.status, 200);
+    assert.equal(((await off.json()) as { browserControls: boolean }).browserControls, false);
+    const closed = (await (await fetch(`${base}/api/me`, { headers })).json()) as { browserControls?: boolean };
+    assert.equal(closed.browserControls, false);
+  } finally {
+    hub.close();
+    await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

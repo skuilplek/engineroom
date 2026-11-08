@@ -10,6 +10,7 @@ This is the guide for people signed in to the site. The same chapters appear und
 | [Chats](chats.md) | Prompts, modes, models, attachments, and the transcript |
 | [Git](git.md) | Branches, remotes, pull, push, and commits |
 | [Files](files.md) | The file list, editor, search, and changes |
+| [Browser](browser.md) | The page a chat shares with the agent |
 | [Terminal](terminal.md) | The shell on a chat |
 | [Customize](customize.md) | Theme, defaults, tool approval, and packages |
 | [Admin](admin.md) | Server, agents, packages, documents, repositories, and people |

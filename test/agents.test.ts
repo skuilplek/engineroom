@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isAccountPath, loadCursorCommands, loadCursorFast, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
+import { isAccountPath, loadBrowserControls, loadCursorCommands, loadCursorFast, loadPiConfig, piSetupAllowed, saveAgentFlags, usableAgentIds, withResolvedCommands, type ListedAgent } from "../apps/hub/src/agents.ts";
 
 function listed(id: ListedAgent["id"], available: boolean): ListedAgent {
   return {
@@ -65,6 +65,31 @@ test("a system path does not count as this account's install", () => {
   assert.equal(resolved.find((agent) => agent.id === "codex")?.path, "/home/zoe/.local/bin/codex");
   assert.equal(isAccountPath("/root/.local/bin/pi"), true);
   assert.equal(isAccountPath("/usr/local/bin/pi", "/home/admin"), false);
+});
+
+test("browser controls stay off until an administrator turns them on", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "er-browser-controls-"));
+  const file = path.join(dir, "agents.json");
+  try {
+    await writeFile(file, JSON.stringify({ cursor: true, pi: true }));
+    assert.equal(loadBrowserControls(file), false);
+    assert.equal(loadBrowserControls(""), false);
+    saveAgentFlags(file, { cursor: true, pi: true }, undefined, undefined, undefined, undefined, undefined, undefined, true);
+    // Saving the browser offer alone leaves the controls where they were.
+    assert.equal(loadBrowserControls(file), false);
+    const stored = JSON.parse(await readFile(file, "utf8")) as { browser?: boolean; browserControls?: boolean };
+    assert.equal(stored.browser, true);
+    assert.equal(stored.browserControls, false);
+    saveAgentFlags(file, { cursor: true, pi: true }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, true);
+    assert.equal(loadBrowserControls(file), true);
+    saveAgentFlags(file, { cursor: true, pi: true });
+    assert.equal(loadBrowserControls(file), true);
+    // With the browser off there is no page, so the controls go with it.
+    saveAgentFlags(file, { cursor: true, pi: true }, undefined, undefined, undefined, undefined, undefined, undefined, false);
+    assert.equal(loadBrowserControls(file), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("pi provider and model survive a later agent save", async () => {
