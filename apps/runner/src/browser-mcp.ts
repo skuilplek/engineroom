@@ -135,26 +135,21 @@ function callRunner(sock: string, request: Record<string, unknown>): Promise<unk
   });
 }
 
+// MCP over stdio is newline-delimited JSON. LSP-style Content-Length framing
+// (which this used to use) is never understood by the agent, so session/new
+// waited forever for the MCP handshake to complete.
 async function* readMessages(stream: NodeJS.ReadableStream): AsyncGenerator<Record<string, unknown>> {
-  let buf = Buffer.alloc(0);
+  let buf = "";
   for await (const chunk of stream) {
-    buf = Buffer.concat([buf, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-    while (true) {
-      const split = buf.indexOf("\r\n\r\n");
-      if (split < 0) break;
-      const header = buf.subarray(0, split).toString("utf8");
-      const match = /content-length:\s*(\d+)/i.exec(header);
-      if (!match) {
-        buf = buf.subarray(split + 4);
-        continue;
-      }
-      const length = Number(match[1]);
-      const start = split + 4;
-      if (buf.length < start + length) break;
-      const body = buf.subarray(start, start + length).toString("utf8");
-      buf = buf.subarray(start + length);
+    buf += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    let index = buf.indexOf("\n");
+    while (index >= 0) {
+      const line = buf.slice(0, index).replace(/\r$/, "").trim();
+      buf = buf.slice(index + 1);
+      index = buf.indexOf("\n");
+      if (!line) continue;
       try {
-        yield JSON.parse(body) as Record<string, unknown>;
+        yield JSON.parse(line) as Record<string, unknown>;
       } catch {
         /* skip a malformed message */
       }
@@ -163,9 +158,7 @@ async function* readMessages(stream: NodeJS.ReadableStream): AsyncGenerator<Reco
 }
 
 function writeMessage(message: Record<string, unknown>) {
-  const body = JSON.stringify(message);
-  const packet = `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
-  process.stdout.write(packet);
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 const entry = process.argv[1] || "";

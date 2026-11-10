@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timer?: NodeJS.Timeout;
 }
 
 export class JsonRpc {
@@ -32,11 +33,31 @@ export class JsonRpc {
     });
   }
 
-  request(method: string, params: unknown): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs = 0): Promise<unknown> {
     const id = this.next++;
     this.send({ jsonrpc: "2.0", id, method, params });
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const waiter: Pending = {
+        resolve: (value) => {
+          if (waiter.timer) clearTimeout(waiter.timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          if (waiter.timer) clearTimeout(waiter.timer);
+          reject(error);
+        },
+      };
+      if (timeoutMs > 0) {
+        waiter.timer = setTimeout(() => {
+          // Drop the waiter so a very late reply cannot resolve a request that
+          // the caller already gave up on, and so timed-out requests do not
+          // accumulate for the life of the agent process.
+          this.pending.delete(id);
+          reject(new Error(`agent did not answer to ${method}`));
+        }, timeoutMs);
+        waiter.timer.unref?.();
+      }
+      this.pending.set(id, waiter);
     });
   }
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import type { AgentId } from "@engineroom/protocol";
 import { AcpManager, acpCommand } from "../apps/runner/src/acp/manager.ts";
+import { JsonRpc } from "../apps/runner/src/acp/rpc.ts";
 import { agentContentBlocks } from "../apps/runner/src/prompt-content.ts";
 import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
@@ -35,6 +37,16 @@ test("prompt blocks link every file and include images only when the agent accep
   assert.deepEqual(vision.map((block) => block.type), ["text", "resource_link", "image", "resource_link"]);
   const plain = agentContentBlocks("look", [shot], false);
   assert.deepEqual(plain.map((block) => block.type), ["text", "resource_link"]);
+});
+
+test("a request that never gets an answer times out with the method name", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], { stdio: ["pipe", "pipe", "pipe"] });
+  try {
+    const rpc = new JsonRpc(child, async () => ({}), () => undefined);
+    await assert.rejects(() => rpc.request("initialize", {}, 50), /agent did not answer to initialize/);
+  } finally {
+    child.kill("SIGKILL");
+  }
 });
 
 test("a custom agent launches its command with acp", () => {

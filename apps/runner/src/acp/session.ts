@@ -8,6 +8,13 @@ import type { AgentContentBlock } from "../prompt-content.ts";
 import { mapUpdate } from "./map.ts";
 import { JsonRpc } from "./rpc.ts";
 
+// The agent handshake is not instant. cursor-agent validates the saved login
+// over the network during authenticate, which regularly takes 10-20 seconds
+// and can be slower on a busy machine. These timeouts only guard against a
+// process that never answers; a normal turn is not bounded by them.
+export const ACP_HANDSHAKE_TIMEOUT_MS = 60_000;
+export const ACP_CONTROL_TIMEOUT_MS = 20_000;
+
 export class AcpUnavailable extends Error {
   constructor(message = "acp adapter is not installed") {
     super(message);
@@ -105,30 +112,34 @@ export class AcpSession {
     this.rpc = new JsonRpc(child, (method, params, id) => this.incoming(method, params, id), (method, params) => {
       this.note(method, params);
     });
-    const initialized = (await rpcTimeout(
-      this.rpc.request("initialize", {
+    const initialized = (await this.rpc.request(
+      "initialize",
+      {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true },
         clientInfo: { name: "engineroom", version: "0.1.0" },
-      }),
+      },
+      ACP_HANDSHAKE_TIMEOUT_MS,
     )) as { authMethods?: { id: string }[]; agentCapabilities?: { promptCapabilities?: { image?: boolean } } };
     this.acceptsImages = initialized.agentCapabilities?.promptCapabilities?.image === true;
     const method = initialized.authMethods?.[0]?.id;
-    if (method) await rpcTimeout(this.rpc.request("authenticate", { methodId: method }));
+    if (method) await this.rpc.request("authenticate", { methodId: method }, ACP_HANDSHAKE_TIMEOUT_MS);
     if (this.start.needsResync) this.suppress = false;
     else this.suppress = Boolean(this.start.sessionId);
     const mcpServers = this.start.mcpServers ?? [];
     const openNew = () =>
-      rpcTimeout(this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers })) as Promise<Record<string, unknown>>;
+      this.rpc.request("session/new", { cwd: this.start.cwd, mcpServers }, ACP_HANDSHAKE_TIMEOUT_MS) as Promise<Record<string, unknown>>;
     let created: Record<string, unknown>;
     if (this.start.sessionId) {
       try {
-        created = (await rpcTimeout(
-          this.rpc.request("session/load", {
+        created = (await this.rpc.request(
+          "session/load",
+          {
             sessionId: this.start.sessionId,
             cwd: this.start.cwd,
             mcpServers,
-          }),
+          },
+          ACP_HANDSHAKE_TIMEOUT_MS,
         )) as Record<string, unknown>;
       } catch {
         // The saved agent session can disappear after an upgrade. Continue in a new one.
@@ -200,14 +211,14 @@ export class AcpSession {
 
   async setMode(modeId: string) {
     if (!this.sessionId) return;
-    await rpcTimeout(this.rpc.request("session/set_mode", { sessionId: this.sessionId, modeId }));
+    await this.rpc.request("session/set_mode", { sessionId: this.sessionId, modeId }, ACP_CONTROL_TIMEOUT_MS);
     if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
     this.onEvent({ type: "mode", modeId });
   }
 
   async setModel(modelId: string) {
     if (!this.sessionId || !modelId) return;
-    await rpcTimeout(this.rpc.request("session/set_model", { sessionId: this.sessionId, modelId }));
+    await this.rpc.request("session/set_model", { sessionId: this.sessionId, modelId }, ACP_CONTROL_TIMEOUT_MS);
     if (this.models) this.models = { ...this.models, currentModelId: modelId };
   }
 
@@ -416,23 +427,6 @@ export async function stopChild(child: ChildProcess | undefined) {
       /* already gone */
     }
   }
-}
-
-export function rpcTimeout<T>(work: Promise<T>, ms = 8000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("agent did not answer")), ms);
-    timer.unref?.();
-    work.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error instanceof Error ? error : new Error("agent request failed"));
-      },
-    );
-  });
 }
 
 function readModes(value: unknown): AcpSession["modes"] {

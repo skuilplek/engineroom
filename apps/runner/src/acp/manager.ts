@@ -3,7 +3,15 @@ import { childEnv, resolveBinary } from "../cli.ts";
 import { binaryFor, loadPolicy } from "../policy.ts";
 import { agentContentBlocks, type LoadedPromptAttachment } from "../prompt-content.ts";
 import { loadSettings } from "../store.ts";
-import { AcpSession, AcpUnavailable, catalogFromSession, rpcTimeout, stopChild, type AcpMcpServer, type AcpStart } from "./session.ts";
+import {
+  ACP_HANDSHAKE_TIMEOUT_MS,
+  AcpSession,
+  AcpUnavailable,
+  catalogFromSession,
+  stopChild,
+  type AcpMcpServer,
+  type AcpStart,
+} from "./session.ts";
 
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_SESSIONS = 4;
@@ -179,16 +187,18 @@ export class AcpManager {
     const { JsonRpc } = await import("./rpc.ts");
     const rpc = new JsonRpc(child, async () => ({}), () => undefined);
     try {
-      const initialized = (await rpcTimeout(
-        rpc.request("initialize", {
+      const initialized = (await rpc.request(
+        "initialize",
+        {
           protocolVersion: 1,
           clientCapabilities: {},
           clientInfo: { name: "engineroom", version: "0.1.0" },
-        }),
+        },
+        ACP_HANDSHAKE_TIMEOUT_MS,
       )) as { authMethods?: { id: string }[] };
       const method = initialized.authMethods?.[0]?.id;
-      if (method) await rpcTimeout(rpc.request("authenticate", { methodId: method }));
-      const created = await rpcTimeout(rpc.request("session/new", { cwd, mcpServers: [] }));
+      if (method) await rpc.request("authenticate", { methodId: method }, ACP_HANDSHAKE_TIMEOUT_MS);
+      const created = await rpc.request("session/new", { cwd, mcpServers: [] }, ACP_HANDSHAKE_TIMEOUT_MS);
       return catalogFromSession(created);
     } finally {
       await stopChild(child);
@@ -213,16 +223,20 @@ export class AcpManager {
     const { JsonRpc } = await import("./rpc.ts");
     const rpc = new JsonRpc(child, async () => ({}), () => undefined);
     try {
-      const initialized = (await rpcTimeout(
-        rpc.request("initialize", {
+      const initialized = (await rpc.request(
+        "initialize",
+        {
           protocolVersion: 1,
           clientCapabilities: {},
           clientInfo: { name: "engineroom", version: "0.1.0" },
-        }),
+        },
+        ACP_HANDSHAKE_TIMEOUT_MS,
       )) as { authMethods?: { id: string }[] };
       const method = initialized.authMethods?.[0]?.id;
-      if (method) await rpcTimeout(rpc.request("authenticate", { methodId: method }));
-      const listed = (await rpcTimeout(rpc.request("session/list", { cwd }))) as { sessions?: ListedSession[] } | ListedSession[];
+      if (method) await rpc.request("authenticate", { methodId: method }, ACP_HANDSHAKE_TIMEOUT_MS);
+      const listed = (await rpc.request("session/list", { cwd }, ACP_HANDSHAKE_TIMEOUT_MS)) as
+        | { sessions?: ListedSession[] }
+        | ListedSession[];
       const sessions = Array.isArray(listed) ? listed : listed.sessions ?? [];
       return sessions
         .filter((item) => item && typeof item.sessionId === "string")
