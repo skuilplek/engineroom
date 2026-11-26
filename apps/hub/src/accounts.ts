@@ -26,6 +26,24 @@ export function listAccounts(group = "engineroom-users"): Account[] {
   return accounts;
 }
 
+let cachedNames: { names: Set<string>; expires: number } | null = null;
+const NAMES_TTL_MS = 5_000;
+
+// The set of account names a preview URL may name. Every non-API request on the
+// app port consults this to decide whether /<user>/... is a preview, so it is
+// cached rather than running getent for each asset.
+export function accountNames(group = "engineroom-users"): Set<string> {
+  const now = Date.now();
+  if (cachedNames && cachedNames.expires > now) return cachedNames.names;
+  const names = new Set(listAccounts(group).map((account) => account.username));
+  cachedNames = { names, expires: now + NAMES_TTL_MS };
+  return names;
+}
+
+export function invalidateAccountNames() {
+  cachedNames = null;
+}
+
 export function cleanPassword(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) throw new Error("password is empty");
   if (value.length > 200) throw new Error("password is too long");

@@ -678,6 +678,7 @@ function Shell({
             agents={session.agents}
             agentCatalog={session.agentCatalog}
             options={session.options}
+            admin={session.admin}
             fileEditorAllowed={session.fileEditor}
             piSetup={session.piSetup}
             themes={session.themes}
@@ -695,7 +696,7 @@ function Shell({
         {view === "admin" && session.admin && (
           <AdminView
             session={session}
-            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog, fileDownloadOffered, fileUploadOffered, browserOffered, browserControls) => onSession({
+            onAgents={(agents, rawTerminal, cliImport, fileManagerOffered, fileEditor, agentCatalog, fileDownloadOffered, fileUploadOffered, browserOffered, browserControls, sitePreviews) => onSession({
               ...session,
               agents,
               rawTerminal,
@@ -706,6 +707,7 @@ function Shell({
               fileUploadOffered: fileUploadOffered ?? session.fileUploadOffered,
               browserOffered: browserOffered ?? session.browserOffered,
               browserControls: browserControls ?? session.browserControls,
+              sitePreviews: sitePreviews ?? session.sitePreviews,
               agentCatalog: agentCatalog ?? session.agentCatalog,
             })}
             onBranding={(appName) => onSession({ ...session, appName })}

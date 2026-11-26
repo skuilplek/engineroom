@@ -44,6 +44,12 @@ export const USERNAME_RE = /^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/;
 export const CHAT_ID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * A deleted project's folder in `~/.trash`: a sortable timestamp, then the
+ * project folder name reduced to characters that are safe in a path.
+ */
+export const TRASH_ID_RE = /^[0-9]{8}T[0-9]{6}Z(-[0-9]+)?-[A-Za-z0-9._-]{1,64}$/;
+
 export type PermissionPolicy = "ask" | "allow" | "edits";
 
 export const THEMES = ["dark", "light", "haxor", "midnight", "engine", "pi"] as const;
@@ -194,6 +200,15 @@ export interface RepositoryEntry {
   name: string;
   enabled: boolean;
   archived: boolean;
+}
+
+/** A project that was deleted and is waiting in the account's trash. */
+export interface TrashEntry {
+  id: string;
+  name: string;
+  path: string;
+  deletedAt: string;
+  chats: number;
 }
 
 export interface FileVisibility {
@@ -479,6 +494,8 @@ export type RunnerRequest =
   | { id: string; type: "create_repository"; name: string; directory: string; url?: string }
   | { id: string; type: "set_repository_archived"; workspace: string; archived: boolean }
   | { id: string; type: "delete_repository"; workspace: string; name: string }
+  | { id: string; type: "list_trash" }
+  | { id: string; type: "delete_trash"; trashId: string }
   | { id: string; type: "send"; chatId: string; prompt: string; attachments?: PromptAttachment[] }
   | { id: string; type: "prompt"; chatId: string; prompt: string; attachments?: PromptAttachment[] }
   | { id: string; type: "cancel"; chatId: string }
@@ -580,6 +597,8 @@ export type RunnerRequest =
   | { id: string; type: "start_project_archive"; workspace: string }
   | { id: string; type: "project_archive_status"; archiveId: string }
   | { id: string; type: "read_project_archive"; archiveId: string }
+  | { id: string; type: "read_site_file"; sitePath: string }
+  | { id: string; type: "list_site_directories" }
   | { id: string; type: "browser_available" }
   | { id: string; type: "browser_open"; chatId: string; width: number; height: number }
   | { id: string; type: "browser_resize"; chatId: string; width: number; height: number }
@@ -679,6 +698,13 @@ export function assertUsername(value: string): string {
 export function assertChatId(value: unknown): string {
   if (typeof value !== "string" || !CHAT_ID_RE.test(value)) {
     throw new Error("invalid chat id");
+  }
+  return value;
+}
+
+export function assertTrashId(value: unknown): string {
+  if (typeof value !== "string" || !TRASH_ID_RE.test(value)) {
+    throw new Error("invalid trash id");
   }
   return value;
 }
@@ -812,6 +838,7 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
     case "get_settings":
     case "list_workspaces":
     case "list_repositories":
+    case "list_trash":
       return { id: body.id, type: body.type };
     case "set_repositories":
       return { id: body.id, type: "set_repositories", enabled: parseEnabledPaths(body.enabled) };
@@ -859,6 +886,8 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       if (name.length > 512 || name.includes("\0") || name.includes("\\")) throw new Error("invalid project name");
       return { id: body.id, type: "delete_repository", workspace: workspace.trim(), name };
     }
+    case "delete_trash":
+      return { id: body.id, type: "delete_trash", trashId: assertTrashId(body.trashId) };
     case "get_chat":
     case "cancel":
       return { id: body.id, type: body.type, chatId: assertChatId(body.chatId) };
@@ -1178,6 +1207,10 @@ export function parseRunnerRequest(value: unknown): RunnerRequest {
       return { id: body.id, type: "project_archive_status", archiveId: assertArchiveId(body.archiveId) };
     case "read_project_archive":
       return { id: body.id, type: "read_project_archive", archiveId: assertArchiveId(body.archiveId) };
+    case "read_site_file":
+      return { id: body.id, type: "read_site_file", sitePath: parseSitePath(body.sitePath) };
+    case "list_site_directories":
+      return { id: body.id, type: "list_site_directories" };
     case "browser_available":
       return { id: body.id, type: "browser_available" };
     case "browser_open":
@@ -1417,6 +1450,33 @@ export function assertRepoRelativePath(value: unknown): string {
   if (parts.length === 0 || parts.length > 64) throw new Error("invalid file path");
   for (const part of parts) {
     if (part === "." || part === "..") throw new Error("invalid file path");
+  }
+  return parts.join("/");
+}
+
+// A path below the account's repository folder, as it appears in a preview URL.
+// Dot segments and backslashes are refused here; the runner repeats the check
+// after resolving the file so a symlink cannot leave the folder.
+// A project whose entry point is a server-side script. A preview is static files
+// only, so this is not a "not found": the folder is there and the hub can name
+// the file that would have had to run. The entry name follows the prefix.
+export const PREVIEW_NEEDS_SERVER = "preview needs a server: ";
+
+export function parseSitePath(value: unknown): string {
+  if (typeof value !== "string") throw new Error("invalid site path");
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new Error("invalid site path");
+  }
+  if (!decoded || decoded.length > 4096 || decoded.includes("\\") || decoded.includes("\0")) {
+    throw new Error("invalid site path");
+  }
+  const parts = decoded.split("/").filter((part) => part.length > 0);
+  if (parts.length === 0 || parts.length > 64) throw new Error("invalid site path");
+  for (const part of parts) {
+    if (part === "." || part === "..") throw new Error("invalid site path");
   }
   return parts.join("/");
 }

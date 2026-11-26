@@ -1,6 +1,6 @@
 # Admin
 
-Admin is in the account menu for the administrator. The tabs are Overview, Server, Agents, Packages, Docs, Repositories, and Users. Arrow keys move between the tabs while the tab list is focused.
+Admin is in the account menu for the administrator. The tabs are Overview, Server, Agents, Packages, Docs, Repositories, Trash, and Users. Arrow keys move between the tabs while the tab list is focused.
 
 Offer a tool or an agent here, then allow it on a person's page. They can use it while the offer is on and, for an agent, while the command is installed on their account.
 
@@ -34,6 +34,9 @@ Available agents is the offer list. Turn an agent on here before you can allow i
 - File editor
 - File download
 - File upload
+- Site previews
+
+Site previews is not a per-person grant. It opens a second port, `:8081` by default, where every account can publish a folder from its home as a static web page at `http://<server>:8081/<username>/<project>/`. It is off until you save it on here. See [Site previews](previews.md) for the address, what is published, and why the port is separate from the app's.
 
 Save agents stores the offer. Discard drops unsaved changes. Nothing is offered until you save. Load modes and models asks the selected agent which modes and models it has, so you can choose which of those to offer.
 
@@ -73,6 +76,14 @@ File manager visibility chooses what the file list includes. Hidden files, gitig
 
 Repository catalog is the list of remotes a person can be granted. Add repository records a name and a Git URL. Remove drops that entry. Granting one, on the person's page, clones it into their repository folder. A checkout that is already there stays available for chats.
 
+## Trash
+
+Deleting a project moves its folder and chats into `~/.trash` in that person's home instead of removing them. Trash lists what every account is holding on to: the project name, whose trash it is in, when it was deleted, and how many chats went with it. Refresh reads the trash again.
+
+Each entry sits in `.trash/<time>-<name>/` with the project folder under its own name and the chats it had. It can be put back by hand, with `mv ~/.trash/<id>/<name> ~/Sites/`.
+
+Delete asks you to type the project name, then removes that entry for good. Emptying the trash cannot be undone. A trashed project stays out of the person's project list, so they see it gone right away.
+
 ## Users
 
 The table lists Linux accounts. Filter by username, UID, or home directory, and filter by role. Copy path copies a home directory. Configure opens that person.
@@ -99,4 +110,4 @@ Git identity is their global git name and email. It does not rename the Linux ac
 
 Recent user conversations lists what this person asked, with the agent's replies. Open a row to read that thread.
 
-For someone other than yourself, Security and password sets a new password. Danger zone removes the Linux account and leaves their home directory in place. Remove account asks you to confirm.
+For someone other than yourself, Security and password sets a new password. There is no password to read back, only to replace. A person can also change their own password from Customize after typing their current one. Your own account is the exception: the site refuses to change it, so set it on the machine with `passwd`. Danger zone removes the Linux account and leaves their home directory in place. Remove account asks you to confirm.

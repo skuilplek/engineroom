@@ -3,11 +3,11 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodeBrowserFrame, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseSystemPromptText, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type UserAccess, type UserPolicy } from "@engineroom/protocol";
+import { assertAbsoluteFilePath, assertBranchName, assertChatId, assertGitUrl, assertRepoRelativePath, assertTrashId, assertUsername, cleanMode, cleanModel, CURSOR_DEFAULT_MODEL_ID, decodePtyFrame, effectiveAgentOptions, encodeBrowserFrame, encodePtyFrame, isAgentId, isBuiltinAgent, isCommandBlockStyle, isExtensionSlug, isInsidePath, MAX_PROMPT_ATTACHMENT_BYTES, MAX_PROMPT_ATTACHMENTS, MAX_TRANSFER_BYTES, parseAgentCommand, parseAgentLabel, parseClientCommand, parseCommitMessage, parseEnvEntries, parseExtensionSource, parseFileVisibility, parseGitEmail, parseGitName, parsePromptAttachments, parseShellCommands, parseSystemPromptText, parseUserPolicy, piDefaultAllowed, repoUploadPath, resolveTheme, type AgentDefinition, type AgentId, type AgentOptionChoice, type CatalogEntry, type ChatMeta, type EnvEntry, type ExtensionRecord, type FileVisibility, type PromptAttachment, type RepoFileDownload, type RepoFileUpload, type RepositoryEntry, type RunnerRequest, type Settings, type SettingsPatch, type TrashEntry, type UserAccess, type UserPolicy } from "@engineroom/protocol";
 import { installExtension, readExtensionDoc, readScopedTheme, removeExtension, setExtensionEnabled, updateExtension } from "@engineroom/protocol/extensions";
-import { type Account, cleanPassword, listAccounts, runAdminCtl } from "./accounts.ts";
+import { type Account, accountNames, cleanPassword, invalidateAccountNames, listAccounts, runAdminCtl } from "./accounts.ts";
 import { loadAgentOptions, recordProbe, restrictPolicy, saveOfferedOptions } from "./agent-options.ts";
-import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadBrowser, loadBrowserControls, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, loadSessionHours, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, saveSessionHours, usableAgentIds, withResolvedCommands } from "./agents.ts";
+import { addCustomAgent, customCatalog, detectionNames, listAgents, loadAgentFlags, loadAppName, loadBrowser, loadBrowserControls, loadCliImport, loadCursorCommands, loadCursorFast, loadCustomAgents, loadFileDownload, loadFileEditor, loadFileManager, loadFileUpload, loadPiConfig, loadRawTerminal, loadSessionHours, loadSitePreviews, namesFor, offeredAgentIds, piSetupAllowed, removeCustomAgent, saveAgentFlags, saveAppName, saveSessionHours, usableAgentIds, withResolvedCommands } from "./agents.ts";
 import { enabledPackageAgents, enabledThemes, packageAgentNames, siteExtensionRecords, siteExtensionRoot, siteReserved } from "./extensions.ts";
 import { addCatalogEntry, loadCatalog, removeCatalogEntry } from "./catalog.ts";
 import { addSiteDoc, assertMarkdownName, listSiteDocs, readSiteDoc, removeSiteDoc, updateSiteDoc } from "./site-docs.ts";
@@ -45,6 +45,12 @@ export interface HubOptions {
   authenticate?: (username: string, password: string) => Promise<boolean>;
   listAccounts?: () => Account[];
   runAdmin?: (action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) => Promise<void>;
+  // Port where site previews are served. When set, /<user>/... on this port is
+  // redirected to the same path on that port so the two never share an origin.
+  previewPort?: number;
+  // Whether the administrator has site previews on. Read per request so a
+  // toggle takes effect at once; absent means the flag file is consulted.
+  sitePreviews?: () => boolean;
 }
 
 const failures = new Map<string, { count: number; reset: number }>();
@@ -99,6 +105,7 @@ interface RunnerCall {
   errorId?: string;
   stageVisible?: boolean;
   archiveId?: string;
+  trashId?: string;
   archived?: boolean;
   source?: string;
   themeId?: string;
@@ -106,6 +113,12 @@ interface RunnerCall {
   reservedThemes?: string[];
   reservedDocs?: string[];
   reservedAgents?: string[];
+}
+
+/** A trashed project, tagged with the account whose trash holds it. */
+interface TrashListing extends TrashEntry {
+  username: string;
+  home: string;
 }
 
 export function createHub(options: HubOptions) {
@@ -121,10 +134,18 @@ export function createHub(options: HubOptions) {
   const checksFile = options.checksFile || "";
   const commandDirs = options.commandDirs;
   const accounts = options.listAccounts ?? (() => listAccounts());
+  const previewPort = options.previewPort && options.previewPort > 0 ? options.previewPort : 0;
+  const sitePreviews = options.sitePreviews ?? (() => loadSitePreviews(agentsFile));
+  // With a fixed account list (tests, or an injected directory) the set is
+  // derived once; otherwise it is the cached group lookup.
+  const previewName = options.listAccounts
+    ? (name: string) => accounts().some((account) => account.username === name)
+    : (name: string) => accountNames().has(name);
   const runAdmin = async (action: "add" | "revoke" | "passwd" | "remove", username: string, password?: string) => {
     if (options.runAdmin) await options.runAdmin(action, username, password);
     else await runAdminCtl(options.adminCtl || "/usr/local/bin/engineroom-admin", action, username, password);
     invalidateUserCache(username);
+    invalidateAccountNames();
   };
   const readUpdate = options.readUpdate ?? (() => readUpdateState(
     options.updateStatusFile || process.env.ENGINEROOM_UPDATE_STATUS || "/var/lib/engineroom/update.status",
@@ -199,6 +220,7 @@ export function createHub(options: HubOptions) {
       return;
     }
     if (!url.pathname.startsWith("/api/")) {
+      if (redirectToPreview(req, res, url.pathname, url.search)) return;
       serveStatic(req, res, url.pathname);
       return;
     }
@@ -219,6 +241,10 @@ export function createHub(options: HubOptions) {
     if (url.pathname === "/api/pi/setup" && req.method === "POST") {
       await setupPi(user);
       sendJson(res, 200, await profile(user));
+      return;
+    }
+    if (url.pathname === "/api/password" && req.method === "POST") {
+      await changeOwnPassword(req, res, user);
       return;
     }
     if (url.pathname.startsWith("/api/admin")) {
@@ -255,6 +281,31 @@ export function createHub(options: HubOptions) {
     sendJson(res, 200, await profile(user));
   }
 
+  async function changeOwnPassword(req: IncomingMessage, res: ServerResponse, user: LinuxUser) {
+    // The administrator account is not managed by engineroom-admin, which
+    // refuses to touch it. Their password is changed on the server instead.
+    if (adminUser !== "" && user.username === adminUser) {
+      sendJson(res, 403, { error: "the administrator password is changed on the server" });
+      return;
+    }
+    const key = `${clientAddress(req)}:${user.username}`;
+    if (limited(key)) {
+      sendJson(res, 429, { error: "too many attempts" });
+      return;
+    }
+    const body = (await readJson(req)) as { current?: unknown; password?: unknown };
+    const current = typeof body.current === "string" ? body.current : "";
+    const ok = current.length > 0 && await authenticate(user.username, current);
+    if (!ok) {
+      noteFailure(key);
+      sendJson(res, 401, { error: "invalid password" });
+      return;
+    }
+    failures.delete(key);
+    await runAdmin("passwd", user.username, cleanPassword(body.password));
+    sendJson(res, 200, { ok: true });
+  }
+
   async function profile(user: LinuxUser) {
     const access = await loadAccess(user, true);
     const settings = (await call(user, { type: "get_settings" })) as Settings;
@@ -273,6 +324,7 @@ export function createHub(options: HubOptions) {
       browser: access.browser,
       browserOffered: loadBrowser(agentsFile),
       browserControls: loadBrowserControls(agentsFile),
+      sitePreviews: loadSitePreviews(agentsFile),
       fileEditor: access.fileEditor,
       fileDownload: access.fileDownload,
       fileUpload: access.fileUpload,
@@ -567,6 +619,7 @@ export function createHub(options: HubOptions) {
         fileUploadFrom(body),
         browserFrom(body),
         browserControlsFrom(body),
+        sitePreviewsFrom(body),
       );
       const listed = await visibleAgents(user);
       sendJson(res, 200, {
@@ -579,6 +632,7 @@ export function createHub(options: HubOptions) {
         fileUpload: loadFileUpload(agentsFile),
         browser: loadBrowser(agentsFile),
         browserControls: loadBrowserControls(agentsFile),
+        sitePreviews: loadSitePreviews(agentsFile),
         agentCatalog: namesFor(
           offeredAgentIds(flags, listed),
           agentsFile,
@@ -818,7 +872,40 @@ export function createHub(options: HubOptions) {
       sendJson(res, 200, await call(target, { type: "get_chat", chatId }));
       return;
     }
+    if (parts[2] === "trash" && parts.length === 3 && req.method === "GET") {
+      sendJson(res, 200, { entries: await listAllTrash() });
+      return;
+    }
+    if (parts[2] === "trash" && parts.length === 5 && req.method === "DELETE") {
+      const target = managedUser(parts[3] || "");
+      const trashId = assertTrashId(decodeURIComponent(parts[4] || ""));
+      await call(target, { type: "delete_trash", trashId });
+      sendJson(res, 200, { entries: await listAllTrash() });
+      return;
+    }
     sendJson(res, 404, { error: "not found" });
+  }
+
+  // Deleted projects live in each person's own home, so the trash is read from
+  // every account's runner. One account whose runner is down must not hide
+  // what the others are holding on to.
+  async function listAllTrash(): Promise<TrashListing[]> {
+    const targets = accounts()
+      .map((account) => lookup(account.username))
+      .filter((target): target is LinuxUser => Boolean(target) && userMayLogin(target));
+    const perUser = await Promise.all(
+      targets.map(async (target) => {
+        try {
+          const entries = (await call(target, { type: "list_trash" })) as TrashEntry[];
+          return entries.map((entry) => ({ ...entry, username: target.username, home: target.home }));
+        } catch {
+          return [];
+        }
+      }),
+    );
+    return perUser
+      .flat()
+      .sort((a, b) => b.deletedAt.localeCompare(a.deletedAt) || a.username.localeCompare(b.username));
   }
 
   function managedUser(name: string): LinuxUser {
@@ -1584,6 +1671,7 @@ export function createHub(options: HubOptions) {
       fileUpload: loadFileUpload(agentsFile),
       browser: loadBrowser(agentsFile),
       browserControls: loadBrowserControls(agentsFile),
+      sitePreviews: loadSitePreviews(agentsFile),
       ...piPayload(agentsFile),
     };
   }
@@ -1800,6 +1888,39 @@ export function createHub(options: HubOptions) {
     return callRunner(options.link, user.username, user.uid, { ...request, id: randomUUID() } as RunnerRequest);
   }
 
+  // A preview URL on the app's own port is sent to the preview port. The app
+  // and a user's sites never share an origin, and this keeps the short
+  // /<user>/<project>/<file> form working for people who type it.
+  function redirectToPreview(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): boolean {
+    if (!previewPort || !sitePreviews() || (req.method !== "GET" && req.method !== "HEAD")) return false;
+    const name = pathname.split("/").filter(Boolean)[0];
+    if (!name || !previewName(name)) return false;
+    // A user whose name is also a folder of the built UI would otherwise take
+    // over /assets/... and break the app itself.
+    if (ownStaticFile(pathname)) return false;
+    // The host people already reached is the host they are sent to; only the
+    // port changes. That keeps a name, an address, and a proxy in front all
+    // working without extra configuration.
+    const host = previewHostFor(req);
+    if (!host) return false;
+    const relaxed = req.headers["x-forwarded-proto"] === "http" || !options.cookieSecure;
+    res.writeHead(302, {
+      Location: `${relaxed ? "http" : "https"}://${host}:${previewPort}${pathname}${search}`,
+      "Cache-Control": "no-store",
+    });
+    res.end();
+    return true;
+  }
+
+  // Whether the built UI has a file at this path. Checked before a preview
+  // redirect so the app's own files always win over an account name.
+  function ownStaticFile(pathname: string): boolean {
+    if (!options.webDist) return false;
+    const root = path.resolve(options.webDist);
+    const file = path.resolve(root, pathname.replace(/^\/+/, ""));
+    return isInsidePath(root, file) && existsSync(file) && statSync(file).isFile();
+  }
+
   function serveStatic(req: IncomingMessage, res: ServerResponse, pathname: string) {
     if (!options.webDist) {
       sendJson(res, 404, { error: "not found" });
@@ -1891,6 +2012,19 @@ function mutationOriginAllowed(req: IncomingMessage): boolean {
   const site = req.headers["sec-fetch-site"];
   if (typeof site === "string" && site !== "same-origin" && site !== "none") return false;
   return true;
+}
+
+// The hostname this request was addressed to, without its port. A Host header
+// naming something other than a host:port is refused rather than echoed back.
+function previewHostFor(req: IncomingMessage): string {
+  const raw = req.headers.host;
+  if (typeof raw !== "string" || !raw.trim()) return "";
+  try {
+    const parsed = new URL(`http://${raw.trim()}`);
+    return parsed.hostname;
+  } catch {
+    return "";
+  }
 }
 
 function clientAddress(req: IncomingMessage): string {
@@ -2008,6 +2142,12 @@ function browserControlsFrom(body: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function sitePreviewsFrom(body: unknown): boolean | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const value = (body as { sitePreviews?: unknown }).sitePreviews;
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function fileManagerFrom(body: unknown): boolean | undefined {
   if (!body || typeof body !== "object") return undefined;
   const value = (body as { fileManager?: unknown }).fileManager;
@@ -2073,6 +2213,7 @@ function statusFor(message: string): number {
     message.includes("does not report") ||
     message.includes("not a regular file") ||
     message.includes("too large") ||
+    message.includes("too long") ||
     message.includes("too many documents") ||
     message.includes("cannot edit binary") ||
     message.includes("already exists") ||

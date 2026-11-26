@@ -21,6 +21,7 @@ import {
   type UserPolicy,
 } from "@engineroom/protocol";
 import { PackagesSection } from "./PackagesSection.tsx";
+import { TrashSection } from "./TrashSection.tsx";
 import { SiteDocsSection } from "./SiteDocsSection.tsx";
 import { ServerConfig } from "./ServerConfig.tsx";
 import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
@@ -75,7 +76,7 @@ import { useReportError } from "../errors.tsx";
 import { message, relativeTime } from "../format.ts";
 import { normalizeTheme, THEME_CATALOG } from "../theme.ts";
 
-type AdminTab = "overview" | "server" | "agents" | "packages" | "docs" | "repositories" | "users";
+type AdminTab = "overview" | "server" | "agents" | "packages" | "docs" | "repositories" | "trash" | "users";
 
 type FolderBaseline = {
   directory: string;
@@ -94,6 +95,7 @@ type OfferSnapshot = {
   fileUpload: boolean;
   browser: boolean;
   browserControls: boolean;
+  sitePreviews: boolean;
   piProvider: string;
   piModel: string;
   cursorCommands: string[];
@@ -108,6 +110,7 @@ const TABS: { id: AdminTab; label: string }[] = [
   { id: "packages", label: "Packages" },
   { id: "docs", label: "Docs" },
   { id: "repositories", label: "Repositories" },
+  { id: "trash", label: "Trash" },
   { id: "users", label: "Users" },
 ];
 
@@ -131,6 +134,7 @@ export function AdminView({
     fileUploadOffered?: boolean,
     browserOffered?: boolean,
     browserControls?: boolean,
+    sitePreviews?: boolean,
   ) => void;
   onBranding: (appName: string) => void;
   onSessionHours: (sessionHours: number) => void;
@@ -151,6 +155,7 @@ export function AdminView({
   const [fileUpload, setFileUpload] = useState(session.fileUploadOffered ?? false);
   const [browser, setBrowser] = useState(session.browserOffered ?? true);
   const [browserControls, setBrowserControls] = useState(session.browserControls ?? false);
+  const [sitePreviews, setSitePreviews] = useState(session.sitePreviews ?? false);
   const [piProvider, setPiProvider] = useState("");
   const [piModel, setPiModel] = useState("");
   const [cursorCommandText, setCursorCommandText] = useState("");
@@ -253,6 +258,7 @@ export function AdminView({
       setFileUpload(body.fileUpload ?? false);
       setBrowser(body.browser ?? true);
       setBrowserControls(body.browserControls ?? false);
+      setSitePreviews(body.sitePreviews ?? false);
       setPiProvider(body.piProvider ?? "");
       setPiModel(body.piModel ?? "");
       setCursorCommandText((body.cursorCommands ?? []).join("\n"));
@@ -268,6 +274,7 @@ export function AdminView({
         fileUpload: body.fileUpload ?? false,
         browser: body.browser ?? true,
         browserControls: body.browserControls ?? false,
+        sitePreviews: body.sitePreviews ?? false,
         piProvider: body.piProvider ?? "",
         piModel: body.piModel ?? "",
         cursorCommands: [...(body.cursorCommands ?? [])],
@@ -297,7 +304,7 @@ export function AdminView({
     setFlags(next);
   }
 
-  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean; browser?: boolean; browserControls?: boolean }, select?: string) {
+  function applyInventory(body: { agents: AdminAgent[]; rawTerminal: boolean; cliImport: boolean; fileManager?: boolean; fileEditor?: boolean; fileDownload?: boolean; fileUpload?: boolean; browser?: boolean; browserControls?: boolean; sitePreviews?: boolean }, select?: string) {
     setInventory(body.agents);
     const nextFlags = Object.fromEntries(body.agents.map((agent) => [agent.id, agent.enabled]));
     setFlags(nextFlags);
@@ -309,6 +316,7 @@ export function AdminView({
     if (typeof body.fileUpload === "boolean") setFileUpload(body.fileUpload);
     if (typeof body.browser === "boolean") setBrowser(body.browser);
     if (typeof body.browserControls === "boolean") setBrowserControls(body.browserControls);
+    if (typeof body.sitePreviews === "boolean") setSitePreviews(body.sitePreviews);
     setSavedOffer((current) => ({
       ...current,
       flags: nextFlags,
@@ -320,6 +328,7 @@ export function AdminView({
       fileUpload: typeof body.fileUpload === "boolean" ? body.fileUpload : current.fileUpload,
       browser: typeof body.browser === "boolean" ? body.browser : current.browser,
       browserControls: typeof body.browserControls === "boolean" ? body.browserControls : current.browserControls,
+      sitePreviews: typeof body.sitePreviews === "boolean" ? body.sitePreviews : current.sitePreviews,
     }));
     if (select) setAgentTab(select);
   }
@@ -365,7 +374,7 @@ export function AdminView({
     setError("");
     try {
       const commands = commandLines(cursorCommandText);
-      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, {
+      const savedAgents = await saveAgents(flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, sitePreviews, {
         piProvider: piProvider.trim(),
         piModel: piModel.trim(),
         cursorCommands: commands,
@@ -382,6 +391,7 @@ export function AdminView({
         savedAgents.fileUpload ?? fileUpload,
         savedAgents.browser ?? browser,
         savedAgents.browserControls ?? browserControls,
+        savedAgents.sitePreviews ?? sitePreviews,
       );
       const provider = piProvider.trim();
       const model = piModel.trim();
@@ -412,6 +422,7 @@ export function AdminView({
         fileUpload: savedAgents.fileUpload ?? fileUpload,
         browser: savedAgents.browser ?? browser,
         browserControls: savedAgents.browserControls ?? browserControls,
+        sitePreviews: savedAgents.sitePreviews ?? sitePreviews,
         piProvider: savedAgents.piProvider ?? provider,
         piModel: savedAgents.piModel ?? model,
         cursorCommands: [...(savedAgents.cursorCommands ?? commands)],
@@ -437,6 +448,7 @@ export function AdminView({
     setFileUpload(savedOffer.fileUpload);
     setBrowser(savedOffer.browser);
     setBrowserControls(savedOffer.browserControls);
+    setSitePreviews(savedOffer.sitePreviews);
     setPiProvider(savedOffer.piProvider);
     setPiModel(savedOffer.piModel);
     setCursorCommandText(savedOffer.cursorCommands.join("\n"));
@@ -463,6 +475,7 @@ export function AdminView({
     fileUpload,
     browser,
     browserControls,
+    sitePreviews,
     piProvider,
     piModel,
     cursorCommands: commandLines(cursorCommandText),
@@ -711,7 +724,7 @@ export function AdminView({
               <button className="overview-link" type="button" onClick={() => openTab("agents")}>
                 <span>Agents</span>
                 <strong>{offered.length}</strong>
-                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {browser ? "Browser on." : "Browser off."} {browserControls ? "Browser address bar on." : "Browser address bar off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."}</span>
+                <span className="muted">{offered.length ? offered.join(", ") : "None offered"}. {rawTerminal ? "Terminal on." : "Terminal off."} {fileManager ? "File manager on." : "File manager off."} {browser ? "Browser on." : "Browser off."} {browserControls ? "Browser address bar on." : "Browser address bar off."} {fileEditor ? "File editor on." : "File editor off."} {fileDownload ? "File download on." : "File download off."} {fileUpload ? "File upload on." : "File upload off."} {cliImport ? "CLI import on." : "CLI import off."} {sitePreviews ? "Site previews on." : "Site previews off."}</span>
               </button>
               <button className="overview-link" type="button" onClick={() => openTab("packages")}>
                 <span>Packages</span>
@@ -810,6 +823,10 @@ export function AdminView({
                     <label className={fileUpload ? "privilege on" : "privilege"}>
                       <input type="checkbox" checked={fileUpload} onChange={() => setFileUpload((value) => !value)} />
                       File upload
+                    </label>
+                    <label className={sitePreviews ? "privilege on" : "privilege"}>
+                      <input type="checkbox" checked={sitePreviews} onChange={() => setSitePreviews((value) => !value)} />
+                      Site previews
                     </label>
                   </div>
                 </div>
@@ -1136,6 +1153,12 @@ export function AdminView({
                 <button className="primary" type="submit" form="repo-folder" disabled={busy}>Save folder</button>
               </div>
             </footer>
+          </div>
+        )}
+
+        {tab === "trash" && (
+          <div className="admin-pane admin-detail">
+            <TrashSection />
           </div>
         )}
 
@@ -2896,6 +2919,7 @@ function sessionOffer(session: Session): OfferSnapshot {
     fileUpload: session.fileUploadOffered ?? false,
     browser: session.browserOffered ?? true,
     browserControls: session.browserControls ?? false,
+    sitePreviews: session.sitePreviews ?? false,
     piProvider: "",
     piModel: "",
     cursorCommands: [],
@@ -2945,6 +2969,7 @@ function offersEqual(left: OfferSnapshot, right: OfferSnapshot): boolean {
   if (left.fileUpload !== right.fileUpload) return false;
   if (left.browser !== right.browser) return false;
   if (left.browserControls !== right.browserControls) return false;
+  if (left.sitePreviews !== right.sitePreviews) return false;
   if (left.piProvider !== right.piProvider) return false;
   if (left.piModel !== right.piModel) return false;
   if (left.cursorCommands.length !== right.cursorCommands.length) return false;

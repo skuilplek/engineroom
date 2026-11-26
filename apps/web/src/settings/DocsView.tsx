@@ -11,6 +11,7 @@ import filesGuide from "../../../../docs/guide/files.md?raw";
 import gitGuide from "../../../../docs/guide/git.md?raw";
 import howGuide from "../../../../docs/guide/how-it-works.md?raw";
 import projectsGuide from "../../../../docs/guide/projects.md?raw";
+import previewsGuide from "../../../../docs/guide/previews.md?raw";
 import terminalGuide from "../../../../docs/guide/terminal.md?raw";
 import accountGuide from "../../../../docs/guide/your-account.md?raw";
 
@@ -21,12 +22,13 @@ interface DocLink {
   title: string;
 }
 
-type GuideId = "how" | "account" | "projects" | "chats" | "git" | "files" | "browser" | "terminal" | "customize" | "enabled" | "admin";
+type GuideId = "how" | "account" | "projects" | "previews" | "chats" | "git" | "files" | "browser" | "terminal" | "customize" | "enabled" | "admin";
 
 const GUIDE: { id: GuideId; title: string; markdown?: string; admin?: boolean }[] = [
   { id: "how", title: "How it works", markdown: howGuide },
   { id: "account", title: "Your account", markdown: accountGuide },
   { id: "projects", title: "Projects", markdown: projectsGuide },
+  { id: "previews", title: "Site previews", markdown: previewsGuide },
   { id: "chats", title: "Chats", markdown: chatsGuide },
   { id: "git", title: "Git", markdown: gitGuide },
   { id: "files", title: "Files", markdown: filesGuide },

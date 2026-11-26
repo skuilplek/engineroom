@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { displayModelName, isCommandBlockStyle, isTheme, type AgentId, type AgentOptionChoice, type CommandBlockStyle, type ExtensionTheme, type Settings, type SettingsPatch, type ThemePreference } from "@engineroom/protocol";
 import { agentLabel } from "@engineroom/protocol";
-import { getCursorCommands, getPiSystemPrompt, getSettings, saveCursorCommands, savePiSystemPrompt, saveSettings, type Session } from "../api.ts";
+import { ApiError, changeOwnPassword, getCursorCommands, getPiSystemPrompt, getSettings, saveCursorCommands, savePiSystemPrompt, saveSettings, SessionExpiredError, type Session } from "../api.ts";
 import { commandLines, CursorCommandFields } from "./CursorCommands.tsx";
 import { PiSystemPromptFields, type PiSystemPromptDraft } from "./PiSystemPrompt.tsx";
 import { useReportError } from "../errors.tsx";
@@ -14,6 +14,7 @@ export function SettingsView({
   agents,
   agentCatalog,
   options,
+  admin = false,
   fileEditorAllowed = true,
   piSetup = false,
   themes = [],
@@ -26,6 +27,7 @@ export function SettingsView({
   agents: AgentId[];
   agentCatalog?: { id: string; label: string }[];
   options: Partial<Record<AgentId, { modes: AgentOptionChoice[]; models: AgentOptionChoice[] }>>;
+  admin?: boolean;
   fileEditorAllowed?: boolean;
   piSetup?: boolean;
   themes?: ExtensionTheme[];
@@ -47,6 +49,10 @@ export function SettingsView({
     if (value) report("Settings", value);
   }
   const [busy, setBusy] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [passwordNote, setPasswordNote] = useState("");
   const installedIds = themes.map((theme) => theme.id).filter((id) => !isTheme(id));
   const themeCards = [
     ...THEME_CATALOG,
@@ -168,6 +174,33 @@ export function SettingsView({
       setSaved("Pi instructions saved");
     } catch (err) {
       setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePassword(event: FormEvent) {
+    event.preventDefault();
+    setSaved("");
+    setPasswordNote("");
+    setError("");
+    if (next !== confirm) {
+      setPasswordNote("Passwords do not match");
+      return;
+    }
+    setBusy(true);
+    try {
+      await changeOwnPassword(current, next);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setPasswordNote("Password changed");
+    } catch (err) {
+      if (err instanceof SessionExpiredError) return;
+      if (err instanceof ApiError && err.status === 401) setPasswordNote("That is not your current password.");
+      else if (err instanceof ApiError && err.status === 429) setPasswordNote("Too many attempts. Wait a few minutes and try again.");
+      else if (err instanceof ApiError && err.status === 403) setPasswordNote(message(err));
+      else setError(message(err));
     } finally {
       setBusy(false);
     }
@@ -367,6 +400,49 @@ export function SettingsView({
       {saved && <p className="muted">{saved}</p>}
       <button className="primary" type="submit" disabled={busy}>Save</button>
     </form>
+    {admin ? (
+      <>
+        <h2>Password</h2>
+        <p className="muted">This account is the administrator on this server, so its password is changed on the machine itself with passwd. Keep it somewhere safe: an administrator who forgets it needs someone with root to reset it.</p>
+      </>
+    ) : (
+      <form onSubmit={(event) => void savePassword(event)}>
+        <h2>Password</h2>
+        <p className="muted">Change the password you sign in with. Your current password is needed to confirm it.</p>
+        <label>
+          Current password
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={current}
+            onChange={(event) => setCurrent(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          New password
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={next}
+            onChange={(event) => setNext(event.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Confirm new password
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+            required
+          />
+        </label>
+        {passwordNote && <p className="muted">{passwordNote}</p>}
+        <button className="primary" type="submit" disabled={busy}>Change password</button>
+      </form>
+    )}
     {commands != null && (
       <form onSubmit={(event) => void saveCommands(event)}>
         <h2>Cursor commands</h2>

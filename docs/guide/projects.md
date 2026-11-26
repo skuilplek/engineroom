@@ -2,6 +2,8 @@
 
 A project is a folder the server has found in your home, usually under `Sites`. Its chats are listed under the folder name in the sidebar.
 
+A folder can also be published as a web page on the local network, without starting a server. See [Site previews](previews.md).
+
 ## Home
 
 When nothing is open, the page asks what you want to work on.
@@ -32,8 +34,10 @@ The buttons along the top:
 
 - **Download project** saves the folder as a zip, when project downloads are on. Wait until the zip is ready, then Download. Dismiss closes that prompt.
 - **Archive** moves the project under Archived. On an archived project the same button is Unarchive.
-- **Delete** asks you to type the folder name. Delete project then removes that folder and its chats.
+- **Delete** asks you to type the folder name. Delete project then moves that folder and its chats into `~/.trash` in your home, so nothing is lost by mistake. The administrator can see and empty the trash on the admin page.
 - **Files** opens the file list when the file manager is on.
+
+Attaching a file to a prompt stores it in `.engineroom/uploads` inside that project. The app keeps a `.gitignore` in `.engineroom` containing `*`, so nothing in that folder is ever committed or pushed with your project.
 
 ## Import CLI sessions
 

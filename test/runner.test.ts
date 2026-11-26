@@ -10,7 +10,7 @@ import type { AgentDriver } from "../apps/runner/src/drivers.ts";
 import { archiveDirectory, archiveFileName, archivePath, archiveUserHash } from "../apps/runner/src/archive.ts";
 import { startRunner } from "../apps/runner/src/server.ts";
 import { createRepository, syncGrantedRepositories } from "../apps/runner/src/repos.ts";
-import { createChat, deleteRepository, getChat, listChats, listRepositories, setEnabledRepositories, setRepositoryArchived, updateChat } from "../apps/runner/src/store.ts";
+import { createChat, deleteRepository, deleteTrash, getChat, listChats, listRepositories, listTrash, setEnabledRepositories, setRepositoryArchived, updateChat } from "../apps/runner/src/store.ts";
 import { listGitRepositories, listWorkspaces, resolveWorkspace } from "../apps/runner/src/workspace.ts";
 import { assertBranchName, MAX_TRANSFER_BYTES } from "@engineroom/protocol";
 import { gitCreateBranch, gitInitWorkspace, gitPull, gitPush, gitSetRemote, gitStatus, gitSwitch, readGitIdentity, writeGitIdentity } from "../apps/runner/src/git.ts";
@@ -1113,6 +1113,12 @@ test("prompt attachments stay in the hidden upload folder", async () => {
     const saved = await savePromptAttachment(home, repo, "My Shot.png", "application/octet-stream", png.toString("base64"));
     assert.equal(saved.mimeType, "image/png");
     assert.match(saved.path, /^\.engineroom\/uploads\/[0-9a-f-]{36}-My_Shot\.png$/);
+    // The app's folder ignores itself, so an upload never reaches a commit.
+    assert.equal(await readFile(path.join(repo, ".engineroom", ".gitignore"), "utf8"), "*\n");
+    await execFileAsync("git", ["add", "-A"], { cwd: repo });
+    assert.equal((await execFileAsync("git", ["diff", "--cached", "--name-only"], { cwd: repo })).stdout.trim(), "");
+    const ignored = await execFileAsync("git", ["check-ignore", saved.path], { cwd: repo });
+    assert.equal(ignored.stdout.trim(), saved.path);
     const hidden = await listRepositoryFiles(home, repo);
     assert.equal(hidden.files.some((file) => file.path.startsWith(".engineroom")), false);
     const visible = await listRepositoryFiles(home, repo, { showHidden: true, showGitignored: true, showGitDir: false });
@@ -1561,7 +1567,7 @@ function rpcBytes(socketPath: string, request: Record<string, unknown>): Promise
   });
 }
 
-test("archiving a project keeps the folder and deleting it requires the folder name", async () => {
+test("archiving a project keeps the folder and deleting it moves it to the trash", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "er-project-life-"));
   const outside = await mkdtemp(path.join(tmpdir(), "er-project-life-out-"));
   const sites = path.join(home, "Sites");
@@ -1595,12 +1601,31 @@ test("archiving a project keeps the folder and deleting it requires the folder n
     const cancelled: string[] = [];
     await deleteRepository(home, repo, "widget", (id) => cancelled.push(id));
     assert.deepEqual(cancelled, [gone.id]);
+    // The project folder and its chats are moved, not removed.
     await assert.rejects(() => stat(repo));
     await assert.rejects(() => stat(path.join(home, ".engineroom", "chats", gone.id)));
     await stat(path.join(home, ".engineroom", "chats", kept.id));
+    const trashed = await listTrash(home);
+    assert.equal(trashed.length, 1);
+    assert.equal(trashed[0]?.name, "widget");
+    assert.equal(trashed[0]?.path, repo);
+    assert.equal(trashed[0]?.chats, 1);
+    assert.match(trashed[0]?.id ?? "", /-widget$/);
+    const entryDir = path.join(home, ".trash", trashed[0]!.id);
+    await stat(path.join(entryDir, "widget", ".git"));
+    await stat(path.join(entryDir, "chats", gone.id));
+    const meta = JSON.parse(await readFile(path.join(entryDir, "trash.json"), "utf8")) as { chats: string[] };
+    assert.deepEqual(meta.chats, [gone.id]);
     const listed = await listRepositories(home);
     assert.equal(listed.some((entry) => entry.name === "widget"), false);
     assert.equal(listed.find((entry) => entry.name === "other")?.enabled, true);
+
+    // Emptying the trash is the only step that removes the files.
+    const left = await deleteTrash(home, trashed[0]!.id);
+    assert.deepEqual(left, []);
+    await assert.rejects(() => stat(entryDir));
+    await assert.rejects(() => deleteTrash(home, trashed[0]!.id), /trashed project not found/);
+    await assert.rejects(() => deleteTrash(home, "../escape"), /invalid trash id/);
   } finally {
     await rm(home, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });

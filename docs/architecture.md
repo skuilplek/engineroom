@@ -7,6 +7,8 @@ flowchart LR
   Browser -->|"HTTPS"| Caddy
   Caddy -->|"127.0.0.1:8787"| Hub
   Browser -->|"WebSocket /api/ws"| Hub
+  Browser -->|"HTTP :8081 previews"| Preview
+  Preview -->|"Unix socket /run/engineroom/user.sock"| Runner
   Hub -->|"Unix socket /run/engineroom/user.sock"| Runner
   Runner --> Acp["ACP or CLI driver"]
   Runner --> Pty["PTY"]
@@ -18,10 +20,14 @@ flowchart LR
 [`apps/hub`](../apps/hub) is an HTTP server. In production it also serves the built UI from `ENGINEROOM_WEB_DIST`. [`apps/hub/src/server.ts`](../apps/hub/src/server.ts) handles:
 
 - `POST /api/login` and `POST /api/logout`, and `GET /api/me`
+- `POST /api/password` for a person changing their own password, after the hub checks the current one with PAM (the administrator account is refused)
 - `GET /api/health` for install and update checks
 - Admin and user JSON routes under `/api/`
 - WebSocket upgrades on `/api/ws` for chat events and terminal frames
 - Static files when `webDist` is set; otherwise non-API paths return 404
+- A redirect to the preview port for `/<username>/...`, when previews are on
+
+`GET /<username>/...` and `GET /<username>/` on the app port are answered with a 302 to the same path on `ENGINEROOM_PREVIEW_LISTEN`, so an old bookmark keeps working. Nothing is read from the home for that redirect: it happens before any file is opened.
 
 Login looks the account up with `getent` and checks the password with the PAM helper. A session is an HMAC cookie, `engineroom_session`. It lasts for the signed-in time chosen by the administrator: 12 hours unless changed, and at most 24 ([`apps/hub/src/session.ts`](../apps/hub/src/session.ts)). The clock starts at sign-in. The signing key is created on first start and stored in `ENGINEROOM_SESSION_SECRET_FILE`.
 
@@ -43,12 +49,21 @@ The runner owns:
 
 The hub never runs `agent` or `pi`. Those processes are children of the runner, so they see the user's `HOME`, `PATH`, and SSH agent.
 
+### Site previews
+
+[`apps/hub/src/preview.ts`](../apps/hub/src/preview.ts) is a second HTTP server in the hub process, on `ENGINEROOM_PREVIEW_LISTEN` (default `0.0.0.0:8081`). It serves static files from `~/<repository directory>/<project>/` at `/<username>/<project>/<file>`.
+
+The port is bound at startup, but whether it answers is the `sitePreviews` key in `/var/lib/engineroom/agents.json` (`loadSitePreviews` in [`apps/hub/src/agents.ts`](../apps/hub/src/agents.ts)), which is off when the file or the key is missing. The setting is read on every request through the `enabled` callback, so the Admin switch takes effect without a restart; while it is off every path gets a 404 before any account or file is looked up, and the app stops redirecting `/<user>/...` to the port. Reads go through the same runner socket as the file manager, so the hub still needs no access to a home directory, and the runner applies the same containment checks: no `..`, no dot segments, no symlink out of the folder, no server-side scripts. Only `GET` and `HEAD` are answered.
+
+The preview server is a separate origin on purpose. The session cookie is not scoped to a port, so a page on `:8081` is same-site with the app and its fetches do carry `engineroom_session`. What stops it from acting on that cookie is the app's own origin check: a request whose `Origin` names `:8081` does not match the `Host` on `:8787`, so a mutation is refused, and a read gets no CORS headers to expose its result to the page.
+
 ## Security model
 
 - **Who may sign in.** The account must be in `engineroom-users`, have uid 500 or higher, and use a real shell. Password checking is delegated to `engineroom-pam-auth` (`/etc/pam.d/engineroom`).
 - **Who may call a runner.** The hub checks that the socket file is owned by the signed-in uid and that the peer process is that uid, or uid 0 while systemd still holds the listener. The runner checks the reverse: the peer must be the runner's own uid or `ENGINEROOM_HUB_USER`. Both checks use `engineroom-peercred`.
 - **No root.** `engineroom-hub` and `engineroom-runner` exit immediately when uid is 0.
 - **Browser origin.** A WebSocket upgrade requires an `Origin` whose host matches `Host`. State-changing HTTP requests are rejected when `Origin` is set and does not match `Host`, or when `Sec-Fetch-Site` is something other than `same-origin` or `none`.
+- **Password.** A person changing their own password is authenticated twice: the current password through `engineroom-pam-auth`, and the new one written by `engineroom-admin passwd` (sudo). Attempts share the same per-address counter as sign-in. The administrator account is refused because `engineroom-admin` will not change it.
 - **Admin.** Only the username in `ENGINEROOM_ADMIN` is treated as the administrator. Account create, revoke, password, and remove go through `engineroom-admin` (sudo). The network name and Wi-Fi go through `engineroom-network` (sudo). An update goes through `engineroom-update` (sudo) after the hub has checked the administrator's password. That helper starts `update.sh` in a transient unit so the hub restart does not stop the script.
 - **systemd hardening on the hub.** The unit sets `ProtectSystem=strict`, `ProtectHome=true`, and `PrivateTmp=true`, with writes limited to `/var/lib/engineroom`. The hub still reaches user homes only by asking the runner.
 
@@ -56,7 +71,7 @@ The hub never runs `agent` or `pi`. Those processes are children of the runner, 
 
 | Unit | Role |
 | --- | --- |
-| [`engineroom-hub.service`](../deploy/systemd/engineroom-hub.service) | Hub as user `engineroom`, listening on `127.0.0.1:8787` |
+| [`engineroom-hub.service`](../deploy/systemd/engineroom-hub.service) | Hub as user `engineroom`, listening on `127.0.0.1:8787`, and the site preview server on `0.0.0.0:8081` |
 | [`engineroom-runner@.socket`](../deploy/systemd/engineroom-runner@.socket) | Listens on `/run/engineroom/%i.sock`, owned by that user, group `engineroom`, mode `0660` |
 | [`engineroom-runner@.service`](../deploy/systemd/engineroom-runner@.service) | Runner as `%i`, socket-activated, `UMask=0077` |
 

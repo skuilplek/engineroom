@@ -167,12 +167,157 @@ export async function streamRunnerFile(
       }
       output.on("drain", () => socket.resume());
       output.on("error", (error) => fail(error));
+      // The browser closing the tab mid-file is ordinary, but the runner
+      // should stop reading a file nobody will receive.
+      output.on("close", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        socket.destroy();
+        resolve();
+      });
       const rest = buf.subarray(index + 1);
       buf = Buffer.alloc(0);
       if (remaining === 0) {
         finish();
         return;
       }
+      if (rest.length > 0) take(rest);
+    });
+    socket.on("error", (error) => fail(error));
+    socket.on("end", () => {
+      if (!settled) fail(new Error("runner closed the connection"));
+    });
+    socket.on("close", () => {
+      if (!settled) fail(new Error("runner closed the connection"));
+    });
+    socket.write(`${JSON.stringify(request)}\n`);
+  });
+}
+
+export interface SiteFileMeta {
+  size: number;
+  type: string;
+  etag: string;
+  modified: string;
+  directory?: boolean;
+}
+
+// Like streamRunnerFile, but the runner describes the file (size, type, etag)
+// instead of naming a zip. Returning nothing from begin skips the body, which
+// is how a HEAD request gets headers without transferring the file.
+export async function streamSiteFile(
+  link: RunnerLink,
+  username: string,
+  uid: number,
+  request: RunnerRequest,
+  begin: (meta: SiteFileMeta) => ServerResponse | undefined,
+): Promise<void> {
+  const socket = await openRunnerSocket(link, username, uid);
+  const timeoutMs = 10 * 60 * 1000;
+  await new Promise<void>((resolve, reject) => {
+    let buf = Buffer.alloc(0);
+    let meta: SiteFileMeta | undefined;
+    let remaining = 0;
+    let settled = false;
+    let output: ServerResponse | undefined;
+    const timer = setTimeout(() => fail(new Error("runner timed out")), timeoutMs);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (output && !output.writableEnded) output.destroy();
+      reject(error);
+    };
+    const finish = (dropBody = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // A redirect or a HEAD leaves the body unwanted. Destroying the socket
+      // stops the runner instead of streaming a file nobody will read.
+      if (dropBody) socket.destroy();
+      else socket.end();
+      // Ending the response matters as much as the Content-Length: without it
+      // the server keeps a keep-alive connection open for a body that is
+      // already complete, and the next request on that connection never runs.
+      if (output && !output.writableEnded) output.end();
+      resolve();
+    };
+    const take = (chunk: Buffer) => {
+      if (!output) {
+        // A redirect was written; the body is not wanted.
+        finish(true);
+        return;
+      }
+      const slice = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+      remaining -= slice.length;
+      if (slice.length > 0 && !output.write(slice)) socket.pause();
+      if (chunk.length > slice.length) {
+        fail(new Error("runner sent too much"));
+        return;
+      }
+      if (remaining === 0) finish();
+    };
+    socket.on("data", (chunk: Buffer) => {
+      if (meta) {
+        take(chunk);
+        return;
+      }
+      buf = Buffer.concat([buf, chunk]);
+      const index = buf.indexOf(0x0a);
+      if (index < 0) {
+        if (buf.length > 1024 * 1024) fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      let message: RunnerResponse;
+      try {
+        message = JSON.parse(buf.subarray(0, index).toString("utf8")) as RunnerResponse;
+      } catch {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      if (message.id !== request.id) return;
+      if (message.type === "error") {
+        fail(new Error(message.error || "runner error"));
+        return;
+      }
+      if (message.type !== "ok" || !message.result || typeof message.result !== "object") {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      const result = message.result as Partial<SiteFileMeta>;
+      if (typeof result.size !== "number" || !Number.isInteger(result.size) || result.size < 0
+        || typeof result.type !== "string" || typeof result.etag !== "string" || typeof result.modified !== "string") {
+        fail(new Error("runner sent invalid JSON"));
+        return;
+      }
+      meta = {
+        size: result.size,
+        type: result.type,
+        etag: result.etag,
+        modified: result.modified,
+        directory: result.directory === true,
+      };
+      remaining = meta.size;
+      try {
+        output = begin(meta);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error("runner error"));
+        return;
+      }
+      if (remaining === 0) {
+        finish();
+        return;
+      }
+      if (!output) {
+        finish(true);
+        return;
+      }
+      output.on("drain", () => socket.resume());
+      output.on("error", (error) => fail(error));
+      const rest = buf.subarray(index + 1);
+      buf = Buffer.alloc(0);
       if (rest.length > 0) take(rest);
     });
     socket.on("error", (error) => fail(error));

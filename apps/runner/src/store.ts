@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   assertRepoDirectory,
@@ -17,9 +17,11 @@ import {
   type ChatMeta,
   type RepositoryEntry,
   type Settings,
+  type TrashEntry,
   type SettingsPatch,
   type TranscriptEntry,
 } from "@engineroom/protocol";
+import { assertTrashId, TRASH_ID_RE } from "@engineroom/protocol";
 import { loadPolicy, withLocks } from "./policy.ts";
 import { isGitRepository, listGitRepositories, repositoryPathAllowed, resolveWorkspace } from "./workspace.ts";
 
@@ -170,10 +172,49 @@ export async function deleteRepository(
   if (!folder || folder !== entry.name) throw new Error("project name does not match");
   const chatIds = await chatIdsForWorkspace(home, workspace);
   for (const chatId of chatIds) onChat(chatId);
-  for (const chatId of chatIds) await rm(chatDir(home, chatId), { recursive: true, force: true });
   const again = await assertProjectDirectory(home, workspace);
   if (again !== workspace) throw new Error("invalid repository");
-  await rm(workspace, { recursive: true, force: true });
+  // Nothing is deleted here. The folder and its chats move into the account's
+  // trash, so a mistake costs disk space rather than work. Only the
+  // administrator empties the trash, from the admin page.
+  const deletedAt = new Date();
+  const entryDir = path.join(trashRoot(home), await freeTrashId(home, deletedAt, folder));
+  // The folder keeps its own name inside the entry, so it can be moved back by
+  // hand: `mv ~/.trash/<id>/<folder> ~/Sites/`.
+  const kept = path.join(entryDir, entry.name);
+  const moved: string[] = [];
+  try {
+    await mkdir(path.join(entryDir, "chats"), { recursive: true, mode: 0o700 });
+    await moveInto(workspace, kept);
+    for (const chatId of chatIds) {
+      try {
+        await moveInto(chatDir(home, chatId), path.join(entryDir, "chats", chatId));
+        moved.push(chatId);
+      } catch (error) {
+        // A chat that is already gone must not keep the project in place.
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  } catch (error) {
+    // Leave nothing behind: a failed move puts back what it took, and the
+    // project folder is still where it was.
+    for (const chatId of moved) {
+      await moveInto(path.join(entryDir, "chats", chatId), chatDir(home, chatId)).catch(() => undefined);
+    }
+    await rm(entryDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+  await writeAtomic(
+    path.join(entryDir, "trash.json"),
+    `${JSON.stringify({
+      id: path.basename(entryDir),
+      name: entry.name,
+      path: workspace,
+      directory: state.directory,
+      deletedAt: deletedAt.toISOString(),
+      chats: moved,
+    }, null, 2)}\n`,
+  );
   const latest = await loadRepoState(home);
   await writeRepoState(
     home,
@@ -182,6 +223,96 @@ export async function deleteRepository(
     [...latest.archived].filter((item) => item !== workspace),
   );
   return listRepositories(home);
+}
+
+export async function listTrash(home: string): Promise<TrashEntry[]> {
+  let names: string[] = [];
+  try {
+    names = await readdir(trashRoot(home));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const entries: TrashEntry[] = [];
+  for (const id of names) {
+    if (!TRASH_ID_RE.test(id)) continue;
+    const entry = await readTrashEntry(home, id);
+    if (entry) entries.push(entry);
+  }
+  return entries.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt) || a.id.localeCompare(b.id));
+}
+
+/** Remove one trashed project for good. */
+export async function deleteTrash(home: string, trashId: string): Promise<TrashEntry[]> {
+  const id = assertTrashId(trashId);
+  const dir = path.join(trashRoot(home), id);
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("trashed project not found");
+    throw error;
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("invalid trash id");
+  await rm(dir, { recursive: true, force: true });
+  return listTrash(home);
+}
+
+async function readTrashEntry(home: string, id: string): Promise<TrashEntry | null> {
+  try {
+    const parsed = JSON.parse(await readFile(path.join(trashRoot(home), id, "trash.json"), "utf8")) as {
+      name?: unknown;
+      path?: unknown;
+      deletedAt?: unknown;
+      chats?: unknown;
+    };
+    const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : id;
+    const chats = Array.isArray(parsed.chats) ? parsed.chats.filter((item) => typeof item === "string").length : 0;
+    return {
+      id,
+      name,
+      path: typeof parsed.path === "string" ? parsed.path : "",
+      deletedAt: typeof parsed.deletedAt === "string" ? parsed.deletedAt : "",
+      chats,
+    };
+  } catch {
+    // A half-written entry has no metadata to show, so it stays out of the list.
+    return null;
+  }
+}
+
+/** Move a folder, copying first when it sits on another filesystem. */
+async function moveInto(from: string, to: string): Promise<void> {
+  try {
+    await rename(from, to);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    // A disk mounted at Sites cannot be reached by a rename. Copy, then remove
+    // the original only once the copy is complete, so nothing is lost.
+    await cp(from, to, { recursive: true, preserveTimestamps: true });
+    await rm(from, { recursive: true, force: true });
+  }
+}
+
+function trashRoot(home: string): string {
+  return path.join(home, ".trash");
+}
+
+/** A trash folder name that no earlier deleted project already uses. */
+async function freeTrashId(home: string, deletedAt: Date, folder: string): Promise<string> {
+  const stamp = deletedAt.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const slug = folder.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 64) || "project";
+  const base = `${stamp}-${slug}`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const candidate = attempt === 0 ? base : `${stamp}-${attempt}-${slug}`;
+    try {
+      await lstat(path.join(trashRoot(home), candidate));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return candidate;
+      throw error;
+    }
+  }
+  throw new Error("too many trashed projects");
 }
 
 export async function enableRepository(home: string, workspace: string): Promise<void> {
@@ -344,6 +475,10 @@ async function readTranscript(home: string, chatId: string): Promise<TranscriptE
     }
   }
   return entries;
+}
+
+export async function repositoryDirectory(home: string): Promise<string> {
+  return (await loadRepoState(home)).directory;
 }
 
 export async function resolveRepoWorkspace(home: string, requested: string): Promise<string> {

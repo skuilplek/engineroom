@@ -162,6 +162,21 @@ export function loadBrowserControls(file: string): boolean {
   return false;
 }
 
+// Site previews are a site-wide switch, not a per-user grant: the preview port
+// is shared by every account, so turning it on turns it on for everyone who can
+// sign in. Off unless asked for, because a published page sits on the network
+// and the administrator decides whether that port is open at all.
+export function loadSitePreviews(file: string): boolean {
+  if (!file) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { sitePreviews?: unknown };
+    if (typeof parsed.sitePreviews === "boolean") return parsed.sitePreviews;
+  } catch {
+    /* default off */
+  }
+  return false;
+}
+
 export function loadFileManager(file: string): boolean {
   if (!file) return false;
   try {
@@ -259,6 +274,7 @@ export function saveAgentFlags(
   fileUpload?: boolean,
   browser?: boolean,
   browserControls?: boolean,
+  sitePreviews?: boolean,
 ): AgentFlags {
   const custom = loadCustomAgents(file);
   const parsed = flagsFromBody(body, custom.map((agent) => agent.id));
@@ -280,6 +296,7 @@ export function saveAgentFlags(
   const download = typeof fileDownload === "boolean" ? fileDownload : loadFileDownload(file);
   const upload = typeof fileUpload === "boolean" ? fileUpload : loadFileUpload(file);
   const pages = typeof browser === "boolean" ? browser : loadBrowser(file);
+  const previews = typeof sitePreviews === "boolean" ? sitePreviews : loadSitePreviews(file);
   // Controls only mean something over a page, so turning the browser off clears them.
   const manual = (typeof browserControls === "boolean" ? browserControls : loadBrowserControls(file)) && pages;
   const current = readAgentFile(file);
@@ -300,6 +317,7 @@ export function saveAgentFlags(
     fileUpload: upload,
     browser: pages,
     browserControls: manual,
+    sitePreviews: previews,
     piProvider: pi.provider,
     piModel: pi.model,
     cursorCommands,

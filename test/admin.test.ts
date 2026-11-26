@@ -688,6 +688,7 @@ test("the administrator sets one person's access, environment, and password", as
   };
   const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
   const calls: Array<{ action: string; username: string; password?: string }> = [];
+  const pam: Array<{ username: string; password: string }> = [];
   const drivers: Record<AgentDriver["id"], AgentDriver> = {
     cursor: { id: "cursor", async run() { throw new Error("not used"); } },
     pi: { id: "pi", async run() { throw new Error("not used"); } },
@@ -703,7 +704,10 @@ test("the administrator sets one person's access, environment, and password", as
     adminUser: "alice",
     agentsFile,
     lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
-    authenticate: async () => true,
+    authenticate: async (username, password) => {
+      pam.push({ username, password });
+      return password === "secret";
+    },
     runAdmin: async (action, username, password) => {
       calls.push({ action, username, password });
     },
@@ -937,6 +941,42 @@ test("the administrator sets one person's access, environment, and password", as
       body: JSON.stringify({ password: "nope" }),
     });
     assert.equal(ownPassword.status, 400);
+
+    // A person changes their own password from Customize. The current password
+    // is checked with PAM, and the change goes through the same admin helper.
+    const before = calls.length;
+    const wrongCurrent = await fetch(`${base}/api/password`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ current: "wrong", password: "mine" }),
+    });
+    assert.equal(wrongCurrent.status, 401);
+    assert.equal(calls.length, before);
+
+    const emptyNext = await fetch(`${base}/api/password`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ current: "secret", password: "" }),
+    });
+    assert.equal(emptyNext.status, 400);
+    assert.equal(calls.length, before);
+
+    const selfChanged = await fetch(`${base}/api/password`, {
+      method: "POST",
+      headers: carolHeaders,
+      body: JSON.stringify({ current: "secret", password: "carol-only" }),
+    });
+    assert.equal(selfChanged.status, 200);
+    assert.deepEqual(calls.at(-1), { action: "passwd", username: "carol", password: "carol-only" });
+    assert.deepEqual(pam.at(-1), { username: "carol", password: "secret" });
+
+    const adminSelf = await fetch(`${base}/api/password`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ current: "secret", password: "alice-only" }),
+    });
+    assert.equal(adminSelf.status, 403);
+    assert.deepEqual(calls.at(-1), { action: "passwd", username: "carol", password: "carol-only" });
 
     const live = await subscribe(carolSock);
     try {
@@ -2873,6 +2913,125 @@ test("the browser address bar stays hidden until an administrator turns it on", 
   } finally {
     hub.close();
     await runner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the administrator sees deleted projects in the trash and empties them", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "er-trash-admin-"));
+  const aliceHome = path.join(root, "alice");
+  const carolHome = path.join(root, "carol");
+  const socketDir = path.join(root, "socks");
+  const widget = path.join(carolHome, "Sites", "widget");
+  await mkdir(path.join(widget, ".git"), { recursive: true });
+  await mkdir(aliceHome);
+  await mkdir(socketDir);
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const alice: LinuxUser = {
+    username: "alice",
+    uid,
+    gid,
+    home: aliceHome,
+    shell: "/bin/bash",
+    groups: ["engineroom-users"],
+  };
+  const carol: LinuxUser = { ...alice, username: "carol", home: carolHome };
+  const drivers: Record<AgentDriver["id"], AgentDriver> = {
+    cursor: { id: "cursor", async run() { throw new Error("not used"); } },
+    pi: { id: "pi", async run() { throw new Error("not used"); } },
+  };
+  const aliceRunner = await startRunner({
+    home: aliceHome,
+    socketPath: socketPathForUser(socketDir, "alice"),
+    drivers,
+  });
+  const carolRunner = await startRunner({
+    home: carolHome,
+    socketPath: socketPathForUser(socketDir, "carol"),
+    drivers,
+  });
+  const hub = createHub({
+    link: { socketDir },
+    sessionSecret: Buffer.from("trash-admin-secret-value"),
+    pamHelper: "/bin/false",
+    cookieSecure: false,
+    adminUser: "alice",
+    lookup: (username) => (username === "alice" ? alice : username === "carol" ? carol : null),
+    authenticate: async () => true,
+    listAccounts: () => [
+      { username: "alice", home: aliceHome, uid, shell: alice.shell },
+      { username: "carol", home: carolHome, uid: uid + 1, shell: carol.shell },
+    ],
+  });
+  await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", () => resolve()));
+  const base = `http://127.0.0.1:${(hub.address() as AddressInfo).port}`;
+  try {
+    const aliceLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "alice", password: "secret" }),
+    });
+    const aliceCookie = (aliceLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const carolLogin = await fetch(`${base}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "carol", password: "secret" }),
+    });
+    const carolCookie = (carolLogin.headers.getSetCookie?.() ?? [])[0]?.split(";")[0];
+    const aliceHeaders = { Cookie: aliceCookie!, "Content-Type": "application/json" };
+    const carolHeaders = { Cookie: carolCookie!, "Content-Type": "application/json" };
+
+    const empty = (await (await fetch(`${base}/api/admin/trash`, { headers: aliceHeaders })).json()) as {
+      entries: Array<{ id: string }>;
+    };
+    assert.deepEqual(empty.entries, []);
+
+    // Carol deletes her project the normal way, with the folder name.
+    const listed = (await (await fetch(`${base}/api/repositories`, { headers: carolHeaders })).json()) as Array<{ name: string }>;
+    assert.deepEqual(listed.map((item) => item.name), ["widget"]);
+    const removed = await fetch(`${base}/api/repositories`, {
+      method: "DELETE",
+      headers: carolHeaders,
+      body: JSON.stringify({ workspace: widget, name: "widget" }),
+    });
+    assert.equal(removed.status, 200);
+    await assert.rejects(() => stat(widget));
+
+    // Only the administrator may read or empty the trash.
+    const denied = await fetch(`${base}/api/admin/trash`, { headers: carolHeaders });
+    assert.equal(denied.status, 403);
+
+    const trash = (await (await fetch(`${base}/api/admin/trash`, { headers: aliceHeaders })).json()) as {
+      entries: Array<{ id: string; name: string; username: string; path: string; chats: number; deletedAt: string }>;
+    };
+    assert.equal(trash.entries.length, 1);
+    const entry = trash.entries[0]!;
+    assert.equal(entry.name, "widget");
+    assert.equal(entry.username, "carol");
+    assert.equal(entry.path, widget);
+    assert.equal(entry.chats, 0);
+    assert.ok(Date.parse(entry.deletedAt) > 0);
+    const inTrash = path.join(carolHome, ".trash", entry.id);
+    await stat(path.join(inTrash, "widget", ".git"));
+
+    const purged = await fetch(`${base}/api/admin/trash/carol/${encodeURIComponent(entry.id)}`, {
+      method: "DELETE",
+      headers: aliceHeaders,
+    });
+    assert.equal(purged.status, 200);
+    assert.deepEqual(((await purged.json()) as { entries: unknown[] }).entries, []);
+    await assert.rejects(() => stat(inTrash));
+
+    const missing = await fetch(`${base}/api/admin/trash/carol/${encodeURIComponent(entry.id)}`, {
+      method: "DELETE",
+      headers: aliceHeaders,
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+    hub.close();
+    await aliceRunner.close();
+    await carolRunner.close();
     await rm(root, { recursive: true, force: true });
   }
 });

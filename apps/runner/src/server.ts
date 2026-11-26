@@ -68,7 +68,9 @@ import {
   listChats,
   detectRepositories,
   deleteRepository,
+  deleteTrash,
   listRepositories,
+  listTrash,
   dataRoot,
   loadSettings,
   rewriteCursorModelFast,
@@ -77,6 +79,7 @@ import {
   setRepositoryArchived,
   updateChat,
 } from "./store.ts";
+import { listSiteDirectories, openSiteFile, sendSiteFile } from "./site-preview.ts";
 import {
   installExtension,
   listExtensions,
@@ -185,6 +188,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
   await listen(server, options);
 
   async function handleConnection(socket: Socket) {
+    // The hub may stop reading at any point: a preview that turns into a 304,
+    // a cancelled download, or a closed tab. Without a listener that shows up
+    // as an unhandled error event and takes the whole runner down.
+    socket.on("error", () => undefined);
     if (options.peerCheck) options.peerCheck(socket);
     else assertClient(socket, hubUser);
     const line = await readRequest(socket);
@@ -206,6 +213,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       }
       if (request.type === "read_project_archive") {
         await archives.sendDownload(socket, request.id, request.archiveId);
+        return;
+      }
+      if (request.type === "read_site_file") {
+        await sendSiteFile(socket, request.id, await openSiteFile(home, request.sitePath));
         return;
       }
       const result = await dispatch(request);
@@ -424,10 +435,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "set_repository_archived":
         return setRepositoryArchived(home, request.workspace, request.archived);
       case "delete_repository":
+        // Buffered transcript text would otherwise land in a chat folder that
+        // has just moved into the trash.
+        await writer.flushAll();
         return deleteRepository(home, request.workspace, request.name, (chatId) => {
           cancel(chatId);
           pty.close(chatId);
         });
+      case "list_trash":
+        return listTrash(home);
+      case "delete_trash":
+        return deleteTrash(home, request.trashId);
       case "create_chat": {
         const policy = await loadPolicy(home);
         const settings = await loadSettings(home);
@@ -602,7 +620,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunningRunner
       case "project_archive_status":
         return archives.status(request.archiveId);
       case "read_project_archive":
+      case "read_site_file":
         throw new Error("unsupported request");
+      case "list_site_directories":
+        return listSiteDirectories(home);
       default:
         throw new Error("unsupported request");
     }

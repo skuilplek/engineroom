@@ -20,6 +20,7 @@ The runner reads `ENGINEROOM_HUB_USER`, `ENGINEROOM_PEERCRED`, and the systemd s
 | `ENGINEROOM_NETWORK_CTL` | `/usr/local/bin/engineroom-network` | Set the hostname advertised as `name.local`, and read or change Wi-Fi. Invoked as `sudo -n`. |
 | `ENGINEROOM_UPDATE_CTL` | `/usr/local/bin/engineroom-update` | Start `update.sh` from the checkout recorded in `/etc/engineroom/checkout`. Invoked as `sudo -n` after the administrator's password is checked. |
 | `ENGINEROOM_PEERCRED` | `/usr/local/bin/engineroom-peercred` | Used by the hub and the runner. Not read in `index.ts`; the peercred package defaults to this path. |
+| `ENGINEROOM_PREVIEW_LISTEN` | `0.0.0.0:8081` | `host:port` for site previews, served beside the app on its own origin. An empty value leaves the port unbound. Whether previews actually answer is a separate switch, Site previews in Admin, off until an administrator turns it on. |
 
 ## Data files
 

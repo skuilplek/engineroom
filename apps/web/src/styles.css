@@ -2381,6 +2381,28 @@ html[data-wrap="1"] .diff-rows { width: auto; }
   align-items: end;
 }
 .repos-add > button { justify-self: start; width: auto; }
+.trash-page {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+  padding: 2px 2px 8px;
+}
+.trash-page .repos-table td:first-child { white-space: normal; }
+.trash-origin {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  font-weight: 400;
+  word-break: break-all;
+}
 .admin-pane.admin-detail {
   padding: 0;
   gap: 0;

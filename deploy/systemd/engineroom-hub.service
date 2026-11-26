@@ -23,6 +23,9 @@ Environment=ENGINEROOM_REPOS_FILE=/var/lib/engineroom/repos.json
 Environment=ENGINEROOM_CHECKS_FILE=/etc/engineroom/checks.json
 Environment=ENGINEROOM_SOCKET_DIR=/run/engineroom
 Environment=ENGINEROOM_WEB_DIST=/usr/local/share/engineroom/web
+# Site previews are not set here on purpose. The hub defaults to 0.0.0.0:8081,
+# and because a value in this file overrides hub.env, naming it here would
+# leave no way to turn previews off without editing the unit.
 WorkingDirectory=/var/lib/engineroom
 PrivateTmp=true
 ProtectSystem=strict

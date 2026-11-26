@@ -257,7 +257,7 @@ export function StartView({
         <div className="modal-backdrop">
           <div className="confirm-dialog" role="dialog" aria-labelledby="delete-project-title" aria-modal="true">
             <h2 id="delete-project-title">Delete this project</h2>
-            <p className="muted">Type <span className="folder-name">{targetLabel}</span> to delete this project. This removes the project folder and its chats.</p>
+            <p className="muted">Type <span className="folder-name">{targetLabel}</span> to delete this project. The folder and its chats move to <code>~/.trash</code>, where an administrator can empty them.</p>
             <label>
               Project folder name
               <input

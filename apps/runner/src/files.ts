@@ -729,6 +729,34 @@ export async function uploadRepositoryFile(
   return { path: relPath, size: bytes.length };
 }
 
+/**
+ * The app's own folder inside a project. It carries a `.gitignore` that ignores
+ * everything, so a commit never picks up uploaded files or caches. The folder
+ * ignores itself rather than the project's `.gitignore` naming it, because that
+ * file belongs to the person's project.
+ *
+ * On a current Git the rule only applies to the files inside the folder, which
+ * is what is wanted; older Git applies it to the folder itself.
+ */
+async function ensureWorkspaceDataDir(root: string): Promise<string> {
+  const dir = path.join(root, ".engineroom");
+  const uploads = path.join(dir, "uploads");
+  await mkdir(uploads, { recursive: true });
+  const ignore = path.join(dir, ".gitignore");
+  try {
+    const existing = await readFile(ignore, "utf8");
+    if (existing.split("\n").some((line) => line.trim() === "*")) return uploads;
+    await writeFile(ignore, `${existing.replace(/\s*$/, "")}\n*\n`, { mode: 0o644 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // Two uploads racing here both write the same rule; either copy will do.
+    await writeFile(ignore, "*\n", { flag: "wx", mode: 0o644 }).catch((writeError: NodeJS.ErrnoException) => {
+      if (writeError.code !== "EEXIST") throw writeError;
+    });
+  }
+  return uploads;
+}
+
 export async function savePromptAttachment(
   home: string,
   workspace: string,
@@ -740,8 +768,7 @@ export async function savePromptAttachment(
   if (bytes.length > MAX_PROMPT_ATTACHMENT_BYTES) throw new Error("file is too large");
   const name = assertUploadFileName(rawName);
   const root = await resolveChatWorkspace(home, workspace);
-  const dir = path.join(root, ".engineroom", "uploads");
-  await mkdir(dir, { recursive: true });
+  const dir = await ensureWorkspaceDataDir(root);
   const dirReal = await realpath(dir);
   if (!isInsidePath(root, dirReal)) throw new Error("invalid file path");
   const stored = `${randomUUID()}-${safeAttachmentName(name)}`;

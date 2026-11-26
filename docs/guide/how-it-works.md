@@ -6,4 +6,4 @@ The administrator decides which agents and tools the server offers, and which of
 
 Cursor and Pi each keep their own sign-in in your home directory. Sign in to each command once from your account. When the terminal is turned on, open Terminal on a chat and use `agent` or `pi` there. After that, new chats can use that agent.
 
-Customize holds your own defaults: theme, the agent and model a new chat starts with, how tool requests are approved, and whether the file viewer is read-only.
+Customize holds your own defaults: theme, the agent and model a new chat starts with, how tool requests are approved, whether the file viewer is read-only, and the password you sign in with.

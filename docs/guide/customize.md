@@ -1,6 +1,6 @@
 # Customize
 
-Customize is in the account menu. Change the settings, then Save. A saved note confirms it. Cursor commands, Pi instructions, and packages save on their own buttons.
+Customize is in the account menu. Change the settings, then Save. A saved note confirms it. Password, Cursor commands, Pi instructions, and packages save on their own buttons.
 
 ## Appearance
 
@@ -25,6 +25,10 @@ Tool approval:
 Read-only file viewer opens files for reading and keeps the editor from saving. When the administrator has turned the file editor off, this checkbox stays on and the note says file editing is turned off.
 
 If Pi still needs installing, Set up Pi is at the top of this section.
+
+## Password
+
+Password changes the password you sign in with. Type your current password, then the new one twice, and choose Change password. The current password is checked before anything changes. The new password is used at the next sign-in. The administrator account is not listed here: its password is set on the machine with `passwd`.
 
 ## Cursor commands
 

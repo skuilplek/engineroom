@@ -947,6 +947,19 @@ test("repository archive and delete requests keep a workspace and a folder name"
   assert.throws(() => parseRunnerRequest({ id: "r5", type: "set_repository_archived", workspace: "   ", archived: false }));
 });
 
+test("trash requests read and empty what a deleted project left behind", () => {
+  const listed = parseRunnerRequest({ id: "t1", type: "list_trash" });
+  assert.equal(listed.type, "list_trash");
+  const purged = parseRunnerRequest({ id: "t2", type: "delete_trash", trashId: "20260102T030405Z-widget" });
+  assert.equal(purged.type, "delete_trash");
+  if (purged.type === "delete_trash") assert.equal(purged.trashId, "20260102T030405Z-widget");
+  const second = parseRunnerRequest({ id: "t3", type: "delete_trash", trashId: "20260102T030405Z-1-widget" });
+  assert.equal(second.type, "delete_trash");
+  assert.throws(() => parseRunnerRequest({ id: "t4", type: "delete_trash", trashId: "../widget" }));
+  assert.throws(() => parseRunnerRequest({ id: "t5", type: "delete_trash", trashId: "widget" }));
+  assert.throws(() => parseRunnerRequest({ id: "t6", type: "delete_trash" }));
+});
+
 test("git change requests keep paths inside the repo and reject an empty commit", () => {
   const staged = parseRunnerRequest({
     id: "g1",

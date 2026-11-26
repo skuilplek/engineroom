@@ -16,6 +16,7 @@ import type {
   RepoSearchOptions,
   RepoSearchResult,
   RepositoryEntry,
+  TrashEntry,
   CommandBlockStyle,
   Settings,
   SettingsPatch,
@@ -45,6 +46,7 @@ export interface Session {
   browser: boolean;
   browserOffered?: boolean;
   browserControls?: boolean;
+  sitePreviews?: boolean;
   fileEditor: boolean;
   fileDownload?: boolean;
   fileUpload?: boolean;
@@ -91,6 +93,7 @@ export interface AgentInventory {
   fileUpload?: boolean;
   browser?: boolean;
   browserControls?: boolean;
+  sitePreviews?: boolean;
   piProvider?: string;
   piModel?: string;
   cursorCommands?: string[];
@@ -547,6 +550,13 @@ export function saveUserEnv(username: string, entries: EnvEntry[]) {
   });
 }
 
+export function changeOwnPassword(current: string, password: string) {
+  return api<{ ok: boolean }>("/api/password", {
+    method: "POST",
+    body: JSON.stringify({ current, password }),
+  });
+}
+
 export function changePassword(username: string, password: string) {
   return api<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(username)}/password`, {
     method: "POST",
@@ -563,6 +573,23 @@ export function saveUserGitIdentity(username: string, identity: GitIdentity) {
     method: "PUT",
     body: JSON.stringify(identity),
   });
+}
+
+/** A trashed project as the admin page sees it: which account's trash it sits in. */
+export interface TrashListing extends TrashEntry {
+  username: string;
+  home: string;
+}
+
+export function listTrash() {
+  return api<{ entries: TrashListing[] }>("/api/admin/trash");
+}
+
+export function deleteTrash(username: string, trashId: string) {
+  return api<{ entries: TrashListing[] }>(
+    `/api/admin/trash/${encodeURIComponent(username)}/${encodeURIComponent(trashId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export function listAccounts() {
@@ -725,6 +752,7 @@ export function saveAgents(
   fileUpload?: boolean,
   browser?: boolean,
   browserControls?: boolean,
+  sitePreviews?: boolean,
   extra?: {
     piProvider?: string;
     piModel?: string;
@@ -742,6 +770,7 @@ export function saveAgents(
     fileUpload?: boolean;
     browser?: boolean;
     browserControls?: boolean;
+    sitePreviews?: boolean;
     agentCatalog?: { id: string; label: string }[];
     piProvider?: string;
     piModel?: string;
@@ -749,7 +778,7 @@ export function saveAgents(
     cursorFast?: boolean;
   }>("/api/admin/agents", {
     method: "PUT",
-    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, ...extra }),
+    body: JSON.stringify({ ...flags, rawTerminal, cliImport, fileManager, fileEditor, fileDownload, fileUpload, browser, browserControls, sitePreviews, ...extra }),
   });
 }
 
